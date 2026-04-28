@@ -43,18 +43,18 @@ OUTPUT_CHUNKS = Path("logs/chunks_vectorized.json")
 STATS_PATH = Path("logs/vectorization_report.json")
 
 _MODELS_DIR = Path(__file__).parent / "models"
-_DEFAULT_MODEL_ID = os.environ.get("RAG_EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+_DEFAULT_MODEL_ID = os.environ.get("RAG_EMBEDDING_MODEL", "EmbaddingGemma-300")
 
-# Si el modelo está clonado en models/<org>/<name>, usamos esa ruta local directamente.
+# Si el modelo está en models/<nombre>, usamos esa ruta local directamente.
 _LOCAL_MODEL_PATH = _MODELS_DIR / _DEFAULT_MODEL_ID
 DEFAULT_MODEL = str(_LOCAL_MODEL_PATH) if _LOCAL_MODEL_PATH.exists() else _DEFAULT_MODEL_ID
 
-FALLBACK_MODEL = "all-MiniLM-L6-v2"
+FALLBACK_MODEL = "intfloat/multilingual-e5-small"
 BATCH_SIZE = 32
 USE_METADATA_CONTEXT = os.environ.get("RAG_PURE_TEXT", "0") != "1"
 
-# Los modelos E5 requieren prefijo: "passage: " para documentos, "query: " para queries.
-# Si el modelo es E5, lo aplicamos automáticamente. La búsqueda (04) debe usar "query: ".
+# Los modelos E5 requieren prefijo "passage: " para documentos y "query: " para queries.
+# Gemma Embedding no requiere prefijos especiales.
 E5_PASSAGE_PREFIX = "passage: "
 
 

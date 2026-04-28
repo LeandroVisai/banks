@@ -58,6 +58,24 @@ IMPORTANCE_BOOST = 0.15 # peso del importance_score en el re-rank final
 YEAR_RE = re.compile(r"\b(19[8-9]\d|20[0-4]\d)\b")
 YEAR_RANGE_RE = re.compile(r"\b(19[8-9]\d|20[0-4]\d)\s*[-–a]\s*(19[8-9]\d|20[0-4]\d)\b")
 
+MONTH_NAMES: dict[str, int] = {
+    "enero": 1, "ene": 1,
+    "febrero": 2, "feb": 2,
+    "marzo": 3, "mar": 3,
+    "abril": 4, "abr": 4,
+    "mayo": 5,
+    "junio": 6, "jun": 6,
+    "julio": 7, "jul": 7,
+    "agosto": 8, "ago": 8,
+    "septiembre": 9, "sep": 9, "sept": 9,
+    "octubre": 10, "oct": 10,
+    "noviembre": 11, "nov": 11,
+    "diciembre": 12, "dic": 12,
+}
+MONTH_RE = re.compile(
+    r"\b(" + "|".join(sorted(MONTH_NAMES, key=len, reverse=True)) + r")\b"
+)
+
 # Patrones para tipo de documento — específicos y más descriptivos que los
 # patrones del paso 0 (que operan sobre filepath).
 DOC_TYPE_HINTS = {
@@ -99,6 +117,13 @@ def parse_query(query: str) -> dict:
             year_from, year_to = min(years), max(years)
             clean = YEAR_RE.sub("", clean)
 
+    # Mes
+    month = None
+    mm = MONTH_RE.search(norm)
+    if mm:
+        month = MONTH_NAMES[mm.group(1)]
+        clean = MONTH_RE.sub("", clean)
+
     # Tipos de documento
     doc_types: list[str] = []
     for dt, keywords in DOC_TYPE_HINTS.items():
@@ -116,6 +141,7 @@ def parse_query(query: str) -> dict:
         "clean_query": re.sub(r"\s+", " ", clean).strip() or query,
         "year_from": year_from,
         "year_to": year_to,
+        "month": month,
         "doc_types": doc_types,
         "variables": variables,
         "sections": sections,
@@ -154,6 +180,19 @@ def build_filters_sql(parsed: dict) -> tuple[str, list]:
     if parsed["year_to"] is not None:
         clauses.append("COALESCE(EXTRACT(YEAR FROM c.chunk_date)::int, d.document_year) <= %s")
         params.append(parsed["year_to"])
+    if parsed.get("month") is not None:
+        # chunk_date es DATE (Monitor PM); document_date es TEXT ISO YYYY-MM-DD (PDFs).
+        # El regex guard evita fallar cuando document_date es solo el año (fallback).
+        clauses.append("""
+            COALESCE(
+                EXTRACT(MONTH FROM c.chunk_date)::int,
+                CASE WHEN d.document_date ~ '^\\d{4}-\\d{2}-\\d{2}$'
+                     THEN EXTRACT(MONTH FROM d.document_date::date)::int
+                     ELSE NULL
+                END
+            ) = %s
+        """)
+        params.append(parsed["month"])
     if parsed["sections"]:
         clauses.append("c.section_type = ANY(%s)")
         params.append(parsed["sections"])
@@ -344,7 +383,7 @@ def load_embedding_model():
     if _MODEL is not None:
         return _MODEL, _MODEL_NAME
     from sentence_transformers import SentenceTransformer
-    model_id = os.environ.get("RAG_EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+    model_id = os.environ.get("RAG_EMBEDDING_MODEL", "EmbaddingGemma-300")
     local_path = _MODELS_DIR / model_id
     name = str(local_path) if local_path.exists() else model_id
     try:
@@ -419,6 +458,9 @@ def format_text_output(results: list[dict], parsed: dict) -> str:
         yr = (f"{parsed['year_from']}" if parsed["year_from"] == parsed["year_to"]
               else f"{parsed['year_from']}–{parsed['year_to']}")
         filters.append(f"año={yr}")
+    if parsed.get("month") is not None:
+        month_names_inv = {v: k for k, v in MONTH_NAMES.items() if len(k) > 3}
+        filters.append(f"mes={month_names_inv.get(parsed['month'], parsed['month'])}")
     if parsed["doc_types"]:
         filters.append(f"doc={','.join(parsed['doc_types'])}")
     if parsed["variables"]:

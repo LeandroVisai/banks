@@ -157,13 +157,46 @@ chunks    (chunk_id PK, document_id FK,
 
 ## Variables de entorno
 
-| Variable | Default | Cuándo cambiar |
+| Variable | Default (main) | Default (EmbaddingGemma) | Cuándo cambiar |
+|---|---|---|---|
+| `PGDATABASE` | `rag_banco` | `rag_banco` | Usar otra BD |
+| `PGUSER` / `PGPASSWORD` | SO / vacío | SO / vacío | Servidor con auth |
+| `RAG_EMBEDDING_MODEL` | `intfloat/multilingual-e5-small` | `EmbaddingGemma-300` | Cambiar modelo |
+| `RAG_EMBEDDING_DIM` | auto-detectado (384) | auto-detectado desde chunks | Forzar dimensión sin leer JSON |
+| `RAG_PURE_TEXT` | `0` | `0` | `1` = no inyectar metadata context en embedding |
+| `SENTENCE_TRANSFORMERS_HOME` | auto-detectado | auto-detectado | Solo si `models_cache/` no está junto al script |
+
+## Rama EmbaddingGemma
+
+Esta rama usa el modelo `EmbaddingGemma-300` ubicado en `./models/EmbaddingGemma-300`.
+
+### Diferencias respecto a `main`
+
+| Aspecto | `main` | `EmbaddingGemma` |
 |---|---|---|
-| `PGDATABASE` | `rag_banco` | Usar otra BD |
-| `PGUSER` / `PGPASSWORD` | SO / vacío | Servidor con auth |
-| `RAG_EMBEDDING_MODEL` | `intfloat/multilingual-e5-small` | Cambiar modelo |
-| `RAG_PURE_TEXT` | `0` | `1` = no inyectar metadata context en embedding |
-| `SENTENCE_TRANSFORMERS_HOME` | auto-detectado | Solo si `models_cache/` no está junto al script |
+| Modelo | `intfloat/multilingual-e5-small` (384-dim) | `EmbaddingGemma-300` (dim auto-detectada) |
+| Prefijo embedding | `passage: ` / `query: ` (E5) | Sin prefijo |
+| Fallback modelo | `all-MiniLM-L6-v2` | `intfloat/multilingual-e5-small` |
+| Dimensión VECTOR | Hardcodeada 384 | Dinámica (lee de `chunks_vectorized.json` o `RAG_EMBEDDING_DIM`) |
+
+### Setup para EmbaddingGemma
+
+```bash
+# 1. Asegurarse de que el modelo esté en ./models/EmbaddingGemma-300
+ls models/EmbaddingGemma-300/
+
+# 2. Correr el pipeline completo (genera embeddings con el nuevo modelo y recrea BD)
+python3 run.py full
+
+# 3. Validar
+python3 04_search.py "política monetaria 2022" 3
+```
+
+### Invariante crítico de la rama
+
+La dimensión del VECTOR en PostgreSQL debe coincidir con la dimensión real del modelo.
+`03_database.py` la auto-detecta desde `logs/chunks_vectorized.json` (campo `embedding_dim`).
+**Siempre correr `step 2` antes de `step 3 reset`** al cambiar de modelo.
 
 ## Gemelo de desarrollo
 

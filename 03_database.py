@@ -4,12 +4,14 @@ PASO 3 — Base de datos PostgreSQL con pgvector.
 
 Schema (normalizado):
   documents                  → 1 fila por PDF (metadata del documento)
-  chunks                     → N filas por documento, con embedding vector(384)
+  chunks                     → N filas por documento, con embedding vector(dim)
                               y text_tsv (tsvector) para BM25 híbrido.
+                              La dimensión se auto-detecta desde chunks_vectorized.json
+                              o mediante la variable de entorno RAG_EMBEDDING_DIM.
 
 Índices:
-  chunks.embedding           → HNSW con vector_ip_ops (embeddings normalizados
-                              → inner product equivale a cosine similarity)
+  chunks.embedding           → HNSW con vector_cosine_ops (embeddings normalizados
+                              L2 → cosine similarity)
   chunks.text_tsv            → GIN (full-text, config 'simple' para multilingüe)
   chunks.tags                → GIN sobre TEXT[]
   chunks.economic_variables  → GIN sobre JSONB
@@ -45,10 +47,35 @@ INPUT_DOCUMENTS = Path("logs/documents.json")
 INPUT_CHUNKS = Path("logs/chunks_vectorized.json")
 
 # ---------------------------------------------------------------------------
+# Dimensión del embedding — dinámica según el modelo usado
+# ---------------------------------------------------------------------------
+
+def detect_embedding_dim() -> int:
+    """Detecta la dimensión del embedding en orden de prioridad:
+    1. Variable de entorno RAG_EMBEDDING_DIM
+    2. Campo embedding_dim en el primer chunk de chunks_vectorized.json
+    3. Longitud real del primer embedding en chunks_vectorized.json
+    4. Fallback 384 (multilingual-e5-small, compatibilidad con main branch)
+    """
+    env_dim = os.getenv("RAG_EMBEDDING_DIM")
+    if env_dim:
+        return int(env_dim)
+    if INPUT_CHUNKS.exists():
+        with open(INPUT_CHUNKS, "r", encoding="utf-8") as f:
+            chunks = json.load(f)
+        if chunks:
+            dim = chunks[0].get("embedding_dim") or len(chunks[0].get("embedding") or [])
+            if dim:
+                return int(dim)
+    return 384
+
+
+# ---------------------------------------------------------------------------
 # SQL (schema)
 # ---------------------------------------------------------------------------
 
-SCHEMA_SQL = r"""
+def build_schema_sql(dim: int) -> str:
+    return f"""
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -77,16 +104,16 @@ CREATE TABLE IF NOT EXISTS chunks (
     position_in_doc    INT,
     section_type       TEXT NOT NULL DEFAULT 'CONTENIDO',
     section_confidence REAL DEFAULT 0,
-    economic_variables JSONB DEFAULT '{}'::jsonb,
+    economic_variables JSONB DEFAULT '{{}}'::jsonb,
     numeric_values     JSONB DEFAULT '[]'::jsonb,
-    entities           JSONB DEFAULT '{}'::jsonb,
-    temporal_refs      JSONB DEFAULT '{}'::jsonb,
-    tags               TEXT[] DEFAULT '{}',
+    entities           JSONB DEFAULT '{{}}'::jsonb,
+    temporal_refs      JSONB DEFAULT '{{}}'::jsonb,
+    tags               TEXT[] DEFAULT '{{}}',
     importance_score   REAL NOT NULL DEFAULT 0,
     is_policy_decision BOOLEAN DEFAULT FALSE,
     is_forward_looking BOOLEAN DEFAULT FALSE,
     chunk_date         DATE,
-    embedding          vector(384) NOT NULL,
+    embedding          vector({dim}) NOT NULL,
     embedding_model    TEXT,
     created_at         TIMESTAMPTZ DEFAULT NOW()
 );
@@ -172,7 +199,8 @@ def check_pgvector_available() -> bool:
 # ---------------------------------------------------------------------------
 
 def cmd_setup(force_drop: bool = False) -> int:
-    print(f"[03] SETUP — base de datos '{DB_NAME}'")
+    dim = detect_embedding_dim()
+    print(f"[03] SETUP — base de datos '{DB_NAME}', embedding dim={dim}")
     ensure_database_exists()
 
     if not check_pgvector_available():
@@ -191,7 +219,7 @@ def cmd_setup(force_drop: bool = False) -> int:
                 cur.execute("DROP TABLE IF EXISTS chunks CASCADE")
                 cur.execute("DROP TABLE IF EXISTS documents CASCADE")
 
-            cur.execute(SCHEMA_SQL)
+            cur.execute(build_schema_sql(dim))
             # Migración: agrega chunk_date si la tabla ya existía sin ella
             cur.execute(
                 "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS chunk_date DATE"
@@ -244,12 +272,13 @@ def _build_doc_rows(documents: list[dict]) -> list[tuple]:
     ]
 
 
-def _build_chunk_rows(chunks: list[dict]) -> list[tuple]:
+def _build_chunk_rows(chunks: list[dict], expected_dim: int) -> list[tuple]:
     rows = []
     for chunk in chunks:
         embedding = chunk.get("embedding")
-        if not embedding or len(embedding) != 384:
-            print(f"[03] ⚠ chunk {chunk.get('chunk_id')} sin embedding válido — skip")
+        if not embedding or len(embedding) != expected_dim:
+            print(f"[03] ⚠ chunk {chunk.get('chunk_id')} embedding inválido "
+                  f"(esperado dim={expected_dim}, got {len(embedding) if embedding else 0}) — skip")
             continue
         rows.append((
             chunk["chunk_id"],
@@ -335,10 +364,11 @@ def cmd_load() -> int:
     with open(INPUT_CHUNKS, "r", encoding="utf-8") as f:
         chunks = json.load(f)
 
-    print(f"[03] LOAD — {len(documents)} documents, {len(chunks)} chunks")
+    dim = detect_embedding_dim()
+    print(f"[03] LOAD — {len(documents)} documents, {len(chunks)} chunks, embedding dim={dim}")
 
     doc_rows = _build_doc_rows(documents)
-    chunk_rows = _build_chunk_rows(chunks)
+    chunk_rows = _build_chunk_rows(chunks, expected_dim=dim)
 
     with connect() as conn:
         conn.autocommit = False
