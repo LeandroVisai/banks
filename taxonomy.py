@@ -414,9 +414,18 @@ FORWARD_LOOKING_KEYWORDS = [
 
 FORWARD_LOOKING_PATTERN = compile_word_pattern(FORWARD_LOOKING_KEYWORDS)
 
-# Texto boilerplate legal/disclaimer (típico de reportes JPMorgan y similares).
+# Texto boilerplate legal/disclaimer/copyright (típico de reportes, PDFs, etc).
 # Los chunks que matcheen esto son ruido y deben recibir penalización máxima.
+#
+# Categorías:
+#   - Disclosure de riesgos y legales (JPMorgan, Reuters, etc.)
+#   - Copyright, derechos de autor, all rights reserved
+#   - Aviso de confidencialidad
+#   - Certificación de analista
+#   - Advertencia de prospectiva (forward-looking statements)
+#   - Contacto/pie de página repetitivo
 BOILERPLATE_KEYWORDS = [
+    # Disclosure legal / JP Morgan
     "legal entity responsible for the production",
     "this document is being provided for the exclusive use",
     "legal entities disclosures",
@@ -428,6 +437,33 @@ BOILERPLATE_KEYWORDS = [
     "j.p. morgan securities",
     "jpmorgan chase bank",
     "securities and exchange board",
+    # Copyright
+    "copyright", "all rights reserved", "derechos reservados",
+    "propietario del contenido", "copyright notice",
+    # Confidencialidad
+    "this message is confidential", "mensaje confidencial",
+    "intended recipient", "destinatario autorizado",
+    "if you have received this message in error",
+    "si ha recibido este mensaje por error",
+    # Forward-looking legal disclaimer (a veces en pie de página)
+    "forward-looking statements", "declaraciones prospectivas",
+    "may contain forward-looking information",
+    "past performance is not indicative",
+    "rendimiento pasado no es indicativo",
+    # Pie de página / contacto estándar
+    "for further information please contact",
+    "para mas informacion contacte",
+    "phone", "email", "extension",
+    "telefono", "correo electronico", "extension",
+    # Watermark / propiedad intelectual
+    "proprietary information", "informacion propietaria",
+    "confidential treatment requested", "tratamiento confidencial solicitado",
+    "not for distribution", "no para distribucion",
+    # Aviso de descargo (típico de research)
+    "this publication is distributed",
+    "esta publicacion se distribuye",
+    "disclaimer", "descargo de responsabilidad",
+    "important disclosure", "divulgacion importante",
 ]
 BOILERPLATE_PATTERN = compile_word_pattern(BOILERPLATE_KEYWORDS)
 
