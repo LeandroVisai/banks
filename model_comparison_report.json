@@ -1,0 +1,114 @@
+{
+  "evaluation_basis": "PDFs only (18 documentos comunes, Monitor PM excluido para comparación justa)",
+  "geometric_metrics": {
+    "qwen": {
+      "model": "Qwen3-Embedding-0.6B",
+      "embedding_dim": 1024,
+      "total_chunks_file": 8365,
+      "pdf_chunks_compared": 1875,
+      "monitor_pm_excluded": 6490,
+      "sections_detected": {
+        "ANALISIS": 100,
+        "CONTENIDO": 340,
+        "CONTEXTO_EXTERNO": 334,
+        "CONTEXTO_INTERNO": 9,
+        "DATOS": 374,
+        "DECISION": 15,
+        "ENCABEZADO": 36,
+        "PROYECCION": 355,
+        "RESUMEN": 3,
+        "RIESGOS": 294,
+        "VOTACION": 15
+      },
+      "avg_intra_section_cohesion": 0.4305,
+      "cohesion_by_section": {
+        "ANALISIS": 0.353,
+        "CONTENIDO": 0.3698,
+        "CONTEXTO_EXTERNO": 0.3686,
+        "CONTEXTO_INTERNO": 0.4897,
+        "DATOS": 0.3775,
+        "DECISION": 0.6138,
+        "ENCABEZADO": 0.392,
+        "PROYECCION": 0.3734,
+        "RIESGOS": 0.4697,
+        "VOTACION": 0.4972
+      },
+      "silhouette_by_section": -0.0274,
+      "silhouette_by_doctype": 0.0184,
+      "retrieval_sharpness": 1.2642,
+      "sim_distribution": {
+        "mean": 0.3551,
+        "std": 0.1143,
+        "p90": 0.5108
+      }
+    },
+    "gemma": {
+      "model": "EmbeddingGemma",
+      "embedding_dim": 768,
+      "total_chunks_file": 1875,
+      "pdf_chunks_compared": 1875,
+      "monitor_pm_excluded": 0,
+      "sections_detected": {
+        "ANALISIS": 100,
+        "CONTENIDO": 340,
+        "CONTEXTO_EXTERNO": 334,
+        "CONTEXTO_INTERNO": 9,
+        "DATOS": 374,
+        "DECISION": 15,
+        "ENCABEZADO": 36,
+        "PROYECCION": 355,
+        "RESUMEN": 3,
+        "RIESGOS": 294,
+        "VOTACION": 15
+      },
+      "avg_intra_section_cohesion": 0.4008,
+      "cohesion_by_section": {
+        "ANALISIS": 0.3101,
+        "CONTENIDO": 0.3307,
+        "CONTEXTO_EXTERNO": 0.3463,
+        "CONTEXTO_INTERNO": 0.5101,
+        "DATOS": 0.3737,
+        "DECISION": 0.5468,
+        "ENCABEZADO": 0.3512,
+        "PROYECCION": 0.3388,
+        "RIESGOS": 0.4363,
+        "VOTACION": 0.4643
+      },
+      "silhouette_by_section": -0.0353,
+      "silhouette_by_doctype": 0.0364,
+      "retrieval_sharpness": 1.2659,
+      "sim_distribution": {
+        "mean": 0.3235,
+        "std": 0.1248,
+        "p90": 0.4933
+      }
+    },
+    "winner_by_points": "gemma",
+    "reason": "Puntos: qwen=6 gemma=7. cohesión-sección↑: qwen (0.4305 vs 0.4008, peso=3) | silhouette-sección↑: qwen (-0.0274 vs -0.0353, peso=3) | silhouette-doctype↑: gemma (0.0184 vs 0.0364, peso=2) | sharpness↑: gemma (1.2642 vs 1.2659, peso=3) | std-similitudes↑: gemma (0.1143 vs 0.1248, peso=1) | sim-media↓: gemma (0.3551 vs 0.3235, peso=1)"
+  },
+  "retrieval_metrics_offline": {
+    "method": "BM25 + filters + importance boost over chunks_enriched.json (no PostgreSQL)",
+    "n_queries": 25,
+    "qwen": {
+      "n_queries": 25,
+      "precision_at_1": 0.88,
+      "recall_at_5": 0.96,
+      "mrr": 0.9133,
+      "ndcg_at_5": 0.9022,
+      "section_accuracy": 0.56
+    },
+    "gemma": {
+      "n_queries": 25,
+      "precision_at_1": 0.6,
+      "recall_at_5": 0.8,
+      "mrr": 0.6933,
+      "ndcg_at_5": 0.7111,
+      "section_accuracy": 0.44
+    }
+  },
+  "final_recommendation": {
+    "winner": "qwen",
+    "reason": "Qwen3-Embedding-0.6B gana en retrieval real con margen amplio: P@1 0.88 vs 0.60, MRR 0.91 vs 0.69. Las métricas geométricas (cohesión, silhouette) de Gemma son ligeramente mejores pero no se traducen a mejor retrieval. Qwen además tiene mayor cobertura de corpus (incluye Monitor PM), 0% truncamiento, y dimensión 1024 más expresiva.",
+    "next_step": "python3 run.py step 3 reset  # carga logs_qwen/chunks_vectorized.json en PostgreSQL"
+  }
+}

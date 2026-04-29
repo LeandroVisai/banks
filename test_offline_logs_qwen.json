@@ -1,0 +1,487 @@
+{
+  "folder": "logs_qwen",
+  "aggregate": {
+    "n_queries": 25,
+    "precision_at_1": 0.88,
+    "recall_at_5": 0.96,
+    "mrr": 0.9133,
+    "ndcg_at_5": 0.9022,
+    "section_accuracy": 0.56
+  },
+  "per_query": [
+    {
+      "id": "q01",
+      "query": "reducción tasa interés política monetaria abril 2024",
+      "relevant_docs": [
+        "comunicado_02_04_24"
+      ],
+      "retrieved_top5": [
+        "comunicado_02_04_24",
+        "comunicado_31_01_24",
+        "minuta_23_05_24",
+        "comunicado_05_09_23"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "DECISION",
+      "top1_section_correct": true,
+      "top1_importance": 0.933
+    },
+    {
+      "id": "q02",
+      "query": "recorte TPM septiembre 2023 unanimidad consejo",
+      "relevant_docs": [
+        "comunicado_05_09_23"
+      ],
+      "retrieved_top5": [
+        "comunicado_05_09_23",
+        "comunicado_28_07_23",
+        "comunicado_02_04_24",
+        "comunicado_13_07_22"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "DECISION",
+      "top1_section_correct": true,
+      "top1_importance": 0.947
+    },
+    {
+      "id": "q03",
+      "query": "incremento alza tasa política monetaria septiembre 2022",
+      "relevant_docs": [
+        "comunicado_06_09_22"
+      ],
+      "retrieved_top5": [
+        "comunicado_06_09_22",
+        "comunicado_13_07_22",
+        "comunicado_05_09_23"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "DECISION",
+      "top1_section_correct": true,
+      "top1_importance": 1.0
+    },
+    {
+      "id": "q04",
+      "query": "alza tasa interés julio 2022 puntos base",
+      "relevant_docs": [
+        "comunicado_13_07_22"
+      ],
+      "retrieved_top5": [
+        "comunicado_13_07_22",
+        "comunicado_06_09_22",
+        "comunicado_28_07_23",
+        "comunicado_31_01_24",
+        "comunicado_05_09_23"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "DECISION",
+      "top1_section_correct": true,
+      "top1_importance": 0.933
+    },
+    {
+      "id": "q05",
+      "query": "reducción tasa política monetaria julio 2023",
+      "relevant_docs": [
+        "comunicado_28_07_23"
+      ],
+      "retrieved_top5": [
+        "comunicado_28_07_23",
+        "comunicado_05_09_23",
+        "minuta_05_09_23",
+        "textos_monitor_pm"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "DECISION",
+      "top1_section_correct": true,
+      "top1_importance": 0.867
+    },
+    {
+      "id": "q06",
+      "query": "recorte tasa 100 puntos base enero 2024",
+      "relevant_docs": [
+        "comunicado_31_01_24"
+      ],
+      "retrieved_top5": [
+        "comunicado_31_01_24",
+        "textos_monitor_pm",
+        "comunicado_06_09_22",
+        "comunicado_02_04_24"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "DECISION",
+      "top1_section_correct": true,
+      "top1_importance": 0.9
+    },
+    {
+      "id": "q07",
+      "query": "convergencia inflación meta horizonte proyección 2013",
+      "relevant_docs": [
+        "minuta_17_01_13"
+      ],
+      "retrieved_top5": [
+        "minuta_17_01_13",
+        "comunicado_02_04_24",
+        "comunicado_06_09_22",
+        "comunicado_13_07_22"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "PROYECCION",
+      "top1_section_correct": false,
+      "top1_importance": 0.68
+    },
+    {
+      "id": "q08",
+      "query": "recorte TPM preventivo desaceleración crecimiento 2013",
+      "relevant_docs": [
+        "minuta_17_01_13"
+      ],
+      "retrieved_top5": [
+        "minuta_17_01_13",
+        "textos_monitor_pm"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "DECISION",
+      "top1_section_correct": true,
+      "top1_importance": 0.88
+    },
+    {
+      "id": "q09",
+      "query": "escenario macroeconómico IPoM política monetaria mayo 2024",
+      "relevant_docs": [
+        "minuta_23_05_24"
+      ],
+      "retrieved_top5": [
+        "comunicado_02_04_24",
+        "minuta_23_05_24"
+      ],
+      "precision_at_1": 0.0,
+      "recall_at_5": 1.0,
+      "mrr": 0.5,
+      "ndcg_at_5": 0.6309,
+      "top1_section": "PROYECCION",
+      "top1_section_correct": false,
+      "top1_importance": 0.73
+    },
+    {
+      "id": "q10",
+      "query": "discusión consejeros política monetaria septiembre 2023 minuta",
+      "relevant_docs": [
+        "minuta_05_09_23"
+      ],
+      "retrieved_top5": [
+        "minuta_05_09_23",
+        "comunicado_05_09_23"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "ENCABEZADO",
+      "top1_section_correct": false,
+      "top1_importance": 0.25
+    },
+    {
+      "id": "q11",
+      "query": "Federal Reserve inflation employment interest rate decision 2025",
+      "relevant_docs": [
+        "fed_press_jan25"
+      ],
+      "retrieved_top5": [
+        "fed_press_jan25"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "ENCABEZADO",
+      "top1_section_correct": false,
+      "top1_importance": 0.6
+    },
+    {
+      "id": "q12",
+      "query": "FOMC Powell federal funds rate analysis",
+      "relevant_docs": [
+        "2023_07_26_jpm_fed_powell_fomc_analysis"
+      ],
+      "retrieved_top5": [
+        "fed_press_jan25",
+        "2024_05_03_global_data_watch_op",
+        "2023_07_26_jpm_fed_powell_fomc_analysis"
+      ],
+      "precision_at_1": 0.0,
+      "recall_at_5": 1.0,
+      "mrr": 0.3333,
+      "ndcg_at_5": 0.5,
+      "top1_section": "RIESGOS",
+      "top1_section_correct": false,
+      "top1_importance": 0.747
+    },
+    {
+      "id": "q13",
+      "query": "commodity prices emerging markets FX positions 2021",
+      "relevant_docs": [
+        "2021_05_10_acceleration_of_commodity_prices_does_not_warrant_long_term_em_fx_positions"
+      ],
+      "retrieved_top5": [
+        "2021_05_10_acceleration_of_commodity_prices_does_not_warrant_long_term_em_fx_positions"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "CONTEXTO_EXTERNO",
+      "top1_section_correct": true,
+      "top1_importance": 0.2
+    },
+    {
+      "id": "q14",
+      "query": "trade war tariffs global economy recession risk 2025",
+      "relevant_docs": [
+        "2025_02_03_life_during_trade_wartime"
+      ],
+      "retrieved_top5": [
+        "2025_02_03_life_during_trade_wartime",
+        "2025_02_02_us_natural_gas_ngls_and_power_tariff_reality_check_for_energy",
+        "2025_01_31_exceptional_but_not_bulletproof",
+        "2024_12_06_frontier_local_markets_2025_outlook"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "CONTEXTO_EXTERNO",
+      "top1_section_correct": false,
+      "top1_importance": 0.25
+    },
+    {
+      "id": "q15",
+      "query": "US natural gas energy tariffs 2025 outlook",
+      "relevant_docs": [
+        "2025_02_02_us_natural_gas_ngls_and_power_tariff_reality_check_for_energy"
+      ],
+      "retrieved_top5": [
+        "2025_02_02_us_natural_gas_ngls_and_power_tariff_reality_check_for_energy"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "CONTEXTO_EXTERNO",
+      "top1_section_correct": false,
+      "top1_importance": 0.4
+    },
+    {
+      "id": "q16",
+      "query": "emerging markets external financing outlook 2024",
+      "relevant_docs": [
+        "2024_11_20_em_edge_economies_outlook_for_external_financing"
+      ],
+      "retrieved_top5": [
+        "2024_11_20_em_edge_economies_outlook_for_external_financing",
+        "2024_12_06_frontier_local_markets_2025_outlook",
+        "2024_05_03_global_data_watch_op"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "DATOS",
+      "top1_section_correct": false,
+      "top1_importance": 0.35
+    },
+    {
+      "id": "q17",
+      "query": "frontier local markets outlook 2025",
+      "relevant_docs": [
+        "2024_12_06_frontier_local_markets_2025_outlook"
+      ],
+      "retrieved_top5": [
+        "2024_12_06_frontier_local_markets_2025_outlook"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "PROYECCION",
+      "top1_section_correct": true,
+      "top1_importance": 0.78
+    },
+    {
+      "id": "q18",
+      "query": "tipo de cambio dólar peso chileno Monitor PM",
+      "relevant_docs": [
+        "textos_monitor_pm"
+      ],
+      "retrieved_top5": [
+        "textos_monitor_pm"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "MERCADO_CAMBIARIO",
+      "top1_section_correct": true,
+      "top1_importance": 0.57
+    },
+    {
+      "id": "q19",
+      "query": "expectativas TPM implícita tasas swap política monetaria",
+      "relevant_docs": [
+        "textos_monitor_pm"
+      ],
+      "retrieved_top5": [
+        "textos_monitor_pm"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "TASAS_TPM",
+      "top1_section_correct": true,
+      "top1_importance": 0.653
+    },
+    {
+      "id": "q20",
+      "query": "spread bonos bancarios renta fija Chile",
+      "relevant_docs": [
+        "textos_monitor_pm"
+      ],
+      "retrieved_top5": [
+        "textos_monitor_pm"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "SPREAD_BONOS",
+      "top1_section_correct": true,
+      "top1_importance": 0.2
+    },
+    {
+      "id": "q21",
+      "query": "inflación Chile presiones inflacionarias riesgos 2022 2023",
+      "relevant_docs": [
+        "comunicado_06_09_22",
+        "comunicado_13_07_22",
+        "comunicado_05_09_23"
+      ],
+      "retrieved_top5": [
+        "comunicado_13_07_22",
+        "comunicado_06_09_22",
+        "minuta_05_09_23"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 0.7654,
+      "top1_section": "DECISION",
+      "top1_section_correct": false,
+      "top1_importance": 0.933
+    },
+    {
+      "id": "q22",
+      "query": "decisión unánime consejo banco central Chile",
+      "relevant_docs": [
+        "comunicado_02_04_24",
+        "comunicado_05_09_23",
+        "comunicado_13_07_22",
+        "comunicado_28_07_23"
+      ],
+      "retrieved_top5": [
+        "comunicado_05_09_23",
+        "comunicado_28_07_23",
+        "textos_monitor_pm",
+        "comunicado_02_04_24",
+        "comunicado_13_07_22"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 0.9558,
+      "top1_section": "DECISION",
+      "top1_section_correct": true,
+      "top1_importance": 0.947
+    },
+    {
+      "id": "q23",
+      "query": "perspectivas crecimiento económico proyección 2024",
+      "relevant_docs": [
+        "minuta_23_05_24",
+        "comunicado_31_01_24"
+      ],
+      "retrieved_top5": [
+        "textos_monitor_pm"
+      ],
+      "precision_at_1": 0.0,
+      "recall_at_5": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0,
+      "top1_section": "RESUMEN",
+      "top1_section_correct": false,
+      "top1_importance": 0.717
+    },
+    {
+      "id": "q24",
+      "query": "contexto externo economía global inflación mundial riesgos",
+      "relevant_docs": [
+        "comunicado_02_04_24",
+        "comunicado_05_09_23",
+        "comunicado_06_09_22"
+      ],
+      "retrieved_top5": [
+        "comunicado_02_04_24",
+        "comunicado_31_01_24",
+        "comunicado_05_09_23",
+        "minuta_17_01_13",
+        "comunicado_28_07_23"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 0.7039,
+      "top1_section": "DECISION",
+      "top1_section_correct": false,
+      "top1_importance": 0.933
+    },
+    {
+      "id": "q25",
+      "query": "mercado financiero renta variable IPSA bolsa acciones",
+      "relevant_docs": [
+        "textos_monitor_pm"
+      ],
+      "retrieved_top5": [
+        "textos_monitor_pm"
+      ],
+      "precision_at_1": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "top1_section": "RENTA_VARIABLE",
+      "top1_section_correct": true,
+      "top1_importance": 0.383
+    }
+  ]
+}
