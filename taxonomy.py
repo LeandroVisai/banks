@@ -323,10 +323,46 @@ ENTITY_KEYWORDS: dict[str, list[str]] = {
     ],
     "FEDERAL_RESERVE": [
         "federal reserve", "the fed", "fomc", "fed funds",
-        "jerome powell",
+        "jerome powell", "powell",
     ],
-    "ECB": ["european central bank", "ecb", "banco central europeo"],
+    "ECB": ["european central bank", "ecb", "banco central europeo", "bce"],
     "IMF": ["imf", "fmi", "fondo monetario internacional"],
+    "BANCO_CHINA": [
+        "peoples bank of china", "pboc", "banco popular de china",
+        "banco central de china",
+    ],
+    "BANCO_JAPON": [
+        "bank of japan", "boj", "banco de japon",
+        "banco central de japon", "banca de japon",
+    ],
+    "BANCO_INGLATERRA": [
+        "bank of england", "boe", "banco de inglaterra",
+    ],
+    "OCDE": [
+        "ocde", "oecd",
+        "organizacion para la cooperacion y el desarrollo economicos",
+        "paises ocde", "miembros ocde",
+    ],
+    "BIS": [
+        "bank for international settlements",
+        "banco de pagos internacionales", "bpi",
+        "bis working paper", "bis quarterly",
+    ],
+    "PERSONA_LAGARDE": [
+        "lagarde", "christine lagarde",
+    ],
+    "PERSONA_BCCH": [
+        "rosanna costa", "mario marcel", "alberto naudon",
+        "pablo garcia silva", "stephany griffith-jones",
+        "presidente del banco central", "presidenta del banco central",
+    ],
+    "DOCUMENTO_CLAVE_BCCH": [
+        "ipom", "informe de politica monetaria",
+        "ief", "informe de estabilidad financiera",
+        "fcic", "facilidad de credito en condiciones inusuales",
+        "ifo", "informe financiero",
+        "informe de percepciones de negocios",
+    ],
     "PAIS_CHILE": [
         "chile", "chilena", "chileno",
         "clp",             # código ISO del peso chileno
@@ -339,6 +375,13 @@ ENTITY_KEYWORDS: dict[str, list[str]] = {
     "PAIS_US": ["estados unidos", "united states", "eeuu", "ee.uu.", "dxy"],
     "PAIS_EUROZONE": ["eurozona", "euro area", "zona euro"],
     "PAIS_CHINA": ["china", "chinese", "beijing"],
+    "PAIS_JAPON": ["japon", "japan", "japanese"],
+    "PAIS_UK": ["reino unido", "united kingdom", "uk", "great britain", "britain"],
+    "PAIS_BRASIL": ["brasil", "brazil", "brazilian", "bcb", "banco central do brasil"],
+    "PAIS_LATAM": [
+        "america latina", "latin america", "latam",
+        "colombia", "peru", "mexico", "argentina", "brasil",
+    ],
 }
 
 
