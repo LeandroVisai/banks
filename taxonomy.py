@@ -129,11 +129,12 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "riesgo soberano", "riesgo pais", "country risk",
         "cds", "credit default swap", "spread cds",
         "calificacion soberana", "rating soberano", "sovereign rating",
-        "credit rating", "calificacion crediticia",
-        "moody's", "fitch ratings", "standard & poor's", "s&p global",
+        "calificacion crediticia",
+        "moody's", "fitch ratings", "s&p global ratings",
         "spread soberano", "sovereign spread",
         "embi", "embi+", "embi global",
         "downgrade soberano", "upgrade soberano",
+        "rebaja de clasificacion", "rebaja de calificacion",
     ], "HIGH"),
 
     "CREDITO": ([
@@ -193,6 +194,32 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "spread bonos bancarios", "spread bancario",
         "montos transados", "profundidad de mercado",
         "baja profundidad", "escasos montos", "volumen transado",
+    ], "MEDIUM"),
+
+    "MERCADO_INMOBILIARIO": ([
+        "mercado inmobiliario", "real estate", "housing market",
+        "precios de vivienda", "precio de vivienda", "housing prices", "house prices",
+        "credito hipotecario", "creditos hipotecarios",
+        "mortgage", "mortgage rate", "tasa hipotecaria",
+        "construccion", "sector construccion", "construction",
+        "edificacion", "permisos de edificacion",
+        "vivienda nueva", "vivienda usada",
+        "venta de viviendas", "ventas inmobiliarias",
+        "ihp", "indice de precios de vivienda",
+        "inmobiliario", "inmobiliaria",
+    ], "MEDIUM"),
+
+    "SECTOR_EXTERNO": ([
+        "sector externo", "external sector",
+        "balanza de pagos", "balance of payments",
+        "deuda externa", "external debt",
+        "inversion extranjera directa", "ied", "foreign direct investment", "fdi",
+        "remesas", "remittances",
+        "flujos de capital", "capital flows", "capital inflows", "capital outflows",
+        "salida de capitales", "entrada de capitales",
+        "reservas internacionales", "international reserves", "reservas del banco central",
+        "cuenta financiera", "financial account",
+        "posicion de inversion internacional",
     ], "MEDIUM"),
 }
 

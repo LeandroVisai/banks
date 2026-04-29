@@ -223,5 +223,41 @@
     "expected_variable": "VOLATILIDAD",
     "expected_importance_min": 0.50,
     "notes": "Monitor PM sección mercado renta variable"
+  },
+  {
+    "id": "q26",
+    "query": "déficit fiscal gasto público presupuesto 2024",
+    "relevant_docs": ["2024_05_03_global_data_watch_op", "textos_monitor_pm"],
+    "expected_section": "ANALISIS",
+    "expected_variable": "POLITICA_FISCAL",
+    "expected_importance_min": 0.50,
+    "notes": "Test variable nueva POLITICA_FISCAL — JPM Global Data Watch tiene 27 chunks fiscales"
+  },
+  {
+    "id": "q27",
+    "query": "rebaja calificación soberana riesgo país CDS",
+    "relevant_docs": ["textos_monitor_pm", "minuta_17_01_13"],
+    "expected_section": "FINANCIAMIENTO_EXTERIOR",
+    "expected_variable": "DEUDA_SOBERANA",
+    "expected_importance_min": 0.55,
+    "notes": "Test variable nueva DEUDA_SOBERANA — Monitor PM concentra 643 chunks de spreads/CDS"
+  },
+  {
+    "id": "q28",
+    "query": "cuenta corriente balanza de pagos financiamiento externo",
+    "relevant_docs": ["2024_11_20_em_edge_economies_outlook_for_external_financing", "2024_12_06_frontier_local_markets_2025_outlook"],
+    "expected_section": "ANALISIS",
+    "expected_variable": "SECTOR_EXTERNO",
+    "expected_importance_min": 0.50,
+    "notes": "Test variable nueva SECTOR_EXTERNO — JPM EM Edge tiene 7 chunks de financiamiento externo"
+  },
+  {
+    "id": "q29",
+    "query": "precios vivienda crédito hipotecario mercado inmobiliario",
+    "relevant_docs": ["2024_05_03_global_data_watch_op"],
+    "expected_section": "ANALISIS",
+    "expected_variable": "MERCADO_INMOBILIARIO",
+    "expected_importance_min": 0.45,
+    "notes": "Test variable nueva MERCADO_INMOBILIARIO — JPM Global Data Watch tiene 79 chunks housing"
   }
 ]

@@ -118,6 +118,13 @@ DOC_TYPE_HINTS = {
     "MONITOR_PM": ["monitor pm"],
 }
 
+# Importa los patrones de variables/secciones de la taxonomía oficial
+try:
+    from taxonomy import build_variable_patterns
+    _VARIABLE_PATTERNS = build_variable_patterns()
+except Exception:
+    _VARIABLE_PATTERNS = {}
+
 
 def parse_query(query: str) -> dict[str, Any]:
     norm = normalize(query)
@@ -126,7 +133,12 @@ def parse_query(query: str) -> dict[str, Any]:
         dt for dt, hints in DOC_TYPE_HINTS.items()
         if any(h in norm for h in hints)
     ]
-    return {"years": years, "doc_types": doc_types, "norm_text": norm}
+    # Detecta variables económicas en la query (replica 04_search.py)
+    variables = [
+        var_name for var_name, pat in _VARIABLE_PATTERNS.items()
+        if pat.search(norm)
+    ]
+    return {"years": years, "doc_types": doc_types, "variables": variables, "norm_text": norm}
 
 
 # ── Búsqueda offline ─────────────────────────────────────────────────────────
@@ -178,9 +190,18 @@ def search_offline(
         if parsed["doc_types"] and c["doc_type_category"] in parsed["doc_types"]:
             doctype_factor = 1.15
 
+        # Bonus por variable económica match (replica filtro de 04_search.py)
+        variable_factor = 1.0
+        if parsed["variables"]:
+            chunk_vars = set(c.get("economic_variables", {}).keys())
+            if any(v in chunk_vars for v in parsed["variables"]):
+                variable_factor = 1.30
+            elif c.get("section_type") == "DECISION":
+                variable_factor = 1.10  # DECISION nunca se descarta (ver CLAUDE.md)
+
         # Importance boost
         importance = c.get("importance_score", 0.0)
-        final = (norm_bm25 * year_factor * doctype_factor) + importance_boost * importance
+        final = (norm_bm25 * year_factor * doctype_factor * variable_factor) + importance_boost * importance
 
         candidates.append({
             "chunk": c,
