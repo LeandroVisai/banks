@@ -3,6 +3,7 @@ pypdf==4.0.1
 
 # NLP / embeddings
 sentence-transformers>=2.7.0
+transformers>=4.51.0
 torch>=2.0.1
 numpy>=1.24.3
 

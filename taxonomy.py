@@ -112,6 +112,30 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "gas natural", "natural gas", "mineral",
     ], "HIGH"),
 
+    "POLITICA_FISCAL": ([
+        "politica fiscal", "fiscal policy",
+        "deficit fiscal", "superavit fiscal", "balance fiscal",
+        "balance estructural", "regla fiscal",
+        "gasto publico", "gasto fiscal", "government spending",
+        "gasto del gobierno", "presupuesto", "ley de presupuestos", "budget",
+        "ingresos fiscales", "recaudacion fiscal", "tax revenue",
+        "consolidacion fiscal", "ajuste fiscal", "estimulo fiscal", "fiscal stimulus",
+        "deuda publica", "public debt", "debt-to-gdp", "deuda como porcentaje",
+        "dipres", "tesoreria general",
+    ], "HIGH"),
+
+    "DEUDA_SOBERANA": ([
+        "deuda soberana", "sovereign debt",
+        "riesgo soberano", "riesgo pais", "country risk",
+        "cds", "credit default swap", "spread cds",
+        "calificacion soberana", "rating soberano", "sovereign rating",
+        "credit rating", "calificacion crediticia",
+        "moody's", "fitch ratings", "standard & poor's", "s&p global",
+        "spread soberano", "sovereign spread",
+        "embi", "embi+", "embi global",
+        "downgrade soberano", "upgrade soberano",
+    ], "HIGH"),
+
     "CREDITO": ([
         "credito", "prestamos", "credit", "loans", "bank lending",
         "colocaciones", "credito bancario", "acceso al credito",
