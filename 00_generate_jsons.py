@@ -61,11 +61,14 @@ SECTION_TITLE_RE = re.compile(
     r"^([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s]{2,60})\s*$"
 )
 
-# Fechas ISO-ish en nombre de archivo o texto
+# Fechas ISO-ish en nombre de archivo o texto.
+# Aceptamos separadores '.', '-', '_' y años de 2 o 4 dígitos para capturar
+# nombres como 'Comunicado_31-01-24.pdf' y '2024.05.03 Report.pdf'.
 DATE_PATTERNS = [
-    # 2022-07-13, 13-07-2022
-    re.compile(r"(\d{4})[-_/](\d{1,2})[-_/](\d{1,2})"),
-    re.compile(r"(\d{1,2})[-_/](\d{1,2})[-_/](\d{4})"),
+    # 2022-07-13, 2022.07.13
+    re.compile(r"(\d{4})[._/-](\d{1,2})[._/-](\d{1,2})"),
+    # 13-07-2022, 13.07.22
+    re.compile(r"(\d{1,2})[._/-](\d{1,2})[._/-](\d{2,4})"),
     # 13 de julio de 2022
     re.compile(
         r"(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|"
@@ -202,7 +205,10 @@ def detect_date(filename: str, first_page_text: str) -> Optional[str]:
                 y, m_, d = groups
                 return f"{int(y):04d}-{int(m_):02d}-{int(d):02d}"
             d, m_, y = groups
-            return f"{int(y):04d}-{int(m_):02d}-{int(d):02d}"
+            year = int(y)
+            if year < 100:
+                year += 2000 if year < 50 else 1900
+            return f"{year:04d}-{int(m_):02d}-{int(d):02d}"
         except (ValueError, KeyError):
             continue
 

@@ -44,6 +44,20 @@ from taxonomy import (
 # ---------------------------------------------------------------------------
 
 DB_NAME = os.getenv("PGDATABASE", "rag_banco")
+TABLE_PREFIX = os.getenv("RAG_TABLE_PREFIX", "")
+
+
+def _table_name(base: str) -> str:
+    name = f"{TABLE_PREFIX}{base}"
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise ValueError(
+            f"Nombre de tabla inválido generado por RAG_TABLE_PREFIX: {name!r}"
+        )
+    return name
+
+
+DOCUMENTS_TABLE = _table_name("documents")
+CHUNKS_TABLE = _table_name("chunks")
 
 # Parámetros de retrieval
 RECALL_N = 50           # top-N por cada rama antes de fusionar
@@ -74,6 +88,10 @@ MONTH_NAMES: dict[str, int] = {
 }
 MONTH_RE = re.compile(
     r"\b(" + "|".join(sorted(MONTH_NAMES, key=len, reverse=True)) + r")\b"
+)
+
+FILENAME_DATE_RE = re.compile(
+    r"(?:^|[^0-9])(?:(\d{4})[._/-](\d{2})[._/-](\d{2})|(\d{2})[._/-](\d{2})[._/-](\d{2}))(?:[^0-9]|$)"
 )
 
 # Patrones para tipo de documento — específicos y más descriptivos que los
@@ -162,6 +180,33 @@ def connect():
     )
 
 
+def get_db_embedding_dim(conn) -> int | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT format_type(a.atttypid, a.atttypmod)
+            FROM pg_attribute a
+            JOIN pg_class c ON c.oid = a.attrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+                            AND c.relname = %s
+              AND a.attname = 'embedding'
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+                        """,
+                        (CHUNKS_TABLE,)
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+
+    type_expr = row[0] or ""
+    match = re.search(r"vector\((\d+)\)", type_expr)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
 # ---------------------------------------------------------------------------
 # Filtros SQL — comparten WHERE entre vector y lexical
 # ---------------------------------------------------------------------------
@@ -180,19 +225,6 @@ def build_filters_sql(parsed: dict) -> tuple[str, list]:
     if parsed["year_to"] is not None:
         clauses.append("COALESCE(EXTRACT(YEAR FROM c.chunk_date)::int, d.document_year) <= %s")
         params.append(parsed["year_to"])
-    if parsed.get("month") is not None:
-        # chunk_date es DATE (Monitor PM); document_date es TEXT ISO YYYY-MM-DD (PDFs).
-        # El regex guard evita fallar cuando document_date es solo el año (fallback).
-        clauses.append("""
-            COALESCE(
-                EXTRACT(MONTH FROM c.chunk_date)::int,
-                CASE WHEN d.document_date ~ '^\\d{4}-\\d{2}-\\d{2}$'
-                     THEN EXTRACT(MONTH FROM d.document_date::date)::int
-                     ELSE NULL
-                END
-            ) = %s
-        """)
-        params.append(parsed["month"])
     if parsed["sections"]:
         clauses.append("c.section_type = ANY(%s)")
         params.append(parsed["sections"])
@@ -205,6 +237,48 @@ def build_filters_sql(parsed: dict) -> tuple[str, list]:
 
     sql = " AND ".join(clauses) if clauses else "TRUE"
     return sql, params
+
+
+def _extract_month_from_row(row: dict) -> int | None:
+    chunk_date = row.get("chunk_date")
+    if chunk_date is not None:
+        month = getattr(chunk_date, "month", None)
+        if month is not None:
+            return int(month)
+        if isinstance(chunk_date, str) and len(chunk_date) >= 7 and chunk_date[4] == "-":
+            try:
+                return int(chunk_date[5:7])
+            except ValueError:
+                pass
+
+    document_date = row.get("document_date")
+    if isinstance(document_date, str):
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", document_date):
+            return int(document_date[5:7])
+        if re.match(r"^\d{2}[._/-]\d{2}[._/-]\d{2,4}$", document_date):
+            parts = re.split(r"[._/-]", document_date)
+            if len(parts) == 3:
+                try:
+                    return int(parts[1])
+                except ValueError:
+                    pass
+
+    filename = row.get("filename") or ""
+    match = FILENAME_DATE_RE.search(filename)
+    if match:
+        month_part = match.group(2) or match.group(5)
+        if month_part:
+            try:
+                return int(month_part)
+            except ValueError:
+                return None
+    return None
+
+
+def _row_matches_month(row: dict, month: int | None) -> bool:
+    if month is None:
+        return True
+    return _extract_month_from_row(row) == month
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +304,8 @@ def vector_recall(conn, query_embedding: list[float], parsed: dict, n: int) -> l
         d.filename, d.doc_type_category, d.document_date,
         1 - (c.embedding <=> %s::vector) AS vector_score,
         c.embedding
-    FROM chunks c
-    JOIN documents d USING (document_id)
+    FROM {CHUNKS_TABLE} c
+    JOIN {DOCUMENTS_TABLE} d USING (document_id)
     WHERE {filter_sql}
     ORDER BY c.embedding <=> %s::vector
     LIMIT %s
@@ -260,8 +334,8 @@ def lexical_recall(conn, query_text: str, parsed: dict, n: int) -> list[dict]:
         d.filename, d.doc_type_category, d.document_date,
         ts_rank_cd(c.text_tsv, plainto_tsquery('simple', %s)) AS lexical_score,
         c.embedding
-    FROM chunks c
-    JOIN documents d USING (document_id)
+    FROM {CHUNKS_TABLE} c
+    JOIN {DOCUMENTS_TABLE} d USING (document_id)
     WHERE ({filter_sql})
       AND c.text_tsv @@ plainto_tsquery('simple', %s)
     ORDER BY lexical_score DESC
@@ -270,6 +344,37 @@ def lexical_recall(conn, query_text: str, parsed: dict, n: int) -> list[dict]:
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, [query_text] + params + [query_text, n])
         return cur.fetchall()
+
+
+def date_importance_fallback(conn, parsed: dict, n: int) -> list[dict]:
+    filter_sql, params = build_filters_sql(parsed)
+    sql = f"""
+    SELECT
+        c.chunk_id,
+        c.document_id,
+        c.text,
+        c.page_start, c.page_end,
+        c.section_type,
+        c.importance_score,
+        c.economic_variables,
+        c.numeric_values,
+        c.tags,
+        c.chunk_date,
+        d.filename, d.doc_type_category, d.document_date,
+        c.embedding
+    FROM {CHUNKS_TABLE} c
+    JOIN {DOCUMENTS_TABLE} d USING (document_id)
+    WHERE {filter_sql}
+    ORDER BY c.importance_score DESC, c.page_start ASC
+    LIMIT %s
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, params + [n])
+        rows = cur.fetchall()
+
+    if parsed.get("month") is not None:
+        rows = [row for row in rows if _row_matches_month(row, parsed["month"])]
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +488,7 @@ def load_embedding_model():
     if _MODEL is not None:
         return _MODEL, _MODEL_NAME
     from sentence_transformers import SentenceTransformer
-    model_id = os.environ.get("RAG_EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+    model_id = os.environ.get("RAG_EMBEDDING_MODEL", "EmbeddingGemma")
     local_path = _MODELS_DIR / model_id
     name = str(local_path) if local_path.exists() else model_id
     try:
@@ -424,6 +529,12 @@ def search(query: str, k: int = 5, use_mmr: bool = True) -> list[dict]:
     query_vec = embed_query(parsed["clean_query"])
 
     with connect() as conn:
+        db_dim = get_db_embedding_dim(conn)
+        if db_dim is not None and query_vec.shape[0] != db_dim:
+            if query_vec.shape[0] > db_dim:
+                query_vec = query_vec[:db_dim]
+            else:
+                query_vec = np.pad(query_vec, (0, db_dim - query_vec.shape[0]))
         fused = _recall_and_fuse(conn, query_vec, parsed)
 
     # Filters on variables/sections can be too strict — relax them if no results.
@@ -432,6 +543,13 @@ def search(query: str, k: int = 5, use_mmr: bool = True) -> list[dict]:
         relaxed_parsed = dict(parsed, variables=[], sections=[])
         with connect() as conn:
             fused = _recall_and_fuse(conn, query_vec, relaxed_parsed)
+
+    if parsed.get("month") is not None:
+        fused = [hit for hit in fused if _row_matches_month(hit, parsed["month"])]
+
+    if not fused:
+        with connect() as conn:
+            fused = date_importance_fallback(conn, parsed, n=max(k * 4, 20))
 
     if use_mmr and fused:
         fused = mmr_select(fused, query_vec, k=min(k * 2, len(fused)))

@@ -4,12 +4,14 @@ PASO 3 — Base de datos PostgreSQL con pgvector.
 
 Schema (normalizado):
   documents                  → 1 fila por PDF (metadata del documento)
-  chunks                     → N filas por documento, con embedding vector(384)
+  chunks                     → N filas por documento, con embedding vector(dim)
                               y text_tsv (tsvector) para BM25 híbrido.
+                              La dimensión se auto-detecta desde chunks_vectorized.json
+                              o mediante la variable de entorno RAG_EMBEDDING_DIM.
 
 Índices:
-  chunks.embedding           → HNSW con vector_ip_ops (embeddings normalizados
-                              → inner product equivale a cosine similarity)
+  chunks.embedding           → HNSW con vector_cosine_ops (embeddings normalizados
+                              L2 → cosine similarity)
   chunks.text_tsv            → GIN (full-text, config 'simple' para multilingüe)
   chunks.tags                → GIN sobre TEXT[]
   chunks.economic_variables  → GIN sobre JSONB
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -40,18 +43,57 @@ import psycopg2
 from psycopg2.extras import execute_values, Json
 
 DB_NAME = os.getenv("PGDATABASE", "rag_banco")
+TABLE_PREFIX = os.getenv("RAG_TABLE_PREFIX", "gemma_")
+
+
+def _table_name(base: str) -> str:
+    name = f"{TABLE_PREFIX}{base}"
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise ValueError(
+            f"Nombre de tabla inválido generado por RAG_TABLE_PREFIX: {name!r}"
+        )
+    return name
+
+
+DOCUMENTS_TABLE = _table_name("documents")
+CHUNKS_TABLE = _table_name("chunks")
 
 INPUT_DOCUMENTS = Path("logs/documents.json")
 INPUT_CHUNKS = Path("logs/chunks_vectorized.json")
 
 # ---------------------------------------------------------------------------
+# Dimensión del embedding — dinámica según el modelo usado
+# ---------------------------------------------------------------------------
+
+def detect_embedding_dim() -> int:
+    """Detecta la dimensión del embedding en orden de prioridad:
+    1. Variable de entorno RAG_EMBEDDING_DIM
+    2. Campo embedding_dim en el primer chunk de chunks_vectorized.json
+    3. Longitud real del primer embedding en chunks_vectorized.json
+    4. Fallback 384 (multilingual-e5-small, compatibilidad con main branch)
+    """
+    env_dim = os.getenv("RAG_EMBEDDING_DIM")
+    if env_dim:
+        return int(env_dim)
+    if INPUT_CHUNKS.exists():
+        with open(INPUT_CHUNKS, "r", encoding="utf-8") as f:
+            chunks = json.load(f)
+        if chunks:
+            dim = chunks[0].get("embedding_dim") or len(chunks[0].get("embedding") or [])
+            if dim:
+                return int(dim)
+    return 384
+
+
+# ---------------------------------------------------------------------------
 # SQL (schema)
 # ---------------------------------------------------------------------------
 
-SCHEMA_SQL = r"""
+def build_schema_sql(dim: int) -> str:
+    return f"""
 CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE TABLE IF NOT EXISTS documents (
+CREATE TABLE IF NOT EXISTS {DOCUMENTS_TABLE} (
     document_id         TEXT PRIMARY KEY,
     filename            TEXT NOT NULL,
     filepath            TEXT NOT NULL,
@@ -66,9 +108,9 @@ CREATE TABLE IF NOT EXISTS documents (
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS chunks (
+CREATE TABLE IF NOT EXISTS {CHUNKS_TABLE} (
     chunk_id           TEXT PRIMARY KEY,
-    document_id        TEXT NOT NULL REFERENCES documents(document_id) ON DELETE CASCADE,
+    document_id        TEXT NOT NULL REFERENCES {DOCUMENTS_TABLE}(document_id) ON DELETE CASCADE,
     text               TEXT NOT NULL,
     text_tsv           TSVECTOR,
     char_count         INT,
@@ -77,16 +119,16 @@ CREATE TABLE IF NOT EXISTS chunks (
     position_in_doc    INT,
     section_type       TEXT NOT NULL DEFAULT 'CONTENIDO',
     section_confidence REAL DEFAULT 0,
-    economic_variables JSONB DEFAULT '{}'::jsonb,
+    economic_variables JSONB DEFAULT '{{}}'::jsonb,
     numeric_values     JSONB DEFAULT '[]'::jsonb,
-    entities           JSONB DEFAULT '{}'::jsonb,
-    temporal_refs      JSONB DEFAULT '{}'::jsonb,
-    tags               TEXT[] DEFAULT '{}',
+    entities           JSONB DEFAULT '{{}}'::jsonb,
+    temporal_refs      JSONB DEFAULT '{{}}'::jsonb,
+    tags               TEXT[] DEFAULT '{{}}',
     importance_score   REAL NOT NULL DEFAULT 0,
     is_policy_decision BOOLEAN DEFAULT FALSE,
     is_forward_looking BOOLEAN DEFAULT FALSE,
     chunk_date         DATE,
-    embedding          vector(384) NOT NULL,
+    embedding          vector({dim}) NOT NULL,
     embedding_model    TEXT,
     created_at         TIMESTAMPTZ DEFAULT NOW()
 );
@@ -94,29 +136,29 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 INDICES_SQL = [
     # documents
-    "CREATE INDEX IF NOT EXISTS idx_docs_type ON documents(doc_type_category)",
-    "CREATE INDEX IF NOT EXISTS idx_docs_institution ON documents(institution)",
-    "CREATE INDEX IF NOT EXISTS idx_docs_year ON documents(document_year)",
+    f"CREATE INDEX IF NOT EXISTS idx_docs_type ON {DOCUMENTS_TABLE}(doc_type_category)",
+    f"CREATE INDEX IF NOT EXISTS idx_docs_institution ON {DOCUMENTS_TABLE}(institution)",
+    f"CREATE INDEX IF NOT EXISTS idx_docs_year ON {DOCUMENTS_TABLE}(document_year)",
     # chunks — filtros
-    "CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id)",
-    "CREATE INDEX IF NOT EXISTS idx_chunks_section ON chunks(section_type)",
-    "CREATE INDEX IF NOT EXISTS idx_chunks_importance ON chunks(importance_score DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_chunks_policy ON chunks(is_policy_decision) "
-    "WHERE is_policy_decision = TRUE",
-    "CREATE INDEX IF NOT EXISTS idx_chunks_fwd ON chunks(is_forward_looking) "
-    "WHERE is_forward_looking = TRUE",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_document ON {CHUNKS_TABLE}(document_id)",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_section ON {CHUNKS_TABLE}(section_type)",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_importance ON {CHUNKS_TABLE}(importance_score DESC)",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_policy ON {CHUNKS_TABLE}(is_policy_decision) "
+    f"WHERE is_policy_decision = TRUE",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_fwd ON {CHUNKS_TABLE}(is_forward_looking) "
+    f"WHERE is_forward_looking = TRUE",
     # chunks — GIN
-    "CREATE INDEX IF NOT EXISTS idx_chunks_tags ON chunks USING GIN(tags)",
-    "CREATE INDEX IF NOT EXISTS idx_chunks_variables ON chunks USING GIN(economic_variables jsonb_path_ops)",
-    "CREATE INDEX IF NOT EXISTS idx_chunks_entities ON chunks USING GIN(entities jsonb_path_ops)",
-    "CREATE INDEX IF NOT EXISTS idx_chunks_tsv ON chunks USING GIN(text_tsv)",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_tags ON {CHUNKS_TABLE} USING GIN(tags)",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_variables ON {CHUNKS_TABLE} USING GIN(economic_variables jsonb_path_ops)",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_entities ON {CHUNKS_TABLE} USING GIN(entities jsonb_path_ops)",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_tsv ON {CHUNKS_TABLE} USING GIN(text_tsv)",
     # chunks — vector (HNSW con cosine distance). Los embeddings están
     # normalizados L2, así que cosine es numéricamente equivalente a inner
     # product; usamos vector_cosine_ops porque el operador <=> es el más
     # legible y convencional en queries.
-    "CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw ON chunks "
-    "USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)",
-    "CREATE INDEX IF NOT EXISTS idx_chunks_chunk_date ON chunks(chunk_date) WHERE chunk_date IS NOT NULL",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw ON {CHUNKS_TABLE} "
+    f"USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_chunk_date ON {CHUNKS_TABLE}(chunk_date) WHERE chunk_date IS NOT NULL",
 ]
 
 
@@ -172,7 +214,9 @@ def check_pgvector_available() -> bool:
 # ---------------------------------------------------------------------------
 
 def cmd_setup(force_drop: bool = False) -> int:
-    print(f"[03] SETUP — base de datos '{DB_NAME}'")
+    dim = detect_embedding_dim()
+    print(f"[03] SETUP — base de datos '{DB_NAME}', embedding dim={dim}")
+    print(f"[03] usando prefijo de tablas: '{TABLE_PREFIX}'")
     ensure_database_exists()
 
     if not check_pgvector_available():
@@ -188,15 +232,15 @@ def cmd_setup(force_drop: bool = False) -> int:
         with conn.cursor() as cur:
             if force_drop:
                 print("[03] DROP tablas (reset)")
-                cur.execute("DROP TABLE IF EXISTS chunks CASCADE")
-                cur.execute("DROP TABLE IF EXISTS documents CASCADE")
+                cur.execute(f"DROP TABLE IF EXISTS {CHUNKS_TABLE} CASCADE")
+                cur.execute(f"DROP TABLE IF EXISTS {DOCUMENTS_TABLE} CASCADE")
 
-            cur.execute(SCHEMA_SQL)
+            cur.execute(build_schema_sql(dim))
             # Migración: agrega chunk_date si la tabla ya existía sin ella
             cur.execute(
-                "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS chunk_date DATE"
+                f"ALTER TABLE {CHUNKS_TABLE} ADD COLUMN IF NOT EXISTS chunk_date DATE"
             )
-            print("[03] ✓ schema (documents, chunks) creado")
+            print(f"[03] ✓ schema ({DOCUMENTS_TABLE}, {CHUNKS_TABLE}) creado")
 
             for sql in INDICES_SQL:
                 cur.execute(sql)
@@ -244,12 +288,13 @@ def _build_doc_rows(documents: list[dict]) -> list[tuple]:
     ]
 
 
-def _build_chunk_rows(chunks: list[dict]) -> list[tuple]:
+def _build_chunk_rows(chunks: list[dict], expected_dim: int) -> list[tuple]:
     rows = []
     for chunk in chunks:
         embedding = chunk.get("embedding")
-        if not embedding or len(embedding) != 384:
-            print(f"[03] ⚠ chunk {chunk.get('chunk_id')} sin embedding válido — skip")
+        if not embedding or len(embedding) != expected_dim:
+            print(f"[03] ⚠ chunk {chunk.get('chunk_id')} embedding inválido "
+                  f"(esperado dim={expected_dim}, got {len(embedding) if embedding else 0}) — skip")
             continue
         rows.append((
             chunk["chunk_id"],
@@ -279,8 +324,8 @@ def _build_chunk_rows(chunks: list[dict]) -> list[tuple]:
 def _upsert_documents(cur, doc_rows: list[tuple]) -> None:
     execute_values(
         cur,
-        """
-        INSERT INTO documents (
+        f"""
+        INSERT INTO {DOCUMENTS_TABLE} (
             document_id, filename, filepath, doc_type_category, institution,
             document_date, document_year, total_pages, total_chunks, char_count,
             extraction_warnings
@@ -307,8 +352,8 @@ def _insert_chunks(cur, chunk_rows: list[tuple]) -> None:
     # no puede usarse directamente en el template de execute_values.
     execute_values(
         cur,
-        """
-        INSERT INTO chunks (
+        f"""
+        INSERT INTO {CHUNKS_TABLE} (
             chunk_id, document_id, text, char_count, page_start, page_end,
             position_in_doc, section_type, section_confidence,
             economic_variables, numeric_values, entities, temporal_refs,
@@ -321,7 +366,7 @@ def _insert_chunks(cur, chunk_rows: list[tuple]) -> None:
                  "%s, %s, %s, %s, %s::vector, %s)",
     )
     cur.execute(
-        "UPDATE chunks SET text_tsv = to_tsvector('simple', text) WHERE text_tsv IS NULL"
+        f"UPDATE {CHUNKS_TABLE} SET text_tsv = to_tsvector('simple', text) WHERE text_tsv IS NULL"
     )
 
 
@@ -335,21 +380,46 @@ def cmd_load() -> int:
     with open(INPUT_CHUNKS, "r", encoding="utf-8") as f:
         chunks = json.load(f)
 
-    print(f"[03] LOAD — {len(documents)} documents, {len(chunks)} chunks")
+    dim = detect_embedding_dim()
+    print(f"[03] LOAD — {len(documents)} documents, {len(chunks)} chunks, embedding dim={dim}")
 
     doc_rows = _build_doc_rows(documents)
-    chunk_rows = _build_chunk_rows(chunks)
+    chunk_rows = _build_chunk_rows(chunks, expected_dim=dim)
 
     with connect() as conn:
         conn.autocommit = False
         with conn.cursor() as cur:
+            # Check existing table's embedding dimension (if table exists)
+            cur.execute(
+                "SELECT to_regclass(%s)",
+                (CHUNKS_TABLE,)
+            )
+            if cur.fetchone()[0] is not None:
+                # table exists — inspect the column type via format_type
+                cur.execute(
+                    "SELECT format_type(a.atttypid, a.atttypmod) "
+                    "FROM pg_attribute a JOIN pg_class c ON a.attrelid = c.oid "
+                    "WHERE c.relname = %s AND a.attname = 'embedding'",
+                    (CHUNKS_TABLE,)
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    import re as _re
+
+                    m = _re.search(r"vector\((\d+)\)", row[0])
+                    if m:
+                        existing_dim = int(m.group(1))
+                        if existing_dim != dim:
+                            print(f"[03] ❌ Dimensión de columna en DB no coincide: table {CHUNKS_TABLE} embedding={existing_dim}, pero los embeddings son dim={dim}")
+                            print("[03] Opciones:\n  1) Crear una tabla nueva para este modelo: exporta RAG_TABLE_PREFIX='gemma_' y ejecuta 'setup' antes de 'load'.\n  2) Si quieres sobrescribir la tabla existente, ejecuta 'python 03_database.py reset' para recrearla con la nueva dimensión (destructivo).\n  3) Re-vectoriza con una dimensión compatible (no recomendado si quieres usar EmbeddingGemma).")
+                            return 2
             _upsert_documents(cur, doc_rows)
 
             # Delete existing chunks for re-loaded docs to ensure consistency.
             # ON DELETE CASCADE would only fire on document deletion, not re-load.
             doc_ids = tuple(doc["document_id"] for doc in documents)
             if doc_ids:
-                cur.execute("DELETE FROM chunks WHERE document_id IN %s", (doc_ids,))
+                cur.execute(f"DELETE FROM {CHUNKS_TABLE} WHERE document_id IN %s", (doc_ids,))
                 print("[03] ✓ limpieza de chunks previos")
 
             _insert_chunks(cur, chunk_rows)
@@ -362,25 +432,25 @@ def cmd_load() -> int:
 
 def cmd_stats() -> int:
     with connect() as conn, conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM documents")
+        cur.execute(f"SELECT COUNT(*) FROM {DOCUMENTS_TABLE}")
         n_docs = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM chunks")
+        cur.execute(f"SELECT COUNT(*) FROM {CHUNKS_TABLE}")
         n_chunks = cur.fetchone()[0]
         cur.execute(
-            "SELECT doc_type_category, COUNT(*) FROM chunks c "
-            "JOIN documents d USING(document_id) GROUP BY 1 ORDER BY 2 DESC"
+            f"SELECT doc_type_category, COUNT(*) FROM {CHUNKS_TABLE} c "
+            f"JOIN {DOCUMENTS_TABLE} d USING(document_id) GROUP BY 1 ORDER BY 2 DESC"
         )
         by_type = cur.fetchall()
         cur.execute(
-            "SELECT section_type, COUNT(*) FROM chunks GROUP BY 1 ORDER BY 2 DESC"
+            f"SELECT section_type, COUNT(*) FROM {CHUNKS_TABLE} GROUP BY 1 ORDER BY 2 DESC"
         )
         by_section = cur.fetchall()
         cur.execute(
-            "SELECT AVG(importance_score)::numeric(4,3), "
-            "COUNT(*) FILTER (WHERE importance_score >= 0.6) FROM chunks"
+            f"SELECT AVG(importance_score)::numeric(4,3), "
+            f"COUNT(*) FILTER (WHERE importance_score >= 0.6) FROM {CHUNKS_TABLE}"
         )
         avg_imp, high_imp = cur.fetchone()
-        cur.execute("SELECT COUNT(*) FROM chunks WHERE is_policy_decision")
+        cur.execute(f"SELECT COUNT(*) FROM {CHUNKS_TABLE} WHERE is_policy_decision")
         n_policy = cur.fetchone()[0]
 
     print(f"\n[03] STATS para '{DB_NAME}':")
