@@ -333,6 +333,75 @@ def load_chunks() -> list[dict]:
         return json.load(f)
 
 
+def _compute_signal_strength(
+    text_norm: str,
+    variables: dict,
+    numerics: list,
+) -> dict:
+    """Dirección e intensidad de señal por variable (solo Monitor PM)."""
+    up = bool(_DIR_UP_PATTERN.search(text_norm))
+    down = bool(_DIR_DOWN_PATTERN.search(text_norm))
+
+    if up and not down:
+        direction = "UP"
+    elif down and not up:
+        direction = "DOWN"
+    else:
+        direction = "STABLE"
+
+    magnitude: Optional[float] = None
+    if numerics:
+        try:
+            magnitude = float(numerics[0]["value"].replace(",", "."))
+        except (ValueError, KeyError):
+            pass
+
+    return {var_name: {"direction": direction, "magnitude": magnitude} for var_name in variables}
+
+
+def _compute_trend_direction(text_norm: str, variables: dict) -> dict:
+    """Tendencia por variable detectada (solo PDFs)."""
+    rising = bool(_TREND_RISING_PATTERN.search(text_norm))
+    falling = bool(_TREND_FALLING_PATTERN.search(text_norm))
+    stable = bool(_TREND_STABLE_PATTERN.search(text_norm))
+
+    if rising and falling:
+        direction = "MIXED"
+    elif rising:
+        direction = "RISING"
+    elif falling:
+        direction = "FALLING"
+    elif stable:
+        direction = "STABLE"
+    else:
+        return {}
+
+    return {var_name: direction for var_name in variables}
+
+
+def _extract_forward_guidance(
+    text: str,
+    text_norm: str,
+    variables: dict,
+) -> Optional[str]:
+    """Oración forward-looking más relevante del chunk (solo PDFs con is_forward_looking=True)."""
+    if not FORWARD_LOOKING_PATTERN.search(text_norm):
+        return None
+
+    high_vars = {k for k, v in variables.items() if v["importance"] in ("CRITICAL", "HIGH")}
+    if not high_vars:
+        return None
+
+    for sentence in re.split(r"[.!?]\s+", text):
+        s_norm = normalize_text(sentence)
+        if not FORWARD_LOOKING_PATTERN.search(s_norm):
+            continue
+        for var_name in high_vars:
+            if VARIABLE_PATTERNS[var_name].search(s_norm):
+                return sentence[:300]
+    return None
+
+
 def _count_chunks_per_doc(chunks: list[dict]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for chunk in chunks:
@@ -365,7 +434,24 @@ def _enrich_chunk(chunk: dict, doc: dict, total_chunks_in_doc: int) -> EnrichedC
 
     is_fwd = bool(FORWARD_LOOKING_PATTERN.search(text_norm))
     tags = derive_tags(text_norm, variables, numerics, section_type)
-    importance = calculate_importance(variables, numerics, section_type, entities, is_fwd, text_norm)
+
+    # v1.1 — señales diferenciadas por tipo de fuente
+    if doc_type == "MONITOR_PM":
+        deviation_flag = bool(_DEVIATION_PATTERN.search(text_norm))
+        signal_strength = _compute_signal_strength(text_norm, variables, numerics)
+        trend_direction = None
+        forward_guidance = None
+    else:
+        deviation_flag = False
+        signal_strength = None
+        trend_direction = _compute_trend_direction(text_norm, variables) if variables else None
+        forward_guidance = _extract_forward_guidance(chunk["text"], text_norm, variables) if is_fwd else None
+
+    importance = calculate_importance(
+        variables, numerics, section_type, entities, is_fwd, text_norm, deviation_flag
+    )
+
+    indicator_types = {k: v["indicator_type"] for k, v in variables.items()}
 
     return EnrichedChunk(
         chunk_id=chunk["chunk_id"],
@@ -389,6 +475,12 @@ def _enrich_chunk(chunk: dict, doc: dict, total_chunks_in_doc: int) -> EnrichedC
         is_policy_decision="DECISION_POLITICA" in tags,
         is_forward_looking=is_fwd,
         chunk_date=chunk.get("chunk_date"),
+        indicator_types=indicator_types,
+        signal_strength=signal_strength,
+        deviation_flag=deviation_flag,
+        trend_direction=trend_direction,
+        forward_guidance=forward_guidance,
+        schema_version="1.1",
     )
 
 
