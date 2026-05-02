@@ -38,9 +38,12 @@ import os
 import sys
 from pathlib import Path
 
+from taxonomy import DEFAULT_TEMPORAL_PREFIX, TEMPORAL_SOURCE_PREFIXES
+
 INPUT_CHUNKS = Path("logs/chunks_enriched.json")
 OUTPUT_CHUNKS = Path("logs/chunks_vectorized.json")
 STATS_PATH = Path("logs/vectorization_report.json")
+_LOGS_DIR = Path("logs")
 
 _MODELS_DIR = Path(__file__).parent / "models"
 _DEFAULT_MODEL_ID = os.environ.get("RAG_EMBEDDING_MODEL", "EmbeddingGemma")
@@ -66,7 +69,7 @@ def is_e5_model(name: str) -> bool:
 
 
 def build_embed_text(chunk: dict, model_name: str) -> str:
-    """Construye el texto que va al modelo: prefijo E5 + contexto + texto."""
+    """Construye el texto que va al modelo: prefijo temporal + contexto + texto."""
     base = chunk["text"]
 
     if USE_METADATA_CONTEXT:
@@ -78,7 +81,25 @@ def build_embed_text(chunk: dict, model_name: str) -> str:
         )[:3]
         if vars_sorted:
             parts.append(", ".join(v[0] for v in vars_sorted))
-        ctx = "[" + " | ".join(p for p in parts if p) + "]"
+
+        # Prefijo temporal diferenciado por tipo de fuente
+        doc_type = chunk.get("doc_type_category", "")
+        temporal_prefix = TEMPORAL_SOURCE_PREFIXES.get(doc_type, DEFAULT_TEMPORAL_PREFIX)
+        date_str = chunk.get("document_date") or chunk.get("chunk_date") or ""
+        if temporal_prefix == "[DAILY]":
+            temporal_prefix = f"[DAILY {date_str}]" if date_str else "[DAILY]"
+        elif date_str and len(date_str) >= 7:
+            temporal_prefix = temporal_prefix.replace("]", f" {date_str[:7]}]")
+
+        # Indicar tipo de indicador de la variable más importante
+        top_indicator = vars_sorted[0][1].get("indicator_type") if vars_sorted else None
+        indicator_suffix = ""
+        if top_indicator == "LEADING":
+            indicator_suffix = "→LEADING"
+        elif top_indicator == "LAGGING":
+            indicator_suffix = "→LAGGING"
+
+        ctx = temporal_prefix + " [" + " | ".join(p for p in parts if p) + "]" + indicator_suffix
         base = f"{ctx} {base}"
 
     if is_e5_model(model_name):
