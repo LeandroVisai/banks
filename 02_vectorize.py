@@ -240,8 +240,24 @@ def main() -> int:
         c["embedding_dim"] = dim
         c["embedding_model"] = model_name_used
 
+    # Output principal unificado (backward compatible)
     with open(OUTPUT_CHUNKS, "w", encoding="utf-8") as f:
         json.dump(chunks, f, ensure_ascii=False)
+
+    # Archivos separados por tipo de fuente
+    _LOGS_DIR.mkdir(exist_ok=True)
+    excel_daily_records = [c for c in chunks if c.get("doc_type_category") == "MONITOR_PM"]
+    pdf_period_records = [c for c in chunks if c.get("doc_type_category") != "MONITOR_PM"]
+
+    with open(_LOGS_DIR / "excel_daily_records.json", "w", encoding="utf-8") as f:
+        json.dump(excel_daily_records, f, ensure_ascii=False)
+    with open(_LOGS_DIR / "pdf_period_records.json", "w", encoding="utf-8") as f:
+        json.dump(pdf_period_records, f, ensure_ascii=False)
+
+    # Cross-references entre daily y period records
+    cross_refs = _build_cross_references(excel_daily_records, pdf_period_records)
+    with open(_LOGS_DIR / "cross_references.json", "w", encoding="utf-8") as f:
+        json.dump(cross_refs, f, ensure_ascii=False, indent=2)
 
     # Reporte
     report = {
@@ -251,6 +267,8 @@ def main() -> int:
         "total_chunks": len(chunks),
         "truncated_count": truncated,
         "metadata_context_enabled": USE_METADATA_CONTEXT,
+        "excel_daily_count": len(excel_daily_records),
+        "pdf_period_count": len(pdf_period_records),
         "token_stats": {
             "min": min(token_counts) if token_counts else 0,
             "mean": sum(token_counts) // len(token_counts) if token_counts else 0,
@@ -263,6 +281,7 @@ def main() -> int:
     size_mb = OUTPUT_CHUNKS.stat().st_size / (1024 * 1024)
     print(f"[02] ✓ {OUTPUT_CHUNKS} ({size_mb:.1f} MB)")
     print(f"[02] ✓ {STATS_PATH}")
+    print(f"[02] ✓ excel_daily={len(excel_daily_records)}, pdf_period={len(pdf_period_records)}")
     if token_counts:
         print(f"[02] tokens por chunk: min={report['token_stats']['min']} "
               f"mean={report['token_stats']['mean']} max={report['token_stats']['max']}")

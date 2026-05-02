@@ -80,3 +80,10 @@ class EnrichedChunk:
     is_policy_decision: bool
     is_forward_looking: bool
     chunk_date: Optional[str] = None   # ISO YYYY-MM-DD; solo Excel (Monitor PM), None para PDFs
+    # --- v1.1 fields ---
+    indicator_types: dict = field(default_factory=dict)  # {var_name: LEADING|CONTEMPORANEOUS|LAGGING}
+    signal_strength: Optional[dict] = None               # solo MONITOR_PM
+    deviation_flag: bool = False                          # solo MONITOR_PM
+    trend_direction: Optional[dict] = None               # solo PDFs
+    forward_guidance: Optional[str] = None               # solo PDFs, is_forward_looking=True
+    schema_version: str = "1.1"
