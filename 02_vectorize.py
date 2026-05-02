@@ -107,6 +107,58 @@ def build_embed_text(chunk: dict, model_name: str) -> str:
     return base
 
 
+def _period_contains_date(excel_date: str, pdf_date: str, pdf_doc_type: str) -> bool:
+    """True si pdf_date's period (mes o trimestre) contiene excel_date."""
+    if not excel_date or not pdf_date or len(excel_date) < 7 or len(pdf_date) < 7:
+        return False
+    try:
+        ex_ym = excel_date[:7]
+        pdf_ym = pdf_date[:7]
+        if pdf_doc_type in ("IPOM", "IEF"):
+            ex_q = (int(ex_ym[5:7]) - 1) // 3
+            pdf_q = (int(pdf_ym[5:7]) - 1) // 3
+            return ex_ym[:4] == pdf_ym[:4] and ex_q == pdf_q
+        return ex_ym == pdf_ym
+    except (ValueError, IndexError):
+        return False
+
+
+def _build_cross_references(
+    excel_records: list[dict],
+    pdf_records: list[dict],
+) -> dict:
+    """Genera índice bidireccional de referencias entre daily y period records."""
+    excel_to_period: dict[str, list] = {}
+    period_to_daily: dict[str, list] = {}
+
+    for ex in excel_records:
+        ex_id = ex.get("chunk_id", "")
+        ex_date = ex.get("chunk_date") or ex.get("document_date") or ""
+        ex_vars = set(ex.get("economic_variables", {}).keys())
+        refs: list[dict] = []
+        for pdf in pdf_records:
+            pdf_id = pdf.get("chunk_id", "")
+            pdf_date = pdf.get("document_date") or ""
+            pdf_type = pdf.get("doc_type_category", "")
+            pdf_vars = set(pdf.get("economic_variables", {}).keys())
+            shared = sorted(ex_vars & pdf_vars)
+            if shared and _period_contains_date(ex_date, pdf_date, pdf_type):
+                refs.append({
+                    "record_id": pdf_id,
+                    "pointer_type": "period_context",
+                    "shared_vars": shared,
+                })
+                period_to_daily.setdefault(pdf_id, []).append({
+                    "record_id": ex_id,
+                    "pointer_type": "daily_example",
+                    "shared_vars": shared,
+                })
+        if refs:
+            excel_to_period[ex_id] = refs
+
+    return {"excel_to_period": excel_to_period, "period_to_daily": period_to_daily}
+
+
 def load_model(name: str):
     from sentence_transformers import SentenceTransformer
 
