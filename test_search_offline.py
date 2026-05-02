@@ -110,6 +110,22 @@ class BM25:
 
 YEAR_RE = re.compile(r"\b(19[8-9]\d|20[0-4]\d)\b")
 
+MONTH_NAMES_OFFLINE: dict[str, int] = {
+    "enero": 1, "ene": 1, "febrero": 2, "feb": 2, "marzo": 3, "mar": 3,
+    "abril": 4, "abr": 4, "mayo": 5, "junio": 6, "jun": 6,
+    "julio": 7, "jul": 7, "agosto": 8, "ago": 8,
+    "septiembre": 9, "sep": 9, "sept": 9, "octubre": 10, "oct": 10,
+    "noviembre": 11, "nov": 11, "diciembre": 12, "dic": 12,
+}
+_M_ALT = "|".join(sorted(MONTH_NAMES_OFFLINE, key=len, reverse=True))
+_FULL_DATE_NAMED = re.compile(
+    r"\b(\d{1,2})\s+(?:de\s+)?(" + _M_ALT + r")\s+(?:de\s+)?(\d{4})\b", re.IGNORECASE
+)
+_FULL_DATE_YMD = re.compile(r"\b(20[0-4]\d)[/_.-](\d{2})[/_.-](\d{2})\b")
+_FULL_DATE_DMY = re.compile(r"\b(\d{1,2})[/_.-](\d{1,2})[/_.-](20[0-4]\d|\d{2})\b")
+_DAY_MONTH     = re.compile(r"\b(\d{1,2})\s+(?:de\s+)?(" + _M_ALT + r")\b", re.IGNORECASE)
+_MONTH_ONLY    = re.compile(r"\b(" + _M_ALT + r")\b")
+
 DOC_TYPE_HINTS = {
     "COMUNICADO": ["comunicado"],
     "MINUTA":     ["minuta", "consejero"],
@@ -128,17 +144,64 @@ except Exception:
 
 def parse_query(query: str) -> dict[str, Any]:
     norm = normalize(query)
-    years = [int(y) for y in YEAR_RE.findall(query)]
+    exact_date = day = month = None
+    years: list[int] = []
+
+    # Fecha completa (día+mes+año) — detectar antes que años/meses sueltos
+    fm = _FULL_DATE_NAMED.search(norm)
+    if fm:
+        d_v, m_n, y_v = int(fm.group(1)), fm.group(2), int(fm.group(3))
+        m_v = MONTH_NAMES_OFFLINE.get(m_n)
+        if m_v and 1 <= d_v <= 31:
+            day, month, years = d_v, m_v, [y_v]
+            exact_date = f"{y_v:04d}-{m_v:02d}-{d_v:02d}"
+    if not exact_date:
+        fm = _FULL_DATE_YMD.search(norm)
+        if fm:
+            y_v, m_v, d_v = int(fm.group(1)), int(fm.group(2)), int(fm.group(3))
+            if 1 <= m_v <= 12 and 1 <= d_v <= 31:
+                day, month, years = d_v, m_v, [y_v]
+                exact_date = f"{y_v:04d}-{m_v:02d}-{d_v:02d}"
+    if not exact_date:
+        fm = _FULL_DATE_DMY.search(norm)
+        if fm:
+            d_v, m_v = int(fm.group(1)), int(fm.group(2))
+            y_s = fm.group(3)
+            y_v = int(y_s) if len(y_s) == 4 else 2000 + int(y_s)
+            if 1 <= m_v <= 12 and 1 <= d_v <= 31:
+                day, month, years = d_v, m_v, [y_v]
+                exact_date = f"{y_v:04d}-{m_v:02d}-{d_v:02d}"
+
+    if not years:
+        years = [int(y) for y in YEAR_RE.findall(norm)]
+    if month is None:
+        mm = _MONTH_ONLY.search(norm)
+        if mm:
+            month = MONTH_NAMES_OFFLINE.get(mm.group(1))
+    if exact_date is None and day is None:
+        dm = _DAY_MONTH.search(norm)
+        if dm:
+            d_v = int(dm.group(1))
+            m_v = MONTH_NAMES_OFFLINE.get(dm.group(2))
+            if m_v and 1 <= d_v <= 31:
+                day = d_v
+                if month is None:
+                    month = m_v
+                if len(years) == 1:
+                    exact_date = f"{years[0]:04d}-{m_v:02d}-{d_v:02d}"
+
     doc_types = [
         dt for dt, hints in DOC_TYPE_HINTS.items()
         if any(h in norm for h in hints)
     ]
-    # Detecta variables económicas en la query (replica 04_search.py)
     variables = [
         var_name for var_name, pat in _VARIABLE_PATTERNS.items()
         if pat.search(norm)
     ]
-    return {"years": years, "doc_types": doc_types, "variables": variables, "norm_text": norm}
+    return {
+        "years": years, "month": month, "day": day, "exact_date": exact_date,
+        "doc_types": doc_types, "variables": variables, "norm_text": norm,
+    }
 
 
 # ── Búsqueda offline ─────────────────────────────────────────────────────────
@@ -160,30 +223,61 @@ def search_offline(
     query: str,
     k: int = 5,
     importance_boost: float = 0.20,
+    max_per_doc: int = 2,
 ) -> list[dict]:
     parsed = parse_query(query)
     q_tokens = tokenize(query)
 
-    # 1. BM25 recall (top 50)
-    bm25_hits = bm25.top_k(q_tokens, k=50)
+    # 1. BM25 recall ampliado (top 100 para reducir miss-rate en corpus grande)
+    bm25_hits = bm25.top_k(q_tokens, k=100)
+    hit_idxs = {idx for idx, _ in bm25_hits}
+    bm25_max = max((s for _, s in bm25_hits), default=1.0)
 
-    # 2. Aplica filtros suaves: si query menciona año, prefiere chunks de ese año
-    #    (no excluye, solo penaliza)
+    # 2. Inyección por variable económica: si la query nombra una variable,
+    #    añade los top-15 chunks por importance que tengan esa variable,
+    #    aunque no aparecieran en el BM25 pool (cubre queries bilingüe: ES→EN doc).
+    injected_idxs: set[int] = set()
+    injected: list[tuple[int, float]] = []
+    if parsed["variables"]:
+        var_pool = [
+            (i, c.get("importance_score", 0.0))
+            for i, c in enumerate(chunks)
+            if i not in hit_idxs
+            and any(v in c.get("economic_variables", {}) for v in parsed["variables"])
+        ]
+        var_pool.sort(key=lambda x: -x[1])
+        injected = [(i, 0.0) for i, _ in var_pool[:15]]
+        injected_idxs = {i for i, _ in injected}
+
+    all_raw = list(bm25_hits) + injected
+
+    # 3. Scoring
     candidates = []
-    bm25_scores = [s for _, s in bm25_hits] or [1.0]
-    max_bm25 = max(bm25_scores)
-    for idx, bm25_score in bm25_hits:
+    for idx, bm25_score in all_raw:
         c = chunks[idx]
+        norm_bm25 = bm25_score / bm25_max if bm25_max > 0 else 0
 
-        # Normaliza BM25 a [0,1]
-        norm_bm25 = bm25_score / max_bm25 if max_bm25 > 0 else 0
+        # Filtro duro por exact_date para Monitor PM (chunk_date presente)
+        # Los PDFs (chunk_date=None) siempre pasan
+        if parsed.get("exact_date"):
+            cd = c.get("chunk_date")
+            if cd is not None and str(cd)[:10] != parsed["exact_date"]:
+                continue  # Monitor PM chunk de otra fecha → descartar
+
+        # Filtro suave por mes (para Monitor PM sin exact_date)
+        if parsed.get("month") and not parsed.get("exact_date"):
+            cd = c.get("chunk_date")
+            if cd is not None:
+                m_num = re.match(r"\d{4}-(\d{2})", str(cd))
+                if m_num and int(m_num.group(1)) != parsed["month"]:
+                    continue  # Monitor PM de otro mes → descartar
 
         # Penalización por año mismatch (suave)
         year_factor = 1.0
         if parsed["years"]:
             cy = chunk_year(c)
             if cy and cy not in parsed["years"]:
-                year_factor = 0.7  # penaliza pero no descarta
+                year_factor = 0.7
 
         # Bonus por doc_type match
         doctype_factor = 1.0
@@ -199,9 +293,14 @@ def search_offline(
             elif c.get("section_type") == "DECISION":
                 variable_factor = 1.10  # DECISION nunca se descarta (ver CLAUDE.md)
 
-        # Importance boost
         importance = c.get("importance_score", 0.0)
-        final = (norm_bm25 * year_factor * doctype_factor * variable_factor) + importance_boost * importance
+
+        if idx in injected_idxs:
+            # Chunk no encontrado por BM25 (ej. doc inglés, query en español).
+            # Score sintético basado en importance, aplicando year_factor.
+            final = 0.65 * importance * year_factor
+        else:
+            final = (norm_bm25 * year_factor * doctype_factor * variable_factor) + importance_boost * importance
 
         candidates.append({
             "chunk": c,
@@ -211,7 +310,20 @@ def search_offline(
         })
 
     candidates.sort(key=lambda x: x["final_score"], reverse=True)
-    return candidates[:k]
+
+    # 4. Diversidad de documentos: max max_per_doc chunks por documento
+    #    Evita que un corpus grande (Monitor PM 6490 chunks) monopolice top-k.
+    doc_count: dict[str, int] = defaultdict(int)
+    diverse: list[dict] = []
+    for cand in candidates:
+        doc_id = cand["chunk"]["document_id"]
+        if doc_count[doc_id] < max_per_doc:
+            diverse.append(cand)
+            doc_count[doc_id] += 1
+        if len(diverse) >= k:
+            break
+
+    return diverse
 
 
 # ── Métricas (reutilizadas de test_search.py) ────────────────────────────────

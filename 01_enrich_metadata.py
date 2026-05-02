@@ -51,6 +51,7 @@ from taxonomy import (
     build_entity_patterns,
     build_section_patterns,
     build_variable_patterns,
+    compile_word_pattern,
     derive_tags,
     normalize_text,
 )
@@ -84,6 +85,11 @@ IMPORTANCE_WEIGHTS = {
     "entities": 0.10,           # mención de banco central / país (sat. en 2)
     "no_variables_penalty": 0.12,   # sin variables ni datos → ruido semántico
     "boilerplate_penalty": 0.50,    # texto legal/disclaimer → penalización fuerte
+    # v1.1 — variables de mercado de dinero y flujos
+    "liquidity_var": 0.15,     # LIQUIDEZ_MERCADO o FLUJO_NO_RESIDENTES presentes
+    "ndf_var": 0.12,            # MERCADO_NDF presente (señal de mesa de dinero)
+    "pension_var": 0.10,        # FONDO_PENSION presente (señal de flujos relevantes)
+    "deviation_flag": 0.08,     # chunk marca comportamiento atípico
 }
 
 # Compilamos patrones una vez (al import)
@@ -94,6 +100,37 @@ ENTITY_PATTERNS = build_entity_patterns()
 # Patrones temporales
 YEAR_PATTERN = re.compile(r"\b(19[8-9]\d|20[0-4]\d)\b")
 QUARTER_PATTERN = re.compile(r"\b(q[1-4]|[1-4][ºo]?\s*trimestre)\b", re.IGNORECASE)
+
+# Patrones direccionales (sobre texto normalizado) — usados en signal_strength y trend_direction
+_DIR_UP_PATTERN = compile_word_pattern([
+    "subio", "aumento", "alza", "sube", "presion al alza",
+    "subida", "incremento", "escaló", "escalo",
+])
+_DIR_DOWN_PATTERN = compile_word_pattern([
+    "bajo", "disminuyo", "baja", "cae", "cayo", "presion a la baja",
+    "caida", "retroceso", "recorte",
+])
+_DIR_STABLE_PATTERN = compile_word_pattern([
+    "se mantuvo", "estable", "sin cambios", "sin variacion",
+])
+
+# Patrones de desviación/contraste — solo Monitor PM
+_DEVIATION_PATTERN = compile_word_pattern([
+    "contrasta con", "a pesar de", "pese a", "sin embargo",
+    "en contraposicion", "revirtiendo", "corrigio", "sorpresa",
+    "sorprendio", "inesperado",
+])
+
+# Patrones de tendencia para PDFs
+_TREND_RISING_PATTERN = compile_word_pattern([
+    "aumento", "subio", "se incremento", "alza", "aceleracion", "escalo",
+])
+_TREND_FALLING_PATTERN = compile_word_pattern([
+    "disminuyo", "bajo", "cayo", "desaceleracion", "retrocedio", "recorte",
+])
+_TREND_STABLE_PATTERN = compile_word_pattern([
+    "se mantuvo", "estable", "sin cambios", "sin variacion",
+])
 
 
 # ---------------------------------------------------------------------------
@@ -108,11 +145,13 @@ def detect_variables(text_norm: str) -> dict:
         if not matches:
             continue
         mentions = len(matches)
-        _, importance = ECONOMIC_VARIABLES[var_name]
+        importance = ECONOMIC_VARIABLES[var_name][1]
+        indicator_type = ECONOMIC_VARIABLES[var_name][2]
         # Confidence: 0.5 base + 0.1 por mención adicional, cap 1.0
         confidence = min(1.0, 0.5 + (mentions - 1) * 0.1)
         found[var_name] = {
             "importance": importance,
+            "indicator_type": indicator_type,
             "mentions": mentions,
             "confidence": round(confidence, 2),
         }
@@ -220,6 +259,7 @@ def calculate_importance(
     entities: dict,
     is_fwd: bool,
     text_norm: str = "",
+    deviation_flag: bool = False,
 ) -> float:
     # Boilerplate legal: penalización máxima antes de cualquier otro cálculo
     if text_norm and BOILERPLATE_PATTERN.search(text_norm):
@@ -264,6 +304,16 @@ def calculate_importance(
     # Penalizar chunks sin contenido económico: sin variables Y sin datos numéricos
     if not variables and not numerics:
         score -= w["no_variables_penalty"]
+
+    # v1.1 — bonos por variables de mercado de dinero y flujos
+    if "LIQUIDEZ_MERCADO" in variables or "FLUJO_NO_RESIDENTES" in variables:
+        score += w["liquidity_var"]
+    if "MERCADO_NDF" in variables:
+        score += w["ndf_var"]
+    if "FONDO_PENSION" in variables:
+        score += w["pension_var"]
+    if deviation_flag:
+        score += w["deviation_flag"]
 
     return round(max(0.0, min(1.0, score)), 3)
 

@@ -64,6 +64,7 @@ RECALL_N = 50           # top-N por cada rama antes de fusionar
 RRF_K = 60              # hiperparámetro estándar de RRF
 MMR_LAMBDA = 0.65       # 1.0 = solo relevancia, 0.0 = solo diversidad
 IMPORTANCE_BOOST = 0.15 # peso del importance_score en el re-rank final
+RECENCY_WEIGHT = 0.03   # penaliza docs viejos 5% por año (tie-breaker suave)
 
 # ---------------------------------------------------------------------------
 # Parseo de query
@@ -89,6 +90,30 @@ MONTH_NAMES: dict[str, int] = {
 MONTH_RE = re.compile(
     r"\b(" + "|".join(sorted(MONTH_NAMES, key=len, reverse=True)) + r")\b"
 )
+# Inverso para display: número → nombre largo en español
+MONTH_NUM_TO_NAME: dict[int, str] = {
+    1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
+    5: "mayo", 6: "junio", 7: "julio", 8: "agosto",
+    9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
+}
+
+# ── Patrones para fechas completas (día + mes + año) ──────────────────────────
+_MONTH_ALT = "|".join(sorted(MONTH_NAMES, key=len, reverse=True))
+
+# "15 de marzo de 2024", "15 marzo 2024"
+FULL_DATE_NAMED_RE = re.compile(
+    r"\b(\d{1,2})\s+(?:de\s+)?(" + _MONTH_ALT + r")\s+(?:de\s+)?(\d{4})\b",
+    re.IGNORECASE,
+)
+# ISO y variantes: "2024-03-15", "2024/03/15", "2024.03.15"
+FULL_DATE_YMD_RE = re.compile(r"\b(20[0-4]\d)[/_.-](\d{2})[/_.-](\d{2})\b")
+# Europeo/latinoamérica: "15/03/2024", "15-03-2024", "15.03.24"
+FULL_DATE_DMY_RE = re.compile(r"\b(\d{1,2})[/_.-](\d{1,2})[/_.-](20[0-4]\d|\d{2})\b")
+# "15 de marzo", "15 marzo" (sin año — se combina con año detectado después)
+DAY_MONTH_NAMED_RE = re.compile(
+    r"\b(\d{1,2})\s+(?:de\s+)?(" + _MONTH_ALT + r")\b",
+    re.IGNORECASE,
+)
 
 FILENAME_DATE_RE = re.compile(
     r"(?:^|[^0-9])(?:(\d{4})[._/-](\d{2})[._/-](\d{2})|(\d{2})[._/-](\d{2})[._/-](\d{2}))(?:[^0-9]|$)"
@@ -111,8 +136,11 @@ SECTION_PATTERNS = build_section_patterns()
 def parse_query(query: str) -> dict:
     """Extrae filtros del query de usuario. Retorna dict con:
       - raw_query: texto original
-      - clean_query: texto sin tokens de filtro (años, etc.)
+      - clean_query: texto sin tokens de filtro (años, fechas, etc.)
+      - exact_date: fecha ISO "YYYY-MM-DD" si se detectó día+mes+año, si no None
+      - day: día del mes (1–31) si se detectó, si no None
       - year_from, year_to: rango anual o None
+      - month: mes (1–12) si se detectó, si no None
       - doc_types: lista de doc_type_category matcheados
       - variables: lista de variables económicas mencionadas
       - sections: lista de secciones solicitadas
@@ -120,29 +148,77 @@ def parse_query(query: str) -> dict:
     norm = normalize_text(query)
     clean = query
 
-    # Año o rango
-    year_from = year_to = None
-    m = YEAR_RANGE_RE.search(norm)
-    if m:
-        year_from, year_to = int(m.group(1)), int(m.group(2))
-        if year_from > year_to:
-            year_from, year_to = year_to, year_from
-        clean = YEAR_RANGE_RE.sub("", clean)
-    else:
-        years = [int(y) for y in YEAR_RE.findall(norm)]
-        if years:
-            # Con múltiples años sueltos usamos el rango completo (min–max)
-            year_from, year_to = min(years), max(years)
-            clean = YEAR_RE.sub("", clean)
+    year_from = year_to = month = exact_date = day = None
 
-    # Mes
-    month = None
-    mm = MONTH_RE.search(norm)
-    if mm:
-        month = MONTH_NAMES[mm.group(1)]
-        clean = MONTH_RE.sub("", clean)
+    # ── 1. Fecha completa: detectar ANTES que años/meses sueltos ─────────────
+    # Prioridad: named > YMD > DMY (de más específico a más ambiguo)
+    fm = FULL_DATE_NAMED_RE.search(norm)
+    if fm:
+        d_val, m_name, y_val = int(fm.group(1)), fm.group(2), int(fm.group(3))
+        m_val = MONTH_NAMES.get(m_name)
+        if m_val and 1 <= d_val <= 31:
+            day, month, year_from, year_to = d_val, m_val, y_val, y_val
+            exact_date = f"{y_val:04d}-{m_val:02d}-{d_val:02d}"
+            clean = FULL_DATE_NAMED_RE.sub("", clean)
 
-    # Tipos de documento
+    if not exact_date:
+        fm = FULL_DATE_YMD_RE.search(norm)
+        if fm:
+            y_val, m_val, d_val = int(fm.group(1)), int(fm.group(2)), int(fm.group(3))
+            if 1 <= m_val <= 12 and 1 <= d_val <= 31:
+                day, month, year_from, year_to = d_val, m_val, y_val, y_val
+                exact_date = f"{y_val:04d}-{m_val:02d}-{d_val:02d}"
+                clean = FULL_DATE_YMD_RE.sub("", clean)
+
+    if not exact_date:
+        fm = FULL_DATE_DMY_RE.search(norm)
+        if fm:
+            d_val, m_val = int(fm.group(1)), int(fm.group(2))
+            y_str = fm.group(3)
+            y_val = int(y_str) if len(y_str) == 4 else 2000 + int(y_str)
+            if 1 <= m_val <= 12 and 1 <= d_val <= 31:
+                day, month, year_from, year_to = d_val, m_val, y_val, y_val
+                exact_date = f"{y_val:04d}-{m_val:02d}-{d_val:02d}"
+                clean = FULL_DATE_DMY_RE.sub("", clean)
+
+    # ── 2. Año o rango (solo si no se capturó en fecha completa) ─────────────
+    if year_from is None:
+        m = YEAR_RANGE_RE.search(norm)
+        if m:
+            year_from, year_to = int(m.group(1)), int(m.group(2))
+            if year_from > year_to:
+                year_from, year_to = year_to, year_from
+            clean = YEAR_RANGE_RE.sub("", clean)
+        else:
+            years = [int(y) for y in YEAR_RE.findall(norm)]
+            if years:
+                year_from, year_to = min(years), max(years)
+                clean = YEAR_RE.sub("", clean)
+
+    # ── 3. Mes suelto (solo si no fue capturado por fecha completa) ───────────
+    if month is None:
+        mm = MONTH_RE.search(norm)
+        if mm:
+            month = MONTH_NAMES[mm.group(1)]
+            clean = MONTH_RE.sub("", clean)
+
+    # ── 4. Día + mes sin año → combinar con año si es único ──────────────────
+    if exact_date is None and day is None:
+        dm = DAY_MONTH_NAMED_RE.search(norm)
+        if dm:
+            d_val = int(dm.group(1))
+            m_name = dm.group(2)
+            m_val = MONTH_NAMES.get(m_name)
+            if m_val and 1 <= d_val <= 31:
+                day = d_val
+                if month is None:
+                    month = m_val
+                # Si hay un único año conocido, construimos exact_date
+                if year_from is not None and year_from == year_to:
+                    exact_date = f"{year_from:04d}-{m_val:02d}-{d_val:02d}"
+                clean = DAY_MONTH_NAMED_RE.sub("", clean)
+
+    # ── 5. Tipos de documento ─────────────────────────────────────────────────
     doc_types: list[str] = []
     for dt, keywords in DOC_TYPE_HINTS.items():
         if any(kw in norm for kw in keywords):
@@ -157,6 +233,8 @@ def parse_query(query: str) -> dict:
     return {
         "raw_query": query,
         "clean_query": re.sub(r"\s+", " ", clean).strip() or query,
+        "exact_date": exact_date,
+        "day": day,
         "year_from": year_from,
         "year_to": year_to,
         "month": month,
@@ -218,13 +296,35 @@ def build_filters_sql(parsed: dict) -> tuple[str, list]:
     if parsed["doc_types"]:
         clauses.append("d.doc_type_category = ANY(%s)")
         params.append(parsed["doc_types"])
-    if parsed["year_from"] is not None:
-        # Para Monitor PM usamos chunk_date (fecha de celda); para PDFs, document_year
-        clauses.append("COALESCE(EXTRACT(YEAR FROM c.chunk_date)::int, d.document_year) >= %s")
-        params.append(parsed["year_from"])
-    if parsed["year_to"] is not None:
-        clauses.append("COALESCE(EXTRACT(YEAR FROM c.chunk_date)::int, d.document_year) <= %s")
-        params.append(parsed["year_to"])
+
+    # ── Filtros de fecha ───────────────────────────────────────────────────────
+    # Prioridad: exact_date > month (+ year) > year solo
+    if parsed.get("exact_date"):
+        # Monitor PM: solo chunks de esa fecha exacta.
+        # PDFs: sin restricción de chunk_date (document_date se filtra en Python).
+        clauses.append("(c.chunk_date IS NULL OR c.chunk_date = %s::date)")
+        params.append(parsed["exact_date"])
+    else:
+        # Rango de año (COALESCE: chunk_date para Monitor PM, document_year para PDFs)
+        if parsed["year_from"] is not None:
+            clauses.append(
+                "COALESCE(EXTRACT(YEAR FROM c.chunk_date)::int, d.document_year) >= %s"
+            )
+            params.append(parsed["year_from"])
+        if parsed["year_to"] is not None:
+            clauses.append(
+                "COALESCE(EXTRACT(YEAR FROM c.chunk_date)::int, d.document_year) <= %s"
+            )
+            params.append(parsed["year_to"])
+        # Mes: aplica en SQL solo para Monitor PM (chunk_date != NULL).
+        # Los PDFs sin chunk_date pasan el filtro SQL y se filtran en Python
+        # por document_date vía _row_matches_month().
+        if parsed.get("month") is not None:
+            clauses.append(
+                "(c.chunk_date IS NULL OR EXTRACT(MONTH FROM c.chunk_date)::int = %s)"
+            )
+            params.append(parsed["month"])
+
     if parsed["sections"]:
         clauses.append("c.section_type = ANY(%s)")
         params.append(parsed["sections"])
@@ -463,14 +563,43 @@ def mmr_select(
     return [candidates[i] for i in selected_idx]
 
 
-def importance_boost(hits: list[dict], weight: float = IMPORTANCE_BOOST) -> list[dict]:
-    """Re-ordenamiento final sumando w * importance al score RRF.
+def _doc_year(hit: dict) -> int | None:
+    """Extrae el año del chunk (chunk_date) o del documento (document_date)."""
+    for key in ("chunk_date", "document_date"):
+        v = hit.get(key)
+        if v:
+            m = re.match(r"(\d{4})", str(v))
+            if m:
+                return int(m.group(1))
+    return None
 
-    No reemplaza la relevancia; es un tie-breaker suave que favorece chunks
-    con contenido curado (variables críticas, datos, decisiones).
+
+def recency_factor(doc_year: int | None) -> float:
+    """0.0–1.0: penaliza 5% por año de antigüedad. Docs sin año → 0.5 neutral."""
+    import datetime
+    if doc_year is None:
+        return 0.5
+    age = datetime.date.today().year - doc_year
+    return max(0.0, 1.0 - age * 0.05)
+
+
+def importance_boost(
+    hits: list[dict],
+    weight: float = IMPORTANCE_BOOST,
+    recency_weight: float = RECENCY_WEIGHT,
+) -> list[dict]:
+    """Re-ordenamiento final: importance + recency como tie-breakers suaves sobre RRF.
+
+    No reemplaza la relevancia del retrieval; sólo desempata entre candidatos
+    con RRF similar, prefiriendo chunks curados y documentos más recientes.
     """
     for h in hits:
-        h["final_score"] = h.get("rrf_score", 0.0) + weight * float(h.get("importance_score", 0))
+        rec = recency_factor(_doc_year(h))
+        h["final_score"] = (
+            h.get("rrf_score", 0.0)
+            + weight * float(h.get("importance_score", 0))
+            + recency_weight * rec
+        )
     hits.sort(key=lambda h: h["final_score"], reverse=True)
     return hits
 
@@ -572,13 +701,17 @@ def format_text_output(results: list[dict], parsed: dict) -> str:
     if parsed["clean_query"] != parsed["raw_query"]:
         lines.append(f"  clean: {parsed['clean_query']}")
     filters = []
-    if parsed["year_from"] is not None:
-        yr = (f"{parsed['year_from']}" if parsed["year_from"] == parsed["year_to"]
-              else f"{parsed['year_from']}–{parsed['year_to']}")
-        filters.append(f"año={yr}")
-    if parsed.get("month") is not None:
-        month_names_inv = {v: k for k, v in MONTH_NAMES.items() if len(k) > 3}
-        filters.append(f"mes={month_names_inv.get(parsed['month'], parsed['month'])}")
+    if parsed.get("exact_date"):
+        filters.append(f"fecha={parsed['exact_date']}")
+    else:
+        if parsed["year_from"] is not None:
+            yr = (f"{parsed['year_from']}" if parsed["year_from"] == parsed["year_to"]
+                  else f"{parsed['year_from']}–{parsed['year_to']}")
+            filters.append(f"año={yr}")
+        if parsed.get("month") is not None:
+            filters.append(f"mes={MONTH_NUM_TO_NAME.get(parsed['month'], parsed['month'])}")
+        if parsed.get("day") is not None:
+            filters.append(f"día={parsed['day']}")
     if parsed["doc_types"]:
         filters.append(f"doc={','.join(parsed['doc_types'])}")
     if parsed["variables"]:

@@ -159,6 +159,12 @@ INDICES_SQL = [
     f"CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw ON {CHUNKS_TABLE} "
     f"USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)",
     f"CREATE INDEX IF NOT EXISTS idx_chunks_chunk_date ON {CHUNKS_TABLE}(chunk_date) WHERE chunk_date IS NOT NULL",
+    # chunks — índices compuestos para filtros combinados frecuentes
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_doc_section ON {CHUNKS_TABLE}(document_id, section_type)",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_year_section ON {CHUNKS_TABLE}(document_id, section_type) "
+    f"INCLUDE (importance_score)",
+    f"CREATE INDEX IF NOT EXISTS idx_chunks_date_imp ON {CHUNKS_TABLE}(chunk_date, importance_score DESC) "
+    f"WHERE chunk_date IS NOT NULL",
 ]
 
 

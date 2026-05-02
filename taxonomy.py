@@ -47,22 +47,25 @@ def compile_word_pattern(words: Iterable[str]) -> re.Pattern:
 
 
 # ---------------------------------------------------------------------------
-# Variables económicas (14) con niveles de importancia
+# Variables económicas (33) con niveles de importancia y tipo de indicador
 # ---------------------------------------------------------------------------
-# Formato: nombre -> (lista_keywords, importance)
-#   importance: CRITICAL | HIGH | MEDIUM
+# Formato: nombre -> (lista_keywords, importance, indicator_type)
+#   importance:      CRITICAL | HIGH | MEDIUM
+#   indicator_type:  LEADING | CONTEMPORANEOUS | LAGGING
 #
 # Keywords pueden ser palabras sueltas o frases; compilamos como alternación.
 # Evitamos patterns que matcheen fragmentos (ej. "tasa" como substring de "tasador").
 
-ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
+ECONOMIC_VARIABLES: dict[str, tuple[list[str], str, str]] = {
+    # --- 18 variables originales (intactas) ---
+
     "TASA_INTERES": ([
         "tasa de interes", "tasa de politica monetaria", "tpm",
         "interest rate", "policy rate", "federal funds rate",
         "fed funds", "tasa rectora", "tasa de referencia",
         "alza de tasa", "baja de tasa", "recorte de tasa",
         "incremento de tasa", "subida de tasa",
-    ], "CRITICAL"),
+    ], "CRITICAL", "LEADING"),
 
     "INFLACION": ([
         "inflacion", "ipc", "indice de precios al consumidor",
@@ -70,7 +73,7 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "inflacion subyacente", "presiones inflacionarias",
         "meta de inflacion", "convergencia de la inflacion",
         "inflacion general", "inflacion total",
-    ], "CRITICAL"),
+    ], "CRITICAL", "CONTEMPORANEOUS"),
 
     "PIB": ([
         "pib", "producto interno bruto", "producto interior bruto",
@@ -80,13 +83,13 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "dinamica del pib", "recesion", "desaceleracion economica",
         "recuperacion economica", "variacion del pib",
         "output gap", "brecha del producto",
-    ], "CRITICAL"),
+    ], "CRITICAL", "LAGGING"),
 
     "TIPO_CAMBIO": ([
         "tipo de cambio", "paridad cambiaria", "exchange rate",
         "fx", "usd/clp", "dolar", "depreciacion", "apreciacion",
         "fortalecimiento del dolar", "debilitamiento",
-    ], "HIGH"),
+    ], "HIGH", "CONTEMPORANEOUS"),
 
     "EMPLEO": ([
         "empleo", "desempleo", "tasa de desempleo", "ocupados",
@@ -94,7 +97,7 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "mercado laboral", "mercado del trabajo", "ocupacion",
         "desocupacion", "fuerza de trabajo", "tasa de participacion",
         "creacion de empleos", "perdida de empleos",
-    ], "HIGH"),
+    ], "HIGH", "LAGGING"),
 
     "EXPECTATIVAS_INFLACIONARIAS": ([
         "expectativas de inflacion", "expectativas inflacionarias",
@@ -103,14 +106,14 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "expectativas de mediano plazo", "expectativas a dos anos",
         "seguros de inflacion", "ber", "break even inflacion",
         "breakeven de inflacion", "compensacion inflacionaria",
-    ], "HIGH"),
+    ], "HIGH", "LEADING"),
 
     "PRECIO_COMMODITIES": ([
         "cobre", "petroleo", "oro", "litio", "copper", "oil", "gold",
         "brent", "wti", "commodity prices", "commodities",
         "materias primas", "precio del cobre", "precio del petroleo",
         "gas natural", "natural gas", "mineral",
-    ], "HIGH"),
+    ], "HIGH", "CONTEMPORANEOUS"),
 
     "POLITICA_FISCAL": ([
         "politica fiscal", "fiscal policy",
@@ -122,7 +125,7 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "consolidacion fiscal", "ajuste fiscal", "estimulo fiscal", "fiscal stimulus",
         "deuda publica", "public debt", "debt-to-gdp", "deuda como porcentaje",
         "dipres", "tesoreria general",
-    ], "HIGH"),
+    ], "HIGH", "LEADING"),
 
     "DEUDA_SOBERANA": ([
         "deuda soberana", "sovereign debt",
@@ -135,7 +138,7 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "embi", "embi+", "embi global",
         "downgrade soberano", "upgrade soberano",
         "rebaja de clasificacion", "rebaja de calificacion",
-    ], "HIGH"),
+    ], "HIGH", "LAGGING"),
 
     "CREDITO": ([
         "credito", "prestamos", "credit", "loans", "bank lending",
@@ -146,20 +149,20 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "cds", "credit default swap", "riesgo soberano", "riesgo pais",
         "spread cds", "bonos en dolares", "financiamiento externo",
         "costo financiamiento exterior", "bonos emitidos en el exterior",
-    ], "MEDIUM"),
+    ], "MEDIUM", "CONTEMPORANEOUS"),
 
     "INVERSION": ([
         "inversion", "formacion bruta de capital", "investment",
         "capex", "capital expenditure", "inversion fija",
         "inversion privada", "inversion publica", "fbcf",
-    ], "MEDIUM"),
+    ], "MEDIUM", "LAGGING"),
 
     "BALANZA_COMERCIAL": ([
         "balanza comercial", "exportaciones", "importaciones",
         "trade balance", "exports", "imports", "cuenta corriente",
         "trade war", "aranceles", "tariff", "deficit comercial",
         "superavit comercial", "comercio exterior",
-    ], "MEDIUM"),
+    ], "MEDIUM", "CONTEMPORANEOUS"),
 
     "TASAS_LARGO_PLAZO": ([
         "tasas a largo plazo", "bonos a 10 anos", "10-year yield",
@@ -171,13 +174,13 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "tir real", "curva de tasas", "bonos soberanos",
         "tesoro", "tasa tesoro", "treasury", "bono del tesoro",
         "tesoro estadounidense", "10 anos", "rendimiento a 10",
-    ], "MEDIUM"),
+    ], "MEDIUM", "CONTEMPORANEOUS"),
 
     "CONSUMO": ([
         "consumo privado", "consumo de hogares", "gasto de los hogares",
         "consumer spending", "household consumption",
         "demanda interna", "gasto de consumo", "retail sales",
-    ], "MEDIUM"),
+    ], "MEDIUM", "LAGGING"),
 
     "VOLATILIDAD": ([
         "volatilidad", "volatility", "vix", "riesgo de mercado",
@@ -185,7 +188,7 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "aversion al riesgo", "risk aversion", "turbulencia",
         "ipsa", "renta variable", "mercado accionario", "bolsa",
         "s&p 500", "nasdaq", "dow jones",
-    ], "MEDIUM"),
+    ], "MEDIUM", "CONTEMPORANEOUS"),
 
     "LIQUIDEZ": ([
         "liquidez", "liquidity", "funding", "repo",
@@ -194,7 +197,7 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "spread bonos bancarios", "spread bancario",
         "montos transados", "profundidad de mercado",
         "baja profundidad", "escasos montos", "volumen transado",
-    ], "MEDIUM"),
+    ], "MEDIUM", "CONTEMPORANEOUS"),
 
     "MERCADO_INMOBILIARIO": ([
         "mercado inmobiliario", "real estate", "housing market",
@@ -207,7 +210,7 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "venta de viviendas", "ventas inmobiliarias",
         "ihp", "indice de precios de vivienda",
         "inmobiliario", "inmobiliaria",
-    ], "MEDIUM"),
+    ], "MEDIUM", "CONTEMPORANEOUS"),
 
     "SECTOR_EXTERNO": ([
         "sector externo", "external sector",
@@ -220,16 +223,104 @@ ECONOMIC_VARIABLES: dict[str, tuple[list[str], str]] = {
         "reservas internacionales", "international reserves", "reservas del banco central",
         "cuenta financiera", "financial account",
         "posicion de inversion internacional",
-    ], "MEDIUM"),
+    ], "MEDIUM", "LAGGING"),
+
+    # --- 15 variables nuevas ---
+
+    "TASA_INTERES_MERCADO": ([
+        "tasas implicitas", "ois", "swap overnight", "tasa esperada tpm",
+        "reunion futura", "forward rate", "curva ois",
+        "expectativa de recorte", "expectativa de alza",
+    ], "CRITICAL", "LEADING"),
+
+    "LIQUIDEZ_MERCADO": ([
+        "liquidez intradia", "operaciones repo", "repos",
+        "facilidad permanente", "ventanilla", "flap",
+        "fondo de liquidez", "prestamo overnight", "call money",
+    ], "CRITICAL", "CONTEMPORANEOUS"),
+
+    "FLUJO_NO_RESIDENTES": ([
+        "flujo no residente", "non-resident flows",
+        "inversion extranjera de cartera",
+        "posicion de no residentes", "compras de no residentes",
+        "ventas de no residentes",
+    ], "HIGH", "CONTEMPORANEOUS"),
+
+    "FONDO_PENSION": ([
+        "afp", "fondos de pensiones", "pension funds",
+        "cambio de multifondo", "flujo afp", "traspaso de fondos",
+        "fondo a", "fondo b", "fondo c", "fondo d", "fondo e",
+    ], "HIGH", "CONTEMPORANEOUS"),
+
+    "MERCADO_NDF": ([
+        "ndf", "non-deliverable forward", "forward peso", "forward clp",
+        "posicion ndf", "flujo ndf",
+        "contrato a plazo no entregable",
+    ], "HIGH", "LEADING"),
+
+    "SPREAD_FINANCIERO": ([
+        "spread ted", "spread ois-libor", "libor", "ois spread",
+        "costo interbancario", "tasa interbancaria", "taip",
+    ], "HIGH", "CONTEMPORANEOUS"),
+
+    "INTERVENCION_CAMBIARIA": ([
+        "intervencion cambiaria", "programa de compra de dolares",
+        "venta de dolares banco central", "compra de reservas",
+        "intervencion en el mercado cambiario",
+    ], "HIGH", "LEADING"),
+
+    "CONDICIONES_FINANCIERAS": ([
+        "indice de condiciones financieras", "financial conditions index",
+        "fci", "apertura financiera", "restriccion financiera",
+        "condiciones de credito externas",
+    ], "HIGH", "LEADING"),
+
+    "CURVA_RENDIMIENTOS": ([
+        "curva de rendimientos", "yield curve", "pendiente de la curva",
+        "curva swap", "parte corta", "parte larga", "parte media",
+        "bclip", "bcliuf", "bcp", "spread 2-10",
+    ], "HIGH", "LEADING"),
+
+    "EXPECTATIVAS_PIB": ([
+        "expectativas de crecimiento", "growth expectations",
+        "proyeccion pib", "consensus growth",
+        "encuesta de crecimiento",
+    ], "MEDIUM", "LEADING"),
+
+    "PERCEPCION_NEGOCIOS": ([
+        "ipn", "percepcion de negocios", "business confidence",
+        "confianza empresarial", "imacon",
+        "informe de percepciones",
+    ], "MEDIUM", "LEADING"),
+
+    "CONFIANZA_CONSUMIDOR": ([
+        "confianza del consumidor", "consumer confidence", "ipec",
+        "indice de confianza", "percepcion del consumidor",
+    ], "MEDIUM", "LEADING"),
+
+    "BALANZA_PAGOS": ([
+        "balanza de pagos", "balance of payments", "cuenta de capital",
+        "inversion directa",
+    ], "MEDIUM", "LAGGING"),
+
+    "PRECIO_ACTIVOS": ([
+        "precio de activos", "asset prices", "precio vivienda",
+        "indice bursatil", "precio acciones", "p/e",
+    ], "MEDIUM", "CONTEMPORANEOUS"),
+
+    "REMESAS": ([
+        "remesas", "remittances", "transferencias al exterior",
+        "flujo de remesas",
+    ], "MEDIUM", "LAGGING"),
 }
 
 # Sets precomputados por nivel (para scoring rápido)
-CRITICAL_VARIABLES = {k for k, (_, imp) in ECONOMIC_VARIABLES.items() if imp == "CRITICAL"}
-HIGH_VARIABLES = {k for k, (_, imp) in ECONOMIC_VARIABLES.items() if imp == "HIGH"}
+CRITICAL_VARIABLES = {k for k, v in ECONOMIC_VARIABLES.items() if v[1] == "CRITICAL"}
+HIGH_VARIABLES = {k for k, v in ECONOMIC_VARIABLES.items() if v[1] == "HIGH"}
 
 
 def build_variable_patterns() -> dict[str, re.Pattern]:
-    return {name: compile_word_pattern(words) for name, (words, _) in ECONOMIC_VARIABLES.items()}
+    return {name: compile_word_pattern(v[0]) for name, v in ECONOMIC_VARIABLES.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -464,8 +555,28 @@ BOILERPLATE_KEYWORDS = [
     "esta publicacion se distribuye",
     "disclaimer", "descargo de responsabilidad",
     "important disclosure", "divulgacion importante",
+    # Emails institucionales
+    "contacto@", "@bcch", "@bcentral", "@hacienda", "@cmfchile",
+    # Pies de página
+    "version interna", "uso interno",
+    # Formato Excel sobrante
+    "hoja:", "pestana:", "worksheet", "tab:", "sheet:",
+    # Watermarks
+    "borrador", "draft version", "not final", "confidential draft",
 ]
 BOILERPLATE_PATTERN = compile_word_pattern(BOILERPLATE_KEYWORDS)
+
+# Texto que NO es boilerplate sino información de riesgo cuantificable.
+# Preservar si contiene un número + variable económica reconocida.
+RISK_DISCLOSURE_KEYWORDS = [
+    "exposicion a", "exposure to",
+    "sensibilidad ante", "sensitivity to",
+    "escenario de riesgo", "risk scenario",
+    "impacto estimado", "estimated impact",
+    "perdida esperada", "expected loss",
+    "variacion de", "change in",
+]
+RISK_DISCLOSURE_PATTERN = compile_word_pattern(RISK_DISCLOSURE_KEYWORDS)
 
 # Secciones propias del Monitor PM (para bonus de importancia base)
 MONITOR_PM_SECTIONS: frozenset[str] = frozenset({
@@ -495,6 +606,17 @@ MONITOR_PM_SECTION_MAP: dict[str, str] = {
     "Spread bonos bancarios":                    "SPREAD_BONOS",
     "Spreads Corporativos":                      "SPREAD_CORPORATIVO",
 }
+
+# Prefijo temporal por tipo de documento (inyectado en embed_text por 02_vectorize.py)
+TEMPORAL_SOURCE_PREFIXES: dict[str, str] = {
+    "MONITOR_PM":         "[DAILY]",
+    "COMUNICADO":         "[PERIOD_MONTHLY]",
+    "REPORTE_RESEARCH":   "[PERIOD_MONTHLY]",
+    "IPOM":               "[PERIOD_QUARTERLY]",
+    "IEF":                "[PERIOD_QUARTERLY]",
+    "MINUTAS":            "[PERIOD_MONTHLY]",
+}
+DEFAULT_TEMPORAL_PREFIX = "[PERIOD_MONTHLY]"
 
 
 # ---------------------------------------------------------------------------

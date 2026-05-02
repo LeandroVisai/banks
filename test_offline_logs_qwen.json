@@ -3,9 +3,9 @@
   "aggregate": {
     "n_queries": 29,
     "precision_at_1": 0.7586,
-    "recall_at_5": 0.8966,
-    "mrr": 0.8276,
-    "ndcg_at_5": 0.8261,
+    "recall_at_5": 0.931,
+    "mrr": 0.8391,
+    "ndcg_at_5": 0.8367,
     "section_accuracy": 0.4828
   },
   "per_query": [
@@ -98,8 +98,7 @@
       "retrieved_top5": [
         "comunicado_28_07_23",
         "comunicado_05_09_23",
-        "minuta_05_09_23",
-        "textos_monitor_pm"
+        "minuta_05_09_23"
       ],
       "precision_at_1": 1.0,
       "recall_at_5": 1.0,
@@ -117,9 +116,10 @@
       ],
       "retrieved_top5": [
         "comunicado_31_01_24",
-        "textos_monitor_pm",
         "comunicado_06_09_22",
-        "comunicado_02_04_24"
+        "comunicado_02_04_24",
+        "comunicado_28_07_23",
+        "minuta_23_05_24"
       ],
       "precision_at_1": 1.0,
       "recall_at_5": 1.0,
@@ -157,7 +157,8 @@
       ],
       "retrieved_top5": [
         "minuta_17_01_13",
-        "textos_monitor_pm"
+        "textos_monitor_pm",
+        "minuta_05_09_23"
       ],
       "precision_at_1": 1.0,
       "recall_at_5": 1.0,
@@ -175,7 +176,8 @@
       ],
       "retrieved_top5": [
         "comunicado_02_04_24",
-        "minuta_23_05_24"
+        "minuta_23_05_24",
+        "comunicado_28_07_23"
       ],
       "precision_at_1": 0.0,
       "recall_at_5": 1.0,
@@ -183,7 +185,7 @@
       "ndcg_at_5": 0.6309,
       "top1_section": "PROYECCION",
       "top1_section_correct": false,
-      "top1_importance": 0.73
+      "top1_importance": 0.78
     },
     {
       "id": "q10",
@@ -193,7 +195,8 @@
       ],
       "retrieved_top5": [
         "minuta_05_09_23",
-        "comunicado_05_09_23"
+        "comunicado_05_09_23",
+        "comunicado_28_07_23"
       ],
       "precision_at_1": 1.0,
       "recall_at_5": 1.0,
@@ -201,7 +204,7 @@
       "ndcg_at_5": 1.0,
       "top1_section": "ENCABEZADO",
       "top1_section_correct": false,
-      "top1_importance": 0.25
+      "top1_importance": 0.3
     },
     {
       "id": "q11",
@@ -211,7 +214,8 @@
       ],
       "retrieved_top5": [
         "fed_press_jan25",
-        "2023_07_26_jpm_fed_powell_fomc_analysis"
+        "2023_07_26_jpm_fed_powell_fomc_analysis",
+        "2025_01_31_exceptional_but_not_bulletproof"
       ],
       "precision_at_1": 1.0,
       "recall_at_5": 1.0,
@@ -219,7 +223,7 @@
       "ndcg_at_5": 1.0,
       "top1_section": "ENCABEZADO",
       "top1_section_correct": false,
-      "top1_importance": 0.6
+      "top1_importance": 0.0
     },
     {
       "id": "q12",
@@ -247,7 +251,9 @@
         "2021_05_10_acceleration_of_commodity_prices_does_not_warrant_long_term_em_fx_positions"
       ],
       "retrieved_top5": [
-        "2021_05_10_acceleration_of_commodity_prices_does_not_warrant_long_term_em_fx_positions"
+        "2021_05_10_acceleration_of_commodity_prices_does_not_warrant_long_term_em_fx_positions",
+        "textos_monitor_pm",
+        "2024_12_06_frontier_local_markets_2025_outlook"
       ],
       "precision_at_1": 1.0,
       "recall_at_5": 1.0,
@@ -274,7 +280,7 @@
       "ndcg_at_5": 0.6309,
       "top1_section": "ANALISIS",
       "top1_section_correct": false,
-      "top1_importance": 0.28
+      "top1_importance": 0.33
     },
     {
       "id": "q15",
@@ -283,7 +289,9 @@
         "2025_02_02_us_natural_gas_ngls_and_power_tariff_reality_check_for_energy"
       ],
       "retrieved_top5": [
-        "2025_02_02_us_natural_gas_ngls_and_power_tariff_reality_check_for_energy"
+        "2025_02_02_us_natural_gas_ngls_and_power_tariff_reality_check_for_energy",
+        "2024_05_03_global_data_watch_op",
+        "textos_monitor_pm"
       ],
       "precision_at_1": 1.0,
       "recall_at_5": 1.0,
@@ -319,7 +327,9 @@
         "2024_12_06_frontier_local_markets_2025_outlook"
       ],
       "retrieved_top5": [
-        "2024_12_06_frontier_local_markets_2025_outlook"
+        "2024_12_06_frontier_local_markets_2025_outlook",
+        "fed_press_jan25",
+        "2021_05_10_acceleration_of_commodity_prices_does_not_warrant_long_term_em_fx_positions"
       ],
       "precision_at_1": 1.0,
       "recall_at_5": 1.0,
@@ -336,7 +346,10 @@
         "textos_monitor_pm"
       ],
       "retrieved_top5": [
-        "textos_monitor_pm"
+        "textos_monitor_pm",
+        "minuta_23_05_24",
+        "2021_05_10_acceleration_of_commodity_prices_does_not_warrant_long_term_em_fx_positions",
+        "2025_01_31_exceptional_but_not_bulletproof"
       ],
       "precision_at_1": 1.0,
       "recall_at_5": 1.0,
@@ -353,7 +366,10 @@
         "textos_monitor_pm"
       ],
       "retrieved_top5": [
-        "textos_monitor_pm"
+        "textos_monitor_pm",
+        "comunicado_05_09_23",
+        "comunicado_31_01_24",
+        "comunicado_13_07_22"
       ],
       "precision_at_1": 1.0,
       "recall_at_5": 1.0,
@@ -389,8 +405,8 @@
         "comunicado_05_09_23"
       ],
       "retrieved_top5": [
-        "comunicado_13_07_22",
         "comunicado_06_09_22",
+        "comunicado_13_07_22",
         "minuta_05_09_23",
         "textos_monitor_pm"
       ],
@@ -398,9 +414,9 @@
       "recall_at_5": 1.0,
       "mrr": 1.0,
       "ndcg_at_5": 0.7654,
-      "top1_section": "DECISION",
+      "top1_section": "PROYECCION",
       "top1_section_correct": false,
-      "top1_importance": 0.933
+      "top1_importance": 0.717
     },
     {
       "id": "q22",
@@ -434,7 +450,9 @@
         "comunicado_31_01_24"
       ],
       "retrieved_top5": [
-        "textos_monitor_pm"
+        "textos_monitor_pm",
+        "2024_12_06_frontier_local_markets_2025_outlook",
+        "2024_05_03_global_data_watch_op"
       ],
       "precision_at_1": 0.0,
       "recall_at_5": 0.0,
@@ -474,7 +492,8 @@
         "textos_monitor_pm"
       ],
       "retrieved_top5": [
-        "textos_monitor_pm"
+        "textos_monitor_pm",
+        "2024_12_06_frontier_local_markets_2025_outlook"
       ],
       "precision_at_1": 1.0,
       "recall_at_5": 1.0,
@@ -502,7 +521,7 @@
       "ndcg_at_5": 1.0,
       "top1_section": "FINANCIAMIENTO_EXTERIOR",
       "top1_section_correct": false,
-      "top1_importance": 0.387
+      "top1_importance": 0.437
     },
     {
       "id": "q27",
@@ -533,15 +552,16 @@
       ],
       "retrieved_top5": [
         "minuta_17_01_13",
-        "comunicado_05_09_23"
+        "comunicado_05_09_23",
+        "2024_12_06_frontier_local_markets_2025_outlook"
       ],
       "precision_at_1": 0.0,
-      "recall_at_5": 0.0,
-      "mrr": 0.0,
-      "ndcg_at_5": 0.0,
+      "recall_at_5": 1.0,
+      "mrr": 0.3333,
+      "ndcg_at_5": 0.3066,
       "top1_section": "ANALISIS",
       "top1_section_correct": true,
-      "top1_importance": 0.28
+      "top1_importance": 0.33
     },
     {
       "id": "q29",
