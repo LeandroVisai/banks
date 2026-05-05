@@ -43,7 +43,7 @@ import psycopg2
 from psycopg2.extras import execute_values, Json
 
 DB_NAME = os.getenv("PGDATABASE", "rag_banco")
-TABLE_PREFIX = os.getenv("RAG_TABLE_PREFIX", "gemma_")
+TABLE_PREFIX = os.getenv("RAG_TABLE_PREFIX", "")
 
 
 def _table_name(base: str) -> str:
@@ -57,6 +57,42 @@ def _table_name(base: str) -> str:
 
 DOCUMENTS_TABLE = _table_name("documents")
 CHUNKS_TABLE = _table_name("chunks")
+
+# ---------------------------------------------------------------------------
+# Selección interactiva del prefijo de tablas
+# ---------------------------------------------------------------------------
+
+_KNOWN_PREFIXES = [
+    ("gemma_", "modelo Gemma"),
+    ("qwen_",  "modelo Qwen"),
+    ("",       "sin prefijo"),
+]
+
+
+def _prompt_table_prefix() -> str:
+    env = os.getenv("RAG_TABLE_PREFIX")
+    if env is not None:
+        return env
+    print("\nSelecciona el conjunto de tablas a usar:")
+    for i, (prefix, label) in enumerate(_KNOWN_PREFIXES, start=1):
+        tbl = f"{prefix}documents / {prefix}chunks" if prefix else "documents / chunks"
+        print(f"  [{i}] {tbl}  ({label})")
+    while True:
+        try:
+            raw = input("Opción [1]: ").strip() or "1"
+            idx = int(raw) - 1
+            if 0 <= idx < len(_KNOWN_PREFIXES):
+                return _KNOWN_PREFIXES[idx][0]
+        except (ValueError, EOFError):
+            pass
+        print("  Opción inválida.")
+
+
+def _apply_table_prefix(prefix: str) -> None:
+    global TABLE_PREFIX, DOCUMENTS_TABLE, CHUNKS_TABLE
+    TABLE_PREFIX = prefix
+    DOCUMENTS_TABLE = _table_name("documents")
+    CHUNKS_TABLE = _table_name("chunks")
 
 INPUT_DOCUMENTS = Path("logs/documents.json")
 INPUT_CHUNKS = Path("logs/chunks_vectorized.json")
@@ -134,38 +170,39 @@ CREATE TABLE IF NOT EXISTS {CHUNKS_TABLE} (
 );
 """
 
-INDICES_SQL = [
-    # documents
-    f"CREATE INDEX IF NOT EXISTS idx_docs_type ON {DOCUMENTS_TABLE}(doc_type_category)",
-    f"CREATE INDEX IF NOT EXISTS idx_docs_institution ON {DOCUMENTS_TABLE}(institution)",
-    f"CREATE INDEX IF NOT EXISTS idx_docs_year ON {DOCUMENTS_TABLE}(document_year)",
-    # chunks — filtros
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_document ON {CHUNKS_TABLE}(document_id)",
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_section ON {CHUNKS_TABLE}(section_type)",
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_importance ON {CHUNKS_TABLE}(importance_score DESC)",
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_policy ON {CHUNKS_TABLE}(is_policy_decision) "
-    f"WHERE is_policy_decision = TRUE",
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_fwd ON {CHUNKS_TABLE}(is_forward_looking) "
-    f"WHERE is_forward_looking = TRUE",
-    # chunks — GIN
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_tags ON {CHUNKS_TABLE} USING GIN(tags)",
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_variables ON {CHUNKS_TABLE} USING GIN(economic_variables jsonb_path_ops)",
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_entities ON {CHUNKS_TABLE} USING GIN(entities jsonb_path_ops)",
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_tsv ON {CHUNKS_TABLE} USING GIN(text_tsv)",
-    # chunks — vector (HNSW con cosine distance). Los embeddings están
-    # normalizados L2, así que cosine es numéricamente equivalente a inner
-    # product; usamos vector_cosine_ops porque el operador <=> es el más
-    # legible y convencional en queries.
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw ON {CHUNKS_TABLE} "
-    f"USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)",
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_chunk_date ON {CHUNKS_TABLE}(chunk_date) WHERE chunk_date IS NOT NULL",
-    # chunks — índices compuestos para filtros combinados frecuentes
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_doc_section ON {CHUNKS_TABLE}(document_id, section_type)",
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_year_section ON {CHUNKS_TABLE}(document_id, section_type) "
-    f"INCLUDE (importance_score)",
-    f"CREATE INDEX IF NOT EXISTS idx_chunks_date_imp ON {CHUNKS_TABLE}(chunk_date, importance_score DESC) "
-    f"WHERE chunk_date IS NOT NULL",
-]
+def _build_indices_sql() -> list[str]:
+    return [
+        # documents
+        f"CREATE INDEX IF NOT EXISTS idx_docs_type ON {DOCUMENTS_TABLE}(doc_type_category)",
+        f"CREATE INDEX IF NOT EXISTS idx_docs_institution ON {DOCUMENTS_TABLE}(institution)",
+        f"CREATE INDEX IF NOT EXISTS idx_docs_year ON {DOCUMENTS_TABLE}(document_year)",
+        # chunks — filtros
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_document ON {CHUNKS_TABLE}(document_id)",
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_section ON {CHUNKS_TABLE}(section_type)",
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_importance ON {CHUNKS_TABLE}(importance_score DESC)",
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_policy ON {CHUNKS_TABLE}(is_policy_decision) "
+        f"WHERE is_policy_decision = TRUE",
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_fwd ON {CHUNKS_TABLE}(is_forward_looking) "
+        f"WHERE is_forward_looking = TRUE",
+        # chunks — GIN
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_tags ON {CHUNKS_TABLE} USING GIN(tags)",
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_variables ON {CHUNKS_TABLE} USING GIN(economic_variables jsonb_path_ops)",
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_entities ON {CHUNKS_TABLE} USING GIN(entities jsonb_path_ops)",
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_tsv ON {CHUNKS_TABLE} USING GIN(text_tsv)",
+        # chunks — vector (HNSW con cosine distance). Los embeddings están
+        # normalizados L2, así que cosine es numéricamente equivalente a inner
+        # product; usamos vector_cosine_ops porque el operador <=> es el más
+        # legible y convencional en queries.
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw ON {CHUNKS_TABLE} "
+        f"USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)",
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_chunk_date ON {CHUNKS_TABLE}(chunk_date) WHERE chunk_date IS NOT NULL",
+        # chunks — índices compuestos para filtros combinados frecuentes
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_doc_section ON {CHUNKS_TABLE}(document_id, section_type)",
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_year_section ON {CHUNKS_TABLE}(document_id, section_type) "
+        f"INCLUDE (importance_score)",
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_date_imp ON {CHUNKS_TABLE}(chunk_date, importance_score DESC) "
+        f"WHERE chunk_date IS NOT NULL",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -248,9 +285,10 @@ def cmd_setup(force_drop: bool = False) -> int:
             )
             print(f"[03] ✓ schema ({DOCUMENTS_TABLE}, {CHUNKS_TABLE}) creado")
 
-            for sql in INDICES_SQL:
+            indices = _build_indices_sql()
+            for sql in indices:
                 cur.execute(sql)
-            print(f"[03] ✓ {len(INDICES_SQL)} índices creados")
+            print(f"[03] ✓ {len(indices)} índices creados")
         conn.commit()
 
     return 0
@@ -490,6 +528,7 @@ def main() -> int:
         print(__doc__)
         print(f"\nComandos válidos: {', '.join(COMMANDS)}")
         return 1
+    _apply_table_prefix(_prompt_table_prefix())
     return COMMANDS[sys.argv[1]]() or 0
 
 

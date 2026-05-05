@@ -59,6 +59,42 @@ def _table_name(base: str) -> str:
 DOCUMENTS_TABLE = _table_name("documents")
 CHUNKS_TABLE = _table_name("chunks")
 
+# ---------------------------------------------------------------------------
+# Selección interactiva del prefijo de tablas
+# ---------------------------------------------------------------------------
+
+_KNOWN_PREFIXES = [
+    ("gemma_", "modelo Gemma"),
+    ("qwen_",  "modelo Qwen"),
+    ("",       "sin prefijo"),
+]
+
+
+def _prompt_table_prefix() -> str:
+    env = os.getenv("RAG_TABLE_PREFIX")
+    if env is not None:
+        return env
+    print("\nSelecciona el conjunto de tablas a usar:")
+    for i, (prefix, label) in enumerate(_KNOWN_PREFIXES, start=1):
+        tbl = f"{prefix}documents / {prefix}chunks" if prefix else "documents / chunks"
+        print(f"  [{i}] {tbl}  ({label})")
+    while True:
+        try:
+            raw = input("Opción [1]: ").strip() or "1"
+            idx = int(raw) - 1
+            if 0 <= idx < len(_KNOWN_PREFIXES):
+                return _KNOWN_PREFIXES[idx][0]
+        except (ValueError, EOFError):
+            pass
+        print("  Opción inválida.")
+
+
+def _apply_table_prefix(prefix: str) -> None:
+    global TABLE_PREFIX, DOCUMENTS_TABLE, CHUNKS_TABLE
+    TABLE_PREFIX = prefix
+    DOCUMENTS_TABLE = _table_name("documents")
+    CHUNKS_TABLE = _table_name("chunks")
+
 # Parámetros de retrieval
 RECALL_N = 50           # top-N por cada rama antes de fusionar
 RRF_K = 60              # hiperparámetro estándar de RRF
@@ -790,6 +826,7 @@ def main() -> int:
     ap.add_argument("--no-mmr", action="store_true", help="Desactivar MMR (más relevancia, menos diversidad)")
     ap.add_argument("--json", action="store_true", help="Salida JSON")
     args = ap.parse_args()
+    _apply_table_prefix(_prompt_table_prefix())
 
     results, parsed = search(args.query, k=args.k, use_mmr=not args.no_mmr)
 
