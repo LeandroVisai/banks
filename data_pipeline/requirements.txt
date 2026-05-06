@@ -1,0 +1,15 @@
+# data_pipeline — deps mínimas
+
+# Lectura del catálogo
+PyYAML>=6.0
+
+# Manejo de DataFrames + parquet
+pandas>=2.0
+pyarrow>=14.0
+numpy>=1.26
+
+# Conexión al SQL Server (solo en el equipo que extrae datos del DW)
+# Comentado por defecto: si solo vas a LEER parquets generados en otro equipo,
+# no instales esto.
+# pyodbc>=5.0
+# sqlalchemy>=2.0

@@ -1,0 +1,2 @@
+# Los parquets se regeneran con `python -m data_pipeline.extract`. No los commiteamos.
+*.parquet

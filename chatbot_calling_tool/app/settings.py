@@ -14,6 +14,9 @@ MODELS_DIR = PROJECT_ROOT / "models"
 EMBEDDING_CACHE_DIR = PROJECT_ROOT.parent / "models_cache"
 SCHEMA_DIR = PROJECT_ROOT / "schema"
 
+# data_pipeline vive un nivel arriba: banks/data_pipeline/
+DATA_PIPELINE_DIR = PROJECT_ROOT.parent / "data_pipeline"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -64,6 +67,20 @@ class Settings(BaseSettings):
     api_port: int = Field(8081, ge=1, le=65535)  # 8081 ≠ 8080 del chatbot/ clásico
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_json: bool = False
+
+    # ── Series históricas — catálogo ─────────────────────────────────────────
+    catalog_path: Path = Field(
+        default_factory=lambda: DATA_PIPELINE_DIR / "series_catalog.yaml",
+        description="YAML con la metadata de las series (id, name, unit, sql_table, etc.)",
+    )
+
+    # ── Data Warehouse — Get_Data module ─────────────────────────────────────
+    # Ruta al directorio donde está Get_Data.py (el mismo módulo que usa Monitor.py)
+    # En producción (Windows): D:\GOM\DACE\Nacho\Modulos
+    get_data_path: str = Field(
+        default="",
+        description="Directorio que contiene Get_Data.py (igual que sys.path.append en Monitor.py)",
+    )
 
     @field_validator("rag_table_prefix")
     @classmethod

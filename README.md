@@ -28,7 +28,15 @@ Documentos PDF / Excel
 
 **Stack completo:**
 Python 3.12 · pypdf · sentence-transformers (multilingual-e5-small) ·
-PostgreSQL 14 + pgvector (HNSW) · vLLM · FastAPI · psycopg3 · CUDA 12.8 · H100
+PostgreSQL 14 + pgvector (HNSW) · vLLM · FastAPI · psycopg3 · pyarrow · CUDA 12.8 · H100
+
+### Tres componentes principales
+
+| Carpeta | Qué hace |
+|---|---|
+| Pipeline RAG (raíz: `00_*`–`05_*`, `run.py`) | Procesa PDFs/Excel a corpus pgvector |
+| [`data_pipeline/`](data_pipeline/) | Materializa series macro/financieras (de [`querys/Monitor.py`](querys/Monitor.py)) en parquets |
+| [`chatbot/`](chatbot/) y [`chatbot_calling_tool/`](chatbot_calling_tool/) | Dos chatbots paralelos (RAG clásico vs agentic con tool calling) |
 
 ---
 
@@ -242,23 +250,29 @@ curl -N http://localhost:8080/chat \
 
 ### Series históricas (datos cuantitativos directos)
 
-El chatbot lee series de tiempo directamente desde SQL (sin vectorizar) e incluye las tablas en el prompt cuando la query es cuantitativa:
+Ambos chatbots leen ~80 series de tiempo macro/financieras desde **parquets generados por `data_pipeline/`**, no de PostgreSQL ni vectorización. Las queries fuente viven en [`querys/Monitor.py`](querys/Monitor.py); el pipeline las extrae al data warehouse y materializa snapshots portables.
 
-| `series_id` | Variable | Unidad |
-|---|---|---|
-| `tpm` | TPM del BCCh | % anual |
-| `ipc_anual` / `ipc_mensual` | Inflación | var % |
-| `usdclp_spot` | Tipo de cambio | CLP/USD |
-| `pib_trimestral` / `imacec_mensual` | Actividad | var % a/a |
-| `precio_cobre` / `precio_petroleo_wti` | Commodities | USD |
-| `fed_funds_rate` | Fed Funds | % anual |
-| + 10 series más | … | … |
-
-Para cargar datos históricos:
 ```bash
-# CSV con columnas: date,value[,notes]
-python -m scripts.load_series tpm data/tpm.csv
+# Genera parquets (modo mock para desarrollo, dw para extracción real)
+python -m data_pipeline.extract --mode mock
+python -m data_pipeline.extract --mode dw --since 2018-01-01
 ```
+
+Categorías disponibles:
+- **Tasas CLP** — DAP/Prime/Swap, PDBC, TIB
+- **Curvas SPC** — swap cámara CLP y UF (3M–10Y)
+- **Bonos Chile** — BTP/BTU 1Y–30Y
+- **UST** — US Treasury 2Y–30Y
+- **OIS SOFR** — expectativas Fed 3M–24M
+- **Expectativas TPM** — spreads MIPR
+- **FX** — USD/CLP, DXY, MXN/BRL/COP/PEN/KRW/AUD/NZD, canastas
+- **Commodities** — Cobre
+- **Forwards CLP** — FWD 30D–360D
+- **Tasas USD MN** — TADO, SOFR, Prime USD, DAP USD, Spread On-Shore
+- **Liquidez MX** — LCR, NSFR, Cobertura, IHH
+- **Microestructura** — bid-ask, volatilidad, monto transado
+
+Ver [`data_pipeline/README.md`](data_pipeline/README.md) para detalles.
 
 ---
 

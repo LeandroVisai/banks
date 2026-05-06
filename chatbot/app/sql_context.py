@@ -1,43 +1,68 @@
 """
-Series de tiempo macro como contexto directo (sin vectorización).
+Series de tiempo macro como contexto directo para el prompt del LLM.
 
-Toma el `QueryAnalysis` (variables + rango de fechas) y devuelve un bloque
-de texto tabular legible por el LLM, listo para inyectar bajo
-`<datos_historicos>...</datos_historicos>` en el prompt.
+Consulta el Data Warehouse (SQL Server) en tiempo real vía dw_store,
+usando el catálogo data_pipeline/series_catalog.yaml como fuente de
+metadata (id, name, unit, sql_table, sql_column, etc.).
+
+El resultado se inyecta bajo <datos_historicos>...</datos_historicos>
+en el prompt, sin necesidad de vectorización ni parquets intermedios.
 """
 from __future__ import annotations
 
 import logging
 from typing import Optional
 
-from . import db
+from data_pipeline import dw_store
+
 from .query_analysis import QueryAnalysis
+from .settings import settings
 
 log = logging.getLogger(__name__)
 
 
-# Variable de taxonomía → series_id que la representan
+# ─────────────────────────────────────────────────────────────────────────────
+# Variable de taxonomía → series_ids representativas
+# ─────────────────────────────────────────────────────────────────────────────
+
 VARIABLE_TO_SERIES: dict[str, list[str]] = {
-    "TASA_INTERES":              ["tpm", "exp_tpm_12m", "fed_funds_rate"],
-    "INFLACION":                 ["ipc_anual", "ipc_mensual", "ipcx_anual",
-                                  "exp_inflacion_12m", "exp_inflacion_24m"],
-    "PIB":                       ["pib_trimestral", "imacec_mensual"],
-    "TIPO_CAMBIO":               ["usdclp_spot"],
-    "EXPECTATIVAS_INFLACIONARIAS": ["exp_inflacion_12m", "exp_inflacion_24m"],
-    "TASAS_LARGO_PLAZO":         ["bcu_5y", "btp_5y"],
-    "COMMODITIES":               ["precio_cobre", "precio_petroleo_wti"],
-    "MERCADO_LABORAL":           ["desempleo"],
-    "RIESGO_CREDITO":            ["cds_chile_5y"],
+    "TASA_INTERES": [
+        "spc_3m_clp", "spc_1y_clp", "spc_2y_clp",
+        "spread_mipr_3m", "spread_mipr_12m",
+        "sofr_3m", "sofr_12m",
+    ],
+    "TASAS_LARGO_PLAZO": [
+        "btp_5y", "btp_10y",
+        "btu_5y", "btu_10y",
+        "ust_5y", "ust_10y",
+        "spc_5y_clp", "spc_10y_clp",
+    ],
+    "TASA_INTERES_MERCADO": [
+        "spread_dap_swap_1m_clp", "spread_dap_swap_3m_clp",
+        "spread_prime_swap_1m_clp", "spread_prime_swap_3m_clp",
+        "tib_tasa",
+    ],
+    "TIPO_CAMBIO": [
+        "usdclp", "dxy", "monedas_latam", "monedas_comparables",
+    ],
+    "COMMODITIES": [
+        "cobre",
+    ],
 }
 
-# Cuántas observaciones traer según frecuencia (cuando no hay rango)
 _DEFAULT_LIMIT: dict[str, int] = {
-    "diario":     30,
+    "diario":     45,
     "mensual":    18,
     "trimestral":  8,
     "anual":       5,
 }
 
+_MAX_SERIES_IN_CONTEXT = 6
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Resolución de series por variable
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _series_for(variables: list[str]) -> list[str]:
     out: list[str] = []
@@ -45,35 +70,9 @@ def _series_for(variables: list[str]) -> list[str]:
         for sid in VARIABLE_TO_SERIES.get(var, []):
             if sid not in out:
                 out.append(sid)
+            if len(out) >= _MAX_SERIES_IN_CONTEXT:
+                return out
     return out
-
-
-def _fmt_value(value, unit: str) -> str:
-    if value is None:
-        return "N/D"
-    val = float(value)
-    if any(u in unit for u in ("CLP", "USD/lb", "USD/barril", "pb")):
-        return f"{val:,.0f}"
-    return f"{val:.2f}"
-
-
-def _format_block(meta: dict, rows: list[dict]) -> str:
-    if not rows:
-        return ""
-    name = meta["series_name"]
-    unit = meta["unit"]
-    src = meta["source"]
-    freq = meta["frequency"]
-
-    header = f"{name}  [fuente: {src} | {freq} | unidad: {unit}]"
-    lines = [header, "-" * len(header)]
-    for r in rows:
-        d = r["date"]
-        date_str = d.strftime("%Y-%m") if freq in ("mensual", "trimestral") else d.isoformat()
-        val_str = _fmt_value(r["value"], unit)
-        note = f"  ({r['notes']})" if r.get("notes") else ""
-        lines.append(f"  {date_str}  {val_str}{note}")
-    return "\n".join(lines)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,7 +83,8 @@ async def build_context(analysis: QueryAnalysis) -> tuple[str, list[dict]]:
     """
     Devuelve (bloque_texto, lista_series_usadas).
 
-    `lista_series_usadas` es metadata para persistir en `chat_messages.historical_series`.
+    Consulta el DW en tiempo real. Si DW_SERVER no está configurado,
+    retorna vacío con una advertencia en lugar de romper el chatbot.
     """
     if not analysis.needs_historical_data:
         return "", []
@@ -93,35 +93,51 @@ async def build_context(analysis: QueryAnalysis) -> tuple[str, list[dict]]:
     if not series_ids:
         return "", []
 
-    metas = await db.fetch_series_meta(series_ids)
+    if not settings.get_data_path:
+        log.warning("GET_DATA_PATH no configurado — datos históricos no disponibles")
+        return "", []
+    get_data_path = settings.get_data_path
+
     blocks: list[str] = []
     used: list[dict] = []
 
     for sid in series_ids:
-        meta = metas.get(sid)
-        if not meta:
-            continue
-        limit = _DEFAULT_LIMIT.get(meta["frequency"], 18)
-        rows = await db.fetch_series_rows(
-            sid, limit=limit,
-            date_from=analysis.date_from,
-            date_to=analysis.date_to,
-        )
-        if not rows:
+        meta = dw_store.get_series_meta(sid, catalog_path=settings.catalog_path)
+        if meta is None:
+            log.debug("Serie no en catálogo: %s", sid)
             continue
 
-        block = _format_block(meta, rows)
+        limit = _DEFAULT_LIMIT.get(meta.get("frequency", "diario"), 45)
+        use_limit = limit if not (analysis.date_from and analysis.date_to) else None
+
+        try:
+            df = await dw_store.fetch_series(
+                sid,
+                get_data_path=get_data_path,
+                catalog_path=settings.catalog_path,
+                date_from=analysis.date_from,
+                date_to=analysis.date_to,
+                limit=use_limit,
+            )
+        except Exception as e:
+            log.warning("fetch_series(%s) falló: %s", sid, e)
+            continue
+
+        if df.empty:
+            continue
+
+        block = dw_store.format_table(meta, df)
         if not block:
             continue
         blocks.append(block)
         used.append({
             "series_id": sid,
-            "series_name": meta["series_name"],
-            "unit": meta["unit"],
-            "frequency": meta["frequency"],
-            "n_observations": len(rows),
-            "first_date": rows[0]["date"].isoformat(),
-            "last_date": rows[-1]["date"].isoformat(),
+            "series_name": meta["name"],
+            "unit": meta.get("unit", ""),
+            "frequency": meta.get("frequency", ""),
+            "n_observations": len(df),
+            "first_date": df["date"].iloc[0].date().isoformat(),
+            "last_date": df["date"].iloc[-1].date().isoformat(),
         })
 
     if not blocks:
