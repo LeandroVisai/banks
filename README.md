@@ -27,7 +27,7 @@ Documentos PDF / Excel
 ```
 
 **Stack completo:**
-Python 3.12 · pypdf · sentence-transformers (multilingual-e5-small) ·
+Python 3.12 · pypdf · sentence-transformers (Qwen3-Embedding-8B, 4096-dim) ·
 PostgreSQL 14 + pgvector (HNSW) · vLLM · FastAPI · psycopg3 · pyarrow · CUDA 12.8 · H100
 
 ### Tres componentes principales
@@ -100,7 +100,7 @@ Datos_prueba/Monitor PM/*.xlsx
      │      → logs/chunks_enriched.json
      │
      ▼ [02] 02_vectorize.py
-     │      multilingual-e5-small, prefijo contextual, normalización L2
+     │      Qwen3-Embedding-8B, instrucción contextual, normalización L2
      │      → logs/chunks_vectorized.json
      │
      ▼ [03] 03_database.py
@@ -250,12 +250,25 @@ curl -N http://localhost:8080/chat \
 
 ### Series históricas (datos cuantitativos directos)
 
-Ambos chatbots leen ~80 series de tiempo macro/financieras desde **parquets generados por `data_pipeline/`**, no de PostgreSQL ni vectorización. Las queries fuente viven en [`querys/Monitor.py`](querys/Monitor.py); el pipeline las extrae al data warehouse y materializa snapshots portables.
+Ambos chatbots leen ~101 series de tiempo macro/financieras **directamente del Data Warehouse (SQL Server)** usando el módulo `Get_Data.py` — el mismo que usa [`querys/Monitor.py`](querys/Monitor.py). No hay capa intermedia de parquets ni vectorización.
+
+El flujo es:
+```
+LLM necesita datos numéricos
+  → dw_store.fetch_series("btp_10y", ...)
+  → gd.get_data("SELECT TOP 45 ... FROM dbo.Base_DMN WHERE ...")
+  → DataFrame → tabla ASCII → prompt
+```
+
+El catálogo [`data_pipeline/series_catalog.yaml`](data_pipeline/series_catalog.yaml) mapea cada serie a su tabla y columna SQL.
 
 ```bash
-# Genera parquets (modo mock para desarrollo, dw para extracción real)
+# Solo necesitas configurar GET_DATA_PATH en el .env de cada chatbot:
+GET_DATA_PATH=D:\GOM\DACE\Nacho\Modulos   # ruta al directorio con Get_Data.py
+
+# Opcional: generar snapshots parquet para desarrollo offline (sin DW)
 python -m data_pipeline.extract --mode mock
-python -m data_pipeline.extract --mode dw --since 2018-01-01
+python -m data_pipeline.extract --mode dw --get-data-path "D:\GOM\DACE\Nacho\Modulos" --since 2018-01-01
 ```
 
 Categorías disponibles:
@@ -285,7 +298,7 @@ Ver [`data_pipeline/README.md`](data_pipeline/README.md) para detalles.
 | `PGDATABASE` | `rag_banco` | Base de datos PostgreSQL |
 | `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` | localhost/5432/postgres | Conexión |
 | `RAG_TABLE_PREFIX` | *(pregunta interactiva)* | `gemma_`, `qwen_`, o vacío |
-| `RAG_EMBEDDING_MODEL` | `intfloat/multilingual-e5-small` | Modelo de embeddings |
+| `RAG_EMBEDDING_MODEL` | `Qwen/Qwen3-Embedding` | Modelo de embeddings |
 
 ### Chatbot (`chatbot/.env`)
 
@@ -300,6 +313,7 @@ Ver [`data_pipeline/README.md`](data_pipeline/README.md) para detalles.
 | `RAG_TABLE_PREFIX` | (vacío) | Prefijo de tablas RAG del pipeline |
 | `API_PORT` | `8080` | Puerto FastAPI |
 | `LOG_JSON` | `false` | `true` para logs estructurados (ELK/Loki) |
+| `GET_DATA_PATH` | *(requerido)* | Directorio que contiene `Get_Data.py` (mismo que `Monitor.py`) |
 
 ---
 

@@ -134,10 +134,30 @@ def extract_pages(pdf_path: Path) -> tuple[list[str], list[str]]:
     return pages, warnings
 
 
+def _fix_mojibake(text: str) -> str:
+    """Repara texto donde pypdf leyó bytes UTF-8 como Latin-1.
+
+    Algunos PDFs almacenan texto en bytes UTF-8 pero pypdf los interpreta
+    byte a byte como Latin-1, convirtiendo 'ó' (C3 B3) en 'Ã³'.
+    La reparación re-encodea como Latin-1 (recupera los bytes) y decodea
+    como UTF-8. Solo se aplica si el texto contiene 'Ã' (señal del mojibake)
+    y si la operación produce UTF-8 válido.
+    """
+    if "Ã" not in text:
+        return text
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return text
+
+
 def normalize_page_text(text: str) -> str:
     """Limpia texto de una página."""
     if not text:
         return ""
+
+    # Reparar mojibake UTF-8→Latin-1 antes de cualquier otro procesamiento
+    text = _fix_mojibake(text)
 
     # Unir palabras cortadas por guión al final de línea: "inflació-\nn" -> "inflación"
     text = re.sub(r"-\n(\w)", r"\1", text)
@@ -154,6 +174,11 @@ def normalize_page_text(text: str) -> str:
 
     # Eliminar watermarks DRM de JPMorgan y similares: {[{<hash>}]}
     text = re.sub(r"\{\[\{[^}]*\}\]\}", "", text)
+
+    # Limpiar caracteres corruptos: PDF con encoding roto + diacríticos mal decodificados
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", text)
+    # "ENQL@Ä@K" → corrupción OCR/PDF; normalizar
+    text = re.sub(r"@[À-ÿ]@", "@", text)
 
     return text.strip()
 
@@ -237,6 +262,21 @@ def split_sentences(paragraph: str) -> list[str]:
     return [s.strip() for s in sentences if s.strip()]
 
 
+def _overlap_from_sentence_boundary(tail: str, target_len: int) -> str:
+    """Devuelve el tramo de `tail` que empieza en el inicio de la primera
+    oración completa cuya longitud total sea <= target_len * 1.5.
+    Si no encuentra límite de oración, devuelve los últimos target_len chars.
+    """
+    # Buscar todos los inicios de oración dentro del tramo
+    # (punto/signo seguido de espacio y mayúscula/dígito)
+    for m in re.finditer(r"(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÑ0-9\"])", tail):
+        candidate = tail[m.end():]
+        if len(candidate) >= target_len // 2:
+            return candidate
+    # Sin límite de oración encontrado: fallback a los últimos N chars
+    return tail[-target_len:]
+
+
 def detect_section_title(paragraph: str) -> Optional[str]:
     """Una línea corta en mayúsculas es probable título de sección."""
     if "\n" in paragraph:
@@ -305,9 +345,12 @@ def chunk_pages(pages: list[str]) -> list[dict]:
         # Si el buffer está casi lleno y este unit lo empujaría al límite, flush
         if buf_len + unit_len > TARGET_CHUNK_CHARS and buf_len >= MIN_CHUNK_CHARS:
             flush()
-            # Overlap: conservar cola del buffer anterior
+            # Overlap: conservar cola del buffer anterior, comenzando en límite de oración.
+            # Tomar el doble del overlap para tener contexto suficiente y luego
+            # avanzar hasta el inicio de la primera oración completa dentro de ese tramo.
             if OVERLAP_CHARS > 0 and buffer:
-                tail = " ".join(buffer)[-OVERLAP_CHARS:]
+                raw_tail = " ".join(buffer)[-(OVERLAP_CHARS * 2):]
+                tail = _overlap_from_sentence_boundary(raw_tail, OVERLAP_CHARS)
                 buffer = [tail]
                 buf_len = len(tail)
                 buf_pages = [buf_pages[-1]]

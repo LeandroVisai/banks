@@ -49,7 +49,7 @@ def _load_model_sync():
     name = _resolve_model_path()
     log.info("Cargando modelo de embedding: %s", name)
     try:
-        _model = SentenceTransformer(name)
+        _model = SentenceTransformer(name, trust_remote_code=True)
     except Exception as e:
         raise RuntimeError(
             f"No se pudo cargar el embedding '{settings.embedding_model_id}'.\n"
@@ -67,12 +67,21 @@ async def warm_up() -> None:
     await loop.run_in_executor(None, _load_model_sync)
 
 
+_QWEN_QUERY_INSTRUCTION = (
+    "Instruct: Dado el texto de una consulta financiera en español, "
+    "recupera los fragmentos de documentos del Banco Central de Chile más relevantes.\nQuery: "
+)
+
+
 def _encode_sync(text: str) -> np.ndarray:
     model = _load_model_sync()
-    # E5 requiere prefijo "query: " para queries de retrieval.
-    prefix = "query: " if "e5" in (_model_name or "").lower() else ""
+    name_lower = (_model_name or "").lower()
+    if "e5" in name_lower:
+        text = "query: " + text
+    elif "qwen" in name_lower and "embedding" in name_lower:
+        text = _QWEN_QUERY_INSTRUCTION + text
     vec = model.encode(
-        [prefix + text],
+        [text],
         normalize_embeddings=True,
         convert_to_numpy=True,
     )[0]

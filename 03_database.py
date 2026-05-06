@@ -106,7 +106,7 @@ def detect_embedding_dim() -> int:
     1. Variable de entorno RAG_EMBEDDING_DIM
     2. Campo embedding_dim en el primer chunk de chunks_vectorized.json
     3. Longitud real del primer embedding en chunks_vectorized.json
-    4. Fallback 384 (multilingual-e5-small, compatibilidad con main branch)
+    4. Fallback 4096 (Qwen3-Embedding-8B)
     """
     env_dim = os.getenv("RAG_EMBEDDING_DIM")
     if env_dim:
@@ -118,7 +118,7 @@ def detect_embedding_dim() -> int:
             dim = chunks[0].get("embedding_dim") or len(chunks[0].get("embedding") or [])
             if dim:
                 return int(dim)
-    return 384
+    return 4096
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +455,7 @@ def cmd_load() -> int:
                         existing_dim = int(m.group(1))
                         if existing_dim != dim:
                             print(f"[03] ❌ Dimensión de columna en DB no coincide: table {CHUNKS_TABLE} embedding={existing_dim}, pero los embeddings son dim={dim}")
-                            print("[03] Opciones:\n  1) Crear una tabla nueva para este modelo: exporta RAG_TABLE_PREFIX='gemma_' y ejecuta 'setup' antes de 'load'.\n  2) Si quieres sobrescribir la tabla existente, ejecuta 'python 03_database.py reset' para recrearla con la nueva dimensión (destructivo).\n  3) Re-vectoriza con una dimensión compatible (no recomendado si quieres usar EmbeddingGemma).")
+                            print("[03] Opciones:\n  1) Tabla nueva para este modelo: exporta RAG_TABLE_PREFIX='qwen_' y ejecuta 'setup' antes de 'load'.\n  2) Sobrescribir tabla existente: ejecuta 'python 03_database.py reset' (destructivo).\n  3) Re-vectoriza con una dimensión compatible.")
                             return 2
             _upsert_documents(cur, doc_rows)
 

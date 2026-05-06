@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     chatbot_top_p: float = Field(0.9, ge=0.0, le=1.0)
 
     # ── Embeddings ───────────────────────────────────────────────────────────
-    embedding_model_id: str = "intfloat/multilingual-e5-small"
+    embedding_model_id: str = "Qwen/Qwen3-Embedding"
 
     # ── PostgreSQL ───────────────────────────────────────────────────────────
     pghost: str = "localhost"
@@ -65,6 +65,9 @@ class Settings(BaseSettings):
 
     # ── Conversación ─────────────────────────────────────────────────────────
     history_max_turns: int = Field(10, ge=0, le=50)
+
+    # ── Modo de prueba ────────────────────────────────────────────────────────
+    chatbot_skip_db: bool = False   # CHATBOT_SKIP_DB=1 → omite PostgreSQL (testing sin DB)
 
     # ── API ──────────────────────────────────────────────────────────────────
     api_host: str = "0.0.0.0"
@@ -108,6 +111,9 @@ class Settings(BaseSettings):
     # ── Propiedades derivadas ────────────────────────────────────────────────
     @property
     def model_path(self) -> Path:
+        p = Path(self.chatbot_model_name)
+        if p.is_absolute():
+            return p
         return MODELS_DIR / self.chatbot_model_name
 
     @property

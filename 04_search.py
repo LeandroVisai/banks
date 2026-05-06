@@ -653,23 +653,34 @@ def load_embedding_model():
     if _MODEL is not None:
         return _MODEL, _MODEL_NAME
     from sentence_transformers import SentenceTransformer
-    model_id = os.environ.get("RAG_EMBEDDING_MODEL", "EmbeddingGemma")
-    local_path = _MODELS_DIR / model_id
+    model_id = os.environ.get("RAG_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding")
+    local_path = _MODELS_DIR / model_id.replace("/", "--")
     name = str(local_path) if local_path.exists() else model_id
     try:
-        _MODEL = SentenceTransformer(name)
+        _MODEL = SentenceTransformer(name, trust_remote_code=True)
         _MODEL_NAME = name
     except Exception:
-        _MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-        _MODEL_NAME = "all-MiniLM-L6-v2"
+        _MODEL = SentenceTransformer("intfloat/multilingual-e5-small")
+        _MODEL_NAME = "intfloat/multilingual-e5-small"
     return _MODEL, _MODEL_NAME
+
+
+# Instrucción para Qwen3-Embedding en modo retrieval financiero
+_QWEN_QUERY_INSTRUCTION = (
+    "Instruct: Dado el texto de una consulta financiera en español, "
+    "recupera los fragmentos de documentos del Banco Central de Chile más relevantes.\nQuery: "
+)
 
 
 def embed_query(query_text: str) -> np.ndarray:
     model, name = load_embedding_model()
-    text = query_text
-    if "e5" in name.lower():
-        text = "query: " + text
+    name_lower = name.lower()
+    if "e5" in name_lower:
+        text = "query: " + query_text
+    elif "qwen" in name_lower and "embedding" in name_lower:
+        text = _QWEN_QUERY_INSTRUCTION + query_text
+    else:
+        text = query_text
     vec = model.encode([text], normalize_embeddings=True, convert_to_numpy=True)[0]
     return vec
 

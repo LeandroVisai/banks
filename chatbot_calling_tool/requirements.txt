@@ -20,8 +20,7 @@ sentence-transformers>=3.0.0
 psycopg[binary,pool]>=3.2.0
 pgvector>=0.3.0
 
-# ── Data Warehouse SQL Server ──────────────────────────────────────────────────
-pyodbc>=5.0.0
+# ── Data Warehouse (Get_Data vía el módulo del servidor) ──────────────────────
 pandas>=2.0.0
 pyyaml>=6.0
 

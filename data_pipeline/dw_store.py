@@ -129,7 +129,12 @@ def _build_series_sql(
     date_to: Optional[date | datetime],
     limit: Optional[int],
 ) -> str:
-    """SELECT simple: sql_table + sql_column, con filtros de fecha."""
+    """SELECT simple: sql_table + sql_column, con filtros de fecha.
+
+    Cuando ambas fechas están definidas se retorna el rango completo.
+    Cuando limit está definido (con o sin date_from/date_to parcial)
+    se aplica TOP sobre los más recientes dentro del filtro.
+    """
     table = meta.sql_table
     col = meta.sql_column
 
@@ -144,9 +149,10 @@ def _build_series_sql(
         where_parts.append(f"Fecha <= '{d.isoformat()}'")
 
     where = " AND ".join(where_parts)
+    full_range = date_from is not None and date_to is not None
 
-    if limit is not None and date_from is None and date_to is None:
-        # TOP N más recientes, reordenados asc
+    if limit is not None and not full_range:
+        # TOP N más recientes dentro del filtro (reordenados ASC al final)
         return (
             f"SELECT TOP {limit} date, value FROM ("
             f"  SELECT Fecha AS date, {col} AS value"
@@ -193,7 +199,8 @@ def _build_tib_sql(
     else:
         raise ValueError(f"derivation no soportada: {derivation!r}")
 
-    if limit is not None and date_from is None and date_to is None:
+    full_range = date_from is not None and date_to is not None
+    if limit is not None and not full_range:
         return (
             f"SELECT TOP {limit} date, value FROM ({inner} ORDER BY date DESC) AS sub"
             f" ORDER BY date ASC"
@@ -249,7 +256,11 @@ async def fetch_series(
         if not meta.sql_table:
             log.warning("Serie %s con derivation pero sin sql_table — omitida", series_id)
             return pd.DataFrame(columns=["date", "value"])
-        sql = _build_tib_sql(meta, date_from=date_from, date_to=date_to, limit=limit)
+        try:
+            sql = _build_tib_sql(meta, date_from=date_from, date_to=date_to, limit=limit)
+        except ValueError as e:
+            log.warning("Serie %s: %s — omitida (derivation no implementada)", series_id, e)
+            return pd.DataFrame(columns=["date", "value"])
     elif meta.sql_table and meta.sql_column:
         sql = _build_series_sql(meta, date_from=date_from, date_to=date_to, limit=limit)
     else:

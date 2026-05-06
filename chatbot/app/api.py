@@ -15,14 +15,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 import time
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
+
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
 from . import db, embeddings, llm, prompts, query_analysis, retrieval, sql_context
+from data_pipeline import dw_store
 from .schemas import (
     ChatRequest, ChatResponse, HealthResponse, HistoricalSeriesCatalogEntry,
     HistoryMessage, SessionHistory, SessionSummary, SourceRef, HistoricalSeriesRef,
@@ -42,12 +47,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await db.init_pool()
     await db.apply_schema_files()
 
-    # Embeddings y LLM se cargan en paralelo: el modelo de embedding es CPU-light,
-    # vLLM hace el grueso del trabajo en GPU.
-    await asyncio.gather(
-        embeddings.warm_up(),
-        llm.load_engine(),
-    )
+    if db.is_enabled():
+        await asyncio.gather(embeddings.warm_up(), llm.load_engine())
+    else:
+        # Sin DB (CHATBOT_SKIP_DB=1): solo LLM, sin embeddings para RAG
+        await llm.load_engine()
+
+    db_enabled = db.is_enabled()
     log.info("Startup complete — listening on %s:%d", settings.api_host, settings.api_port)
 
     try:
@@ -108,18 +114,19 @@ async def model_info() -> dict:
 
 @app.get("/historical-series", response_model=list[HistoricalSeriesCatalogEntry])
 async def historical_series() -> list[HistoricalSeriesCatalogEntry]:
-    rows = await db.list_series_catalog()
+    """Catálogo de series — usa el YAML del catálogo DW (siempre disponible)."""
+    rows = dw_store.list_series(catalog_path=settings.catalog_path)
     return [
         HistoricalSeriesCatalogEntry(
-            series_id=r["series_id"],
-            series_name=r["series_name"],
-            unit=r["unit"],
-            frequency=r["frequency"],
-            source=r["source"],
-            economic_variable=r.get("economic_variable"),
-            num_observations=int(r["num_observations"]),
-            first_date=r["first_date"].isoformat() if r.get("first_date") else None,
-            last_date=r["last_date"].isoformat() if r.get("last_date") else None,
+            series_id=r["id"],
+            series_name=r["name"],
+            unit=r.get("unit", ""),
+            frequency=r.get("frequency", ""),
+            source=r.get("source", ""),
+            economic_variable=r.get("variable"),
+            num_observations=None,
+            first_date=None,
+            last_date=None,
         )
         for r in rows
     ]
@@ -196,11 +203,11 @@ async def _build_pipeline(req: ChatRequest):
     # 3. RAG (en paralelo con el contexto histórico)
     chunks_task = (
         asyncio.create_task(retrieval.retrieve(req.message, k=req.k or settings.rag_top_k))
-        if req.use_rag and analysis.needs_rag
+        if req.use_rag and analysis.needs_rag and db.is_enabled()
         else None
     )
 
-    # 4. Datos históricos
+    # 4. Datos históricos (siempre disponible si GET_DATA_PATH está configurado)
     hist_task = (
         asyncio.create_task(sql_context.build_context(analysis))
         if req.use_historical

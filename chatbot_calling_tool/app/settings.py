@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     tool_trace_enabled: bool = True
 
     # ── Embeddings ───────────────────────────────────────────────────────────
-    embedding_model_id: str = "intfloat/multilingual-e5-small"
+    embedding_model_id: str = "Qwen/Qwen3-Embedding"
 
     # ── PostgreSQL ───────────────────────────────────────────────────────────
     pghost: str = "localhost"

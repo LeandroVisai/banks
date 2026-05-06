@@ -13,9 +13,15 @@ encarga del retorno.
 """
 from __future__ import annotations
 
+import sys
+if sys.platform.startswith("win"):
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import json
 import logging
 import re
+import uuid
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -30,6 +36,14 @@ from .settings import SCHEMA_DIR, settings
 log = logging.getLogger(__name__)
 
 _pool: AsyncConnectionPool | None = None
+
+
+def _skip_db() -> bool:
+    return settings.chatbot_skip_db
+
+
+def is_enabled() -> bool:
+    return not _skip_db()
 
 
 # ── Validación de identificadores SQL (defensa contra SQL injection en interpolación) ─
@@ -48,6 +62,10 @@ def safe_ident(name: str) -> str:
 
 async def init_pool() -> None:
     global _pool
+    if _skip_db():
+        _pool = None
+        log.warning("CHATBOT_SKIP_DB=1: PostgreSQL omitido (modo testing)")
+        return
     _pool = AsyncConnectionPool(
         conninfo=settings.dsn,
         min_size=settings.pg_pool_min,
@@ -79,6 +97,8 @@ async def get_conn() -> AsyncIterator[AsyncConnection]:
 
 
 async def healthcheck() -> bool:
+    if _skip_db():
+        return False
     try:
         async with get_conn() as conn:
             async with conn.cursor() as cur:
@@ -91,6 +111,9 @@ async def healthcheck() -> bool:
 
 async def apply_schema_files() -> None:
     """Aplica todos los `schema/*.sql` ordenados — idempotentes (CREATE IF NOT EXISTS)."""
+    if _skip_db():
+        log.warning("CHATBOT_SKIP_DB=1: schema omitido")
+        return
     paths = sorted(SCHEMA_DIR.glob("*.sql"))
     if not paths:
         log.warning("No se encontraron schemas en %s", SCHEMA_DIR)
@@ -109,6 +132,8 @@ async def apply_schema_files() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def create_session(metadata: Optional[dict] = None) -> str:
+    if _skip_db():
+        return str(uuid.uuid4())
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -121,6 +146,8 @@ async def create_session(metadata: Optional[dict] = None) -> str:
 
 
 async def session_exists(session_id: str) -> bool:
+    if _skip_db():
+        return False
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -139,6 +166,8 @@ async def save_message(
     token_count: Optional[int] = None,
     latency_ms: Optional[int] = None,
 ) -> str:
+    if _skip_db():
+        return str(uuid.uuid4())
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -162,11 +191,7 @@ async def save_message(
 
 
 async def get_recent_history(session_id: str, max_turns: int) -> list[dict]:
-    """
-    Retorna últimos `max_turns` pares user+assistant en orden cronológico.
-    Excluye el assistant final si está incompleto.
-    """
-    if max_turns <= 0:
+    if max_turns <= 0 or _skip_db():
         return []
     limit = max_turns * 2
     async with get_conn() as conn:
@@ -189,6 +214,8 @@ async def get_recent_history(session_id: str, max_turns: int) -> list[dict]:
 
 
 async def get_full_history(session_id: str) -> list[dict]:
+    if _skip_db():
+        return []
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -205,6 +232,8 @@ async def get_full_history(session_id: str) -> list[dict]:
 
 
 async def list_sessions(limit: int = 20) -> list[dict]:
+    if _skip_db():
+        return []
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -227,6 +256,8 @@ async def list_sessions(limit: int = 20) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def vector_recall(query_vec: list[float], n: int) -> list[dict]:
+    if _skip_db():
+        return []
     docs_t = safe_ident(settings.docs_table)
     chunks_t = safe_ident(settings.chunks_table)
     emb_str = "[" + ",".join(f"{x:.7f}" for x in query_vec) + "]"
@@ -250,6 +281,8 @@ async def vector_recall(query_vec: list[float], n: int) -> list[dict]:
 
 
 async def lexical_recall(query: str, n: int) -> list[dict]:
+    if _skip_db():
+        return []
     docs_t = safe_ident(settings.docs_table)
     chunks_t = safe_ident(settings.chunks_table)
     sql = f"""
@@ -277,6 +310,8 @@ async def lexical_recall(query: str, n: int) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def fetch_series_meta(series_ids: list[str]) -> dict[str, dict]:
+    if _skip_db():
+        return {}
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -297,6 +332,8 @@ async def fetch_series_rows(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> list[dict]:
+    if _skip_db():
+        return []
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             if date_from and date_to:
@@ -328,6 +365,8 @@ async def fetch_series_rows(
 
 
 async def list_series_catalog() -> list[dict]:
+    if _skip_db():
+        return []
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(

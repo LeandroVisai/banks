@@ -6,6 +6,12 @@ antes de que uvicorn cree sus propios loggers.
 """
 from __future__ import annotations
 
+import asyncio
+import sys
+
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import uvicorn
 
 from .logging_config import configure_logging
@@ -21,6 +27,7 @@ def main() -> None:
         log_level=settings.log_level.lower(),
         access_log=False,
         reload=False,
+        loop="asyncio",
     )
 
 

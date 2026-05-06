@@ -267,6 +267,10 @@ def extract_mock(
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--mode", choices=["dw", "mock"], required=True)
+    ap.add_argument("--get-data-path", default=os.environ.get("GET_DATA_PATH", ""),
+                    help="Directorio con Get_Data.py (modo dw). "
+                         "Equivale a sys.path.append en Monitor.py. "
+                         "También se lee de la variable de entorno GET_DATA_PATH.")
     ap.add_argument("--catalog", type=Path,
                     default=ROOT / "series_catalog.yaml",
                     help="Ruta al YAML del catálogo")
@@ -288,8 +292,14 @@ def main() -> None:
     if args.mode == "mock":
         summary = extract_mock(args.catalog, args.output, only_categories=args.category)
     else:
-        summary = extract_from_dw(args.catalog, args.output,
-                                  since=args.since, only_categories=args.category)
+        if not args.get_data_path:
+            ap.error("--get-data-path (o GET_DATA_PATH env) es requerido en modo dw")
+        summary = extract_from_dw(
+            args.catalog, args.output,
+            get_data_path=args.get_data_path,
+            since=args.since,
+            only_categories=args.category,
+        )
 
     log.info("─" * 60)
     log.info("Resumen:")

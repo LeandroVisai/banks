@@ -46,26 +46,28 @@ STATS_PATH = Path("logs/vectorization_report.json")
 _LOGS_DIR = Path("logs")
 
 _MODELS_DIR = Path(__file__).parent / "models"
-_DEFAULT_MODEL_ID = os.environ.get("RAG_EMBEDDING_MODEL", "EmbeddingGemma")
+_DEFAULT_MODEL_ID = os.environ.get("RAG_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding")
 
 # Si el modelo está en models/<nombre>, usamos esa ruta local directamente.
-_LOCAL_MODEL_PATH = _MODELS_DIR / _DEFAULT_MODEL_ID
+_LOCAL_MODEL_PATH = _MODELS_DIR / _DEFAULT_MODEL_ID.replace("/", "--")
 if _LOCAL_MODEL_PATH.exists():
     DEFAULT_MODEL = str(_LOCAL_MODEL_PATH)
 else:
     DEFAULT_MODEL = _DEFAULT_MODEL_ID
 
 FALLBACK_MODEL = "intfloat/multilingual-e5-small"
-BATCH_SIZE = 32
+BATCH_SIZE = 4   # Qwen3-Embedding-8B es grande; batch pequeño para no OOM en carga
 USE_METADATA_CONTEXT = os.environ.get("RAG_PURE_TEXT", "0") != "1"
 
-# Los modelos E5 requieren prefijo "passage: " para documentos y "query: " para queries.
-# Gemma Embedding no requiere prefijos especiales.
 E5_PASSAGE_PREFIX = "passage: "
 
 
 def is_e5_model(name: str) -> bool:
     return "e5" in name.lower()
+
+
+def is_qwen_embedding(name: str) -> bool:
+    return "qwen" in name.lower() and "embedding" in name.lower()
 
 
 def build_embed_text(chunk: dict, model_name: str) -> str:
@@ -104,6 +106,7 @@ def build_embed_text(chunk: dict, model_name: str) -> str:
 
     if is_e5_model(model_name):
         base = E5_PASSAGE_PREFIX + base
+    # Qwen3-Embedding: documentos sin prefijo (instrucción solo para queries)
     return base
 
 
@@ -163,7 +166,7 @@ def load_model(name: str):
     from sentence_transformers import SentenceTransformer
 
     print(f"[02] Cargando modelo: {name}")
-    return SentenceTransformer(name)
+    return SentenceTransformer(name, trust_remote_code=True)
 
 
 def main() -> int:

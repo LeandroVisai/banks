@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Sistema RAG para banco central chileno. Procesa PDFs financieros (Comunicados BCCh, Minutas del Consejo, reportes JPMorgan, Fed Statements) y un Excel de Monitor PM en un corpus semántico consultable con citación por página.
 
-Stack: `pypdf` + `openpyxl` + `sentence-transformers` (multilingual-e5-small, 384-dim) + PostgreSQL + pgvector (HNSW) + búsqueda híbrida BM25/vector con RRF y MMR.
+Stack: `pypdf` + `openpyxl` + `sentence-transformers` (Qwen3-Embedding-8B, 4096-dim) + PostgreSQL + pgvector (HNSW) + búsqueda híbrida BM25/vector con RRF y MMR.
 
 ## Comandos esenciales
 
@@ -146,7 +146,7 @@ documents (document_id PK, doc_type_category, institution,
 
 chunks    (chunk_id PK, document_id FK,
            text, text_tsv TSVECTOR,              -- BM25
-           embedding VECTOR(384),                -- HNSW cosine
+           embedding VECTOR(4096),               -- HNSW cosine
            section_type, section_confidence,
            economic_variables JSONB,             -- GIN jsonb_path_ops
            entities JSONB,                       -- GIN jsonb_path_ops
@@ -161,7 +161,7 @@ chunks    (chunk_id PK, document_id FK,
 |---|---|---|
 | `PGDATABASE` | `rag_banco` | Usar otra BD |
 | `PGUSER` / `PGPASSWORD` | SO / vacío | Servidor con auth |
-| `RAG_EMBEDDING_MODEL` | `intfloat/multilingual-e5-small` | Cambiar modelo |
+| `RAG_EMBEDDING_MODEL` | `Qwen/Qwen3-Embedding` | Cambiar modelo |
 | `RAG_PURE_TEXT` | `0` | `1` = no inyectar metadata context en embedding |
 | `SENTENCE_TRANSFORMERS_HOME` | auto-detectado | Solo si `models_cache/` no está junto al script |
 
