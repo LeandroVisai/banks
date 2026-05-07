@@ -44,6 +44,17 @@ OVERLAP_CHARS = 100          # solapamiento entre chunks consecutivos
 
 DATA_DIR = Path("Datos_prueba")
 OUTPUT_DIR = Path("logs")
+IMAGE_OUTPUT_DIR = Path("images")
+
+# PyMuPDF (fitz) — opcional; si no está instalado se omite la extracción visual
+try:
+    import fitz  # noqa: F401
+    _PYMUPDF_AVAILABLE = True
+except ImportError:
+    _PYMUPDF_AVAILABLE = False
+
+IMAGE_DPI = 150                # resolución de renderizado (150 dpi = ~1240×1754 px para A4)
+_VISUAL_MIN_FILLED_SHAPES = 8  # mínimo de formas rellenas para considerar página visual
 DOCUMENTS_JSON = OUTPUT_DIR / "documents.json"
 CHUNKS_JSON = OUTPUT_DIR / "chunks.json"
 REPORT_JSON = OUTPUT_DIR / "extraction_report.json"
@@ -596,6 +607,62 @@ def process_excel(excel_path: Path) -> tuple[Optional[Document], list[Chunk]]:
 
 
 # ---------------------------------------------------------------------------
+# Extracción de páginas visuales (gráficos, tablas, figuras) con PyMuPDF
+# ---------------------------------------------------------------------------
+
+def _page_has_visuals(page) -> bool:
+    """True si la página tiene imágenes embebidas o suficientes formas rellenas (charts)."""
+    if page.get_images(full=False):
+        return True
+    filled = [d for d in page.get_drawings() if d.get("fill") is not None]
+    return len(filled) >= _VISUAL_MIN_FILLED_SHAPES
+
+
+def extract_visual_pages(pdf_path: Path, doc_id: str, pages_text: list[str]) -> list[dict]:
+    """
+    Renderiza como PNG las páginas con contenido visual relevante.
+
+    Retorna lista de raw_chunks con keys:
+      text, page_start, page_end, section_title_raw, image_path
+    """
+    if not _PYMUPDF_AVAILABLE:
+        return []
+
+    IMAGE_OUTPUT_DIR.mkdir(exist_ok=True)
+    image_chunks: list[dict] = []
+
+    try:
+        import fitz
+        doc = fitz.open(str(pdf_path))
+    except Exception:
+        return []
+
+    for page_num, page in enumerate(doc, start=1):
+        if not _page_has_visuals(page):
+            continue
+
+        img_name = f"{doc_id}_p{page_num:03d}.png"
+        img_path = IMAGE_OUTPUT_DIR / img_name
+        try:
+            mat = fitz.Matrix(IMAGE_DPI / 72, IMAGE_DPI / 72)
+            pix = page.get_pixmap(matrix=mat)
+            pix.save(str(img_path))
+        except Exception:
+            continue
+
+        image_chunks.append({
+            "text": f"[Imagen p.{page_num}]",
+            "page_start": page_num,
+            "page_end": page_num,
+            "section_title_raw": None,
+            "image_path": str(img_path),
+        })
+
+    doc.close()
+    return image_chunks
+
+
+# ---------------------------------------------------------------------------
 # Pipeline principal
 # ---------------------------------------------------------------------------
 
@@ -641,6 +708,23 @@ def process_pdf(pdf_path: Path) -> tuple[Optional[Document], list[Chunk]]:
             page_end=rc["page_end"],
             position_in_doc=i,
             section_title_raw=rc["section_title_raw"],
+        ))
+
+    # Chunks de imagen: páginas con gráficos, tablas o figuras
+    img_raw = extract_visual_pages(pdf_path, doc_id, pages)
+    for i, rc in enumerate(img_raw):
+        text = rc["text"]
+        chunks.append(Chunk(
+            chunk_id=f"{doc_id}_img_{i:04d}",
+            document_id=doc_id,
+            text=text,
+            char_count=len(text),
+            token_estimate=1,
+            page_start=rc["page_start"],
+            page_end=rc["page_end"],
+            position_in_doc=len(chunks) + i,
+            section_title_raw=rc["section_title_raw"],
+            image_path=rc["image_path"],
         ))
 
     total_chars = sum(c.char_count for c in chunks)
@@ -761,6 +845,11 @@ def main() -> int:
           f"p50={char_stats['p50_median']} "
           f"p90={char_stats['p90']} "
           f"max={char_stats['max']}")
+    img_chunks = sum(1 for c in all_chunks if c.image_path)
+    if img_chunks:
+        print(f"[00] ✓ {img_chunks} chunks de imagen extraídos → {IMAGE_OUTPUT_DIR}/")
+    elif not _PYMUPDF_AVAILABLE:
+        print("[00] ℹ  PyMuPDF no instalado — extracción visual omitida (pip install pymupdf)")
     if failed:
         print(f"[00] ⚠ {len(failed)} PDFs fallaron: {failed}")
     return 0

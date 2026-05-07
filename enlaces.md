@@ -17,14 +17,14 @@ https://huggingface.co/VesNFF/Qwen3-VL-Embedding-8B-GGUF
 
 Qwen3-VL-Embedding-8B
 Es el modelo que genera los vectores de embeddings que pgvector va a indexar. Se elige el 8B sobre el 4B porque ocupa el primer lugar en el MTEB multilingual leaderboard y el H100 80GB lo aguanta sin problema — no tiene sentido sacrificar calidad de embeddings cuando el hardware lo permite. Hay que descargar todos los archivos de la página: los shards .safetensors más los archivos de config y tokenizer. Peso total aproximado: 16 GB. Si van a correrlo con llama.cpp, usar la versión GGUF en cambio.
-[Pesos completos (HF) · GGUF (llama.cpp)](https://huggingface.co/Qwen/Qwen3-VL-Embedding-8B)
+[Pesos completos (HF)](https://huggingface.co/Qwen/Qwen3-VL-Embedding-8B)
 
 
 
 
 Qwen3-Embedding-8B
 Es el modelo que genera los vectores de embeddings que pgvector va a indexar. Se elige el 8B sobre el 4B porque ocupa el primer lugar en el MTEB multilingual leaderboard y el H100 80GB lo aguanta sin problema — no tiene sentido sacrificar calidad de embeddings cuando el hardware lo permite. Hay que descargar todos los archivos de la página: los shards .safetensors más los archivos de config y tokenizer. Peso total aproximado: 16 GB. Si van a correrlo con llama.cpp, usar la versión GGUF en cambio.
-[Pesos completos (HF) · GGUF (llama.cpp)](https://huggingface.co/Qwen/Qwen3-Embedding-8B/tree/main)
+[Pesos completos (HF)](https://huggingface.co/Qwen/Qwen3-Embedding-8B/tree/main)
 
 
 llama.cpp

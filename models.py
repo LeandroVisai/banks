@@ -48,6 +48,7 @@ class Chunk:
     position_in_doc: int               # 0-based
     section_title_raw: Optional[str]   # título crudo detectado durante chunking; 01 lo normaliza
     chunk_date: Optional[str] = None   # ISO YYYY-MM-DD; solo Excel (Monitor PM), None para PDFs
+    image_path: Optional[str] = None   # ruta al PNG extraído; solo páginas visuales, None para texto
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +81,7 @@ class EnrichedChunk:
     is_policy_decision: bool
     is_forward_looking: bool
     chunk_date: Optional[str] = None   # ISO YYYY-MM-DD; solo Excel (Monitor PM), None para PDFs
+    image_path: Optional[str] = None   # ruta al PNG extraído; solo páginas visuales, None para texto
     # --- v1.1 fields ---
     indicator_types: dict = field(default_factory=dict)  # {var_name: LEADING|CONTEMPORANEOUS|LAGGING}
     signal_strength: Optional[dict] = None               # solo MONITOR_PM

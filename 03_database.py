@@ -164,6 +164,7 @@ CREATE TABLE IF NOT EXISTS {CHUNKS_TABLE} (
     is_policy_decision BOOLEAN DEFAULT FALSE,
     is_forward_looking BOOLEAN DEFAULT FALSE,
     chunk_date         DATE,
+    image_path         TEXT,
     embedding          vector({dim}) NOT NULL,
     embedding_model    TEXT,
     created_at         TIMESTAMPTZ DEFAULT NOW()
@@ -279,9 +280,12 @@ def cmd_setup(force_drop: bool = False) -> int:
                 cur.execute(f"DROP TABLE IF EXISTS {DOCUMENTS_TABLE} CASCADE")
 
             cur.execute(build_schema_sql(dim))
-            # Migración: agrega chunk_date si la tabla ya existía sin ella
+            # Migraciones: agrega columnas si la tabla ya existía sin ellas
             cur.execute(
                 f"ALTER TABLE {CHUNKS_TABLE} ADD COLUMN IF NOT EXISTS chunk_date DATE"
+            )
+            cur.execute(
+                f"ALTER TABLE {CHUNKS_TABLE} ADD COLUMN IF NOT EXISTS image_path TEXT"
             )
             print(f"[03] ✓ schema ({DOCUMENTS_TABLE}, {CHUNKS_TABLE}) creado")
 
@@ -359,6 +363,7 @@ def _build_chunk_rows(chunks: list[dict], expected_dim: int) -> list[tuple]:
             bool(chunk.get("is_policy_decision", False)),
             bool(chunk.get("is_forward_looking", False)),
             chunk.get("chunk_date"),
+            chunk.get("image_path"),
             _format_vector(embedding),
             chunk.get("embedding_model"),
         ))
@@ -402,12 +407,12 @@ def _insert_chunks(cur, chunk_rows: list[tuple]) -> None:
             position_in_doc, section_type, section_confidence,
             economic_variables, numeric_values, entities, temporal_refs,
             tags, importance_score, is_policy_decision, is_forward_looking,
-            chunk_date, embedding, embedding_model
+            chunk_date, image_path, embedding, embedding_model
         ) VALUES %s
         """,
         chunk_rows,
         template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                 "%s, %s, %s, %s, %s::vector, %s)",
+                 "%s, %s, %s, %s, %s, %s::vector, %s)",
     )
     cur.execute(
         f"UPDATE {CHUNKS_TABLE} SET text_tsv = to_tsvector('simple', text) WHERE text_tsv IS NULL"

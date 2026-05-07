@@ -450,6 +450,10 @@ def _enrich_chunk(chunk: dict, doc: dict, total_chunks_in_doc: int) -> EnrichedC
     importance = calculate_importance(
         variables, numerics, section_type, entities, is_fwd, text_norm, deviation_flag
     )
+    # Chunks de imagen tienen poco texto por diseño — garantizar un piso mínimo
+    # para que el importance_boost en 04_search.py no los entierre
+    if chunk.get("image_path"):
+        importance = max(importance, 0.30)
 
     indicator_types = {k: v["indicator_type"] for k, v in variables.items()}
 
@@ -475,6 +479,7 @@ def _enrich_chunk(chunk: dict, doc: dict, total_chunks_in_doc: int) -> EnrichedC
         is_policy_decision="DECISION_POLITICA" in tags,
         is_forward_looking=is_fwd,
         chunk_date=chunk.get("chunk_date"),
+        image_path=chunk.get("image_path"),
         indicator_types=indicator_types,
         signal_strength=signal_strength,
         deviation_flag=deviation_flag,

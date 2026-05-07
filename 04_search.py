@@ -437,6 +437,7 @@ def vector_recall(conn, query_embedding: list[float], parsed: dict, n: int) -> l
         c.numeric_values,
         c.tags,
         c.chunk_date,
+        c.image_path,
         d.filename, d.doc_type_category, d.document_date,
         1 - (c.embedding <=> %s::vector) AS vector_score,
         c.embedding
@@ -467,6 +468,7 @@ def lexical_recall(conn, query_text: str, parsed: dict, n: int) -> list[dict]:
         c.numeric_values,
         c.tags,
         c.chunk_date,
+        c.image_path,
         d.filename, d.doc_type_category, d.document_date,
         ts_rank_cd(c.text_tsv, plainto_tsquery('simple', %s)) AS lexical_score,
         c.embedding
@@ -496,6 +498,7 @@ def date_importance_fallback(conn, parsed: dict, n: int) -> list[dict]:
         c.numeric_values,
         c.tags,
         c.chunk_date,
+        c.image_path,
         d.filename, d.doc_type_category, d.document_date,
         c.embedding
     FROM {CHUNKS_TABLE} c
@@ -796,6 +799,8 @@ def format_text_output(results: list[dict], parsed: dict) -> str:
         lines.append(f"    vars: {vars_str}")
         lines.append(f"    datos: {nums_str}")
         lines.append(f"    tags: {tags_str}")
+        if r.get("image_path"):
+            lines.append(f"    [imagen: {r['image_path']}]")
         text = r["text"].replace("\n", " ")
         lines.append(f"    > {text[:400]}" + ("…" if len(text) > 400 else ""))
 
@@ -819,6 +824,7 @@ def format_json_output(results: list[dict], parsed: dict) -> str:
             "economic_variables": r.get("economic_variables", {}),
             "numeric_values": r.get("numeric_values", []),
             "tags": r.get("tags") or [],
+            "image_path": r.get("image_path"),
             "text": r["text"],
         }
         return out

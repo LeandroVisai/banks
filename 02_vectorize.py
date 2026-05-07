@@ -70,6 +70,34 @@ def is_qwen_embedding(name: str) -> bool:
     return "qwen" in name.lower() and "embedding" in name.lower()
 
 
+def is_vl_model(name: str) -> bool:
+    n = name.lower()
+    return ("vl" in n or "vision" in n) and ("embedding" in n or "embed" in n)
+
+
+def _embed_image(image_path: str, model) -> "np.ndarray | None":
+    """Genera embedding de una imagen PNG usando el modelo VL.
+
+    sentence-transformers ≥ 3.x acepta PIL Image directamente en modelos multimodales.
+    Si falla, retorna None y el caller usa texto descriptivo como fallback.
+    """
+    if not image_path or not Path(image_path).exists():
+        print(f"[02] ⚠ imagen no encontrada: {image_path}")
+        return None
+    try:
+        from PIL import Image as PILImage
+        img = PILImage.open(image_path).convert("RGB")
+    except Exception as e:
+        print(f"[02] ⚠ no se pudo abrir {image_path}: {e}")
+        return None
+    try:
+        vec = model.encode([img], normalize_embeddings=True, convert_to_numpy=True)[0]
+        return vec
+    except Exception as e:
+        print(f"[02] ⚠ embed imagen falló ({Path(image_path).name}): {e} — usando texto fallback")
+        return None
+
+
 def build_embed_text(chunk: dict, model_name: str) -> str:
     """Construye el texto que va al modelo: prefijo temporal + contexto + texto."""
     base = chunk["text"]
@@ -208,40 +236,71 @@ def main() -> int:
     max_seq_len = getattr(model, "max_seq_length", 256)
     tokenizer = getattr(model, "tokenizer", None)
     dim = model.get_sentence_embedding_dimension()
+    _vl = is_vl_model(model_name_used)
     print(f"[02] ✓ Modelo listo — dim={dim}, max_seq_length={max_seq_len}, "
-          f"context_prefix={'ON' if USE_METADATA_CONTEXT else 'OFF'}")
+          f"context_prefix={'ON' if USE_METADATA_CONTEXT else 'OFF'}, "
+          f"multimodal={'SÍ' if _vl else 'NO'}")
 
-    # Construir textos y medir truncamiento real
-    embed_texts = [build_embed_text(c, model_name_used) for c in chunks]
+    # Separar chunks de texto e imagen
+    text_idxs = [i for i, c in enumerate(chunks) if not c.get("image_path")]
+    image_idxs = [i for i, c in enumerate(chunks) if c.get("image_path")]
+
+    # ── Texto: batch embed ────────────────────────────────────────────────────
+    text_embed_texts = [build_embed_text(chunks[i], model_name_used) for i in text_idxs]
 
     truncated = 0
     token_counts = []
     if tokenizer is not None:
-        for text in embed_texts:
+        for text in text_embed_texts:
             ids = tokenizer.encode(text, add_special_tokens=True, truncation=False)
             token_counts.append(len(ids))
             if len(ids) > max_seq_len:
                 truncated += 1
 
     if truncated:
-        pct = 100 * truncated // len(chunks)
+        pct = 100 * truncated // len(text_embed_texts)
         print(f"[02] ⚠ {truncated} chunks ({pct}%) exceden {max_seq_len} tokens y serán truncados")
 
-    # Vectorizar (normalize_embeddings=True para que L2-norm=1 y dot=cosine)
-    print(f"[02] Vectorizando {len(chunks)} chunks (batch={BATCH_SIZE})...")
-    embeddings = model.encode(
-        embed_texts,
+    print(f"[02] Vectorizando {len(text_idxs)} chunks de texto (batch={BATCH_SIZE})...")
+    text_embeddings = model.encode(
+        text_embed_texts,
         batch_size=BATCH_SIZE,
         show_progress_bar=True,
         convert_to_numpy=True,
         normalize_embeddings=True,
     )
 
-    # Guardar
-    for c, emb in zip(chunks, embeddings):
-        c["embedding"] = emb.tolist()
-        c["embedding_dim"] = dim
-        c["embedding_model"] = model_name_used
+    # ── Imágenes: embed individual ────────────────────────────────────────────
+    image_embeddings: dict[int, np.ndarray] = {}
+    if image_idxs:
+        if _vl:
+            print(f"[02] Embebiendo {len(image_idxs)} chunks de imagen (modelo VL)...")
+        else:
+            print(f"[02] ⚠ {len(image_idxs)} chunks de imagen — modelo no es VL, "
+                  f"se usará texto descriptivo como embedding")
+        for i in image_idxs:
+            chunk = chunks[i]
+            emb = None
+            if _vl:
+                emb = _embed_image(chunk.get("image_path", ""), model)
+            if emb is None:
+                # Fallback: el texto "[Imagen p.N]" ya tiene contexto mínimo
+                text = build_embed_text(chunk, model_name_used)
+                emb = model.encode([text], normalize_embeddings=True, convert_to_numpy=True)[0]
+            image_embeddings[i] = emb
+
+    # ── Combinar y guardar ────────────────────────────────────────────────────
+    all_embeddings: list = [None] * len(chunks)
+    for idx, i in enumerate(text_idxs):
+        all_embeddings[i] = text_embeddings[idx]
+    for i, emb in image_embeddings.items():
+        all_embeddings[i] = emb
+
+    for c, emb in zip(chunks, all_embeddings):
+        if emb is not None:
+            c["embedding"] = emb.tolist()
+            c["embedding_dim"] = dim
+            c["embedding_model"] = model_name_used
 
     # Output principal unificado (backward compatible)
     with open(OUTPUT_CHUNKS, "w", encoding="utf-8") as f:
@@ -268,6 +327,9 @@ def main() -> int:
         "dimension": dim,
         "max_seq_length": max_seq_len,
         "total_chunks": len(chunks),
+        "text_chunks": len(text_idxs),
+        "image_chunks": len(image_idxs),
+        "vl_model": _vl,
         "truncated_count": truncated,
         "metadata_context_enabled": USE_METADATA_CONTEXT,
         "excel_daily_count": len(excel_daily_records),
@@ -285,6 +347,9 @@ def main() -> int:
     print(f"[02] ✓ {OUTPUT_CHUNKS} ({size_mb:.1f} MB)")
     print(f"[02] ✓ {STATS_PATH}")
     print(f"[02] ✓ excel_daily={len(excel_daily_records)}, pdf_period={len(pdf_period_records)}")
+    if image_idxs:
+        mode = "VL" if _vl else "texto fallback"
+        print(f"[02] ✓ {len(image_idxs)} chunks de imagen embebidos ({mode})")
     if token_counts:
         print(f"[02] tokens por chunk: min={report['token_stats']['min']} "
               f"mean={report['token_stats']['mean']} max={report['token_stats']['max']}")
