@@ -11,6 +11,15 @@ Es la base de datos donde se almacenarán los datos del proyecto. Se necesita la
 pgvector
 Extensión de PostgreSQL que permite almacenar y buscar vectores de embeddings directamente en la base de datos — es lo que conecta los modelos de embedding con el storage. Se descarga el código fuente desde GitHub (sección Releases, archivo .tar.gz o .zip de la última versión). Si el servidor corre Ubuntu, también existe el paquete postgresql-14-pgvector descargable como .deb directamente desde el repositorio apt de PostgreSQL.
 [GitHub Releases](https://github.com/andreiramani/pgvector_pgsql_windows/releases/tag/0.8.2_14.20)
+https://huggingface.co/VesNFF/Qwen3-VL-Embedding-8B-GGUF
+
+
+
+Qwen3-VL-Embedding-8B
+Es el modelo que genera los vectores de embeddings que pgvector va a indexar. Se elige el 8B sobre el 4B porque ocupa el primer lugar en el MTEB multilingual leaderboard y el H100 80GB lo aguanta sin problema — no tiene sentido sacrificar calidad de embeddings cuando el hardware lo permite. Hay que descargar todos los archivos de la página: los shards .safetensors más los archivos de config y tokenizer. Peso total aproximado: 16 GB. Si van a correrlo con llama.cpp, usar la versión GGUF en cambio.
+[Pesos completos (HF) · GGUF (llama.cpp)](https://huggingface.co/Qwen/Qwen3-VL-Embedding-8B)
+
+
 
 
 Qwen3-Embedding-8B

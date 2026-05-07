@@ -134,6 +134,52 @@ def extract_pages(pdf_path: Path) -> tuple[list[str], list[str]]:
     return pages, warnings
 
 
+# ---------------------------------------------------------------------------
+# Reparación de encodings corruptos en PDFs del BCCh
+# ---------------------------------------------------------------------------
+
+# Font encoding custom de las Minutas BCCh: el cuerpo del documento usa una
+# fuente con índices de glifo corridos +1 respecto al alfabeto estándar.
+# @→a, A→b … Y→z, Ä→espacio, Æ→fi (ligadura), Ç→fl (ligadura), ¹→ó.
+_BCCH_CHAR_MAP: dict[str, str] = {
+    '@': 'a',
+    'A': 'b', 'B': 'c', 'C': 'd', 'D': 'e', 'E': 'f',
+    'F': 'g', 'G': 'h', 'H': 'i', 'I': 'j', 'J': 'k',
+    'K': 'l', 'L': 'm', 'M': 'n', 'N': 'o', 'O': 'p',
+    'P': 'q', 'Q': 'r', 'R': 's', 'S': 't', 'T': 'u',
+    'U': 'v', 'V': 'w', 'W': 'x', 'X': 'y', 'Y': 'z',
+    'Ä': ' ',    # separador de palabras
+    'Æ': 'fi',   # ligadura fi
+    'Ç': 'fl',   # ligadura fl
+    '¹': 'ó',
+}
+
+# Segmento BCCh: 8+ chars consecutivos del charset de la fuente custom.
+# Ä-Ç cubre Ä(196) Å(197) Æ(198) Ç(199) en Latin-1.
+_BCCH_RE = re.compile('[@A-YÄ-Ç¹]{8,}')
+
+
+def _fix_bcch_font(text: str) -> str:
+    """Decodifica el font encoding custom de las Minutas BCCh.
+
+    Solo actúa en segmentos que contienen simultáneamente 'Ä' (marcador de
+    espacio) y '@' (marcador de 'a'), que es la señal inequívoca de esta
+    codificación. Texto normal y mayúsculas legítimas no activan el decode.
+    Debe ejecutarse ANTES de _fix_mojibake porque el Ä (0xC4) rompería el
+    round-trip latin-1→utf-8 de esa función.
+    """
+    if 'Ä' not in text or '@' not in text:
+        return text
+
+    def _decode(m: re.Match) -> str:
+        seg = m.group(0)
+        if 'Ä' not in seg or '@' not in seg:
+            return seg
+        return ''.join(_BCCH_CHAR_MAP.get(c, c) for c in seg)
+
+    return _BCCH_RE.sub(_decode, text)
+
+
 def _fix_mojibake(text: str) -> str:
     """Repara texto donde pypdf leyó bytes UTF-8 como Latin-1.
 
@@ -156,7 +202,10 @@ def normalize_page_text(text: str) -> str:
     if not text:
         return ""
 
-    # Reparar mojibake UTF-8→Latin-1 antes de cualquier otro procesamiento
+    # BCCh decode primero: elimina Ä/@/Æ/Ç que romperían el round-trip de mojibake
+    text = _fix_bcch_font(text)
+
+    # Mojibake segundo: ahora el texto ya no tiene chars BCCh que interfieran
     text = _fix_mojibake(text)
 
     # Unir palabras cortadas por guión al final de línea: "inflació-\nn" -> "inflación"
