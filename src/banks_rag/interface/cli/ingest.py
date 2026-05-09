@@ -22,14 +22,27 @@ from pathlib import Path
 
 import typer
 
-from banks_rag.application.ingestion import extract_corpus
+from banks_rag.application.ingestion import (
+    enrich_corpus,
+    extract_corpus,
+)
 from banks_rag.config import paths
+from banks_rag.domain.documents import Chunk, ChunkKind, Document
 
 app = typer.Typer(
     name="banks-ingest",
     help="Pipeline de ingesta del corpus RAG (extract → enrich → vectorize → persist).",
     no_args_is_help=True,
 )
+
+
+def _enriched_to_dict(e) -> dict:
+    """Serializa EnrichedChunk a dict, convirtiendo ChunkKind enum a string."""
+    from dataclasses import asdict
+    d = asdict(e)
+    if isinstance(d.get("kind"), ChunkKind):
+        d["kind"] = d["kind"].value
+    return d
 
 
 @app.command("extract")
@@ -113,16 +126,79 @@ def cmd_extract(
 
 
 @app.command("enrich")
-def cmd_enrich() -> None:
-    """[Fase 1.b — pendiente] Enriquecimiento semántico de chunks.
+def cmd_enrich(
+    input_dir: Path = typer.Option(
+        paths.LOGS_DIR,
+        "--input-dir", "-i",
+        help="Directorio con documents.json y chunks.json del paso extract.",
+    ),
+    output_dir: Path = typer.Option(
+        paths.LOGS_DIR,
+        "--output-dir", "-o",
+        help="Dónde guardar chunks_enriched.json + enrichment_report.json.",
+    ),
+) -> None:
+    """Enriquecimiento semántico de chunks (sección, variables, importance, tags)."""
+    docs_json = input_dir / "documents.json"
+    chunks_json = input_dir / "chunks.json"
 
-    Por ahora delega al script legacy ``01_enrich_metadata.py``.
-    """
-    import subprocess
-    typer.echo("[enrich] Delegando a 01_enrich_metadata.py (legacy hasta Fase 1.b)")
-    rc = subprocess.run([sys.executable, "01_enrich_metadata.py"]).returncode
-    if rc != 0:
-        raise typer.Exit(code=rc)
+    if not docs_json.exists() or not chunks_json.exists():
+        typer.secho(
+            f"❌ Faltan inputs en {input_dir}/. Corre primero: banks-ingest extract",
+            fg=typer.colors.RED, err=True,
+        )
+        raise typer.Exit(code=1)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    docs_raw = json.loads(docs_json.read_text(encoding="utf-8"))
+    chunks_raw = json.loads(chunks_json.read_text(encoding="utf-8"))
+
+    documents = [Document(**{k: v for k, v in d.items() if k in Document.__dataclass_fields__})
+                 for d in docs_raw]
+    chunks = []
+    for c in chunks_raw:
+        # ChunkKind viene como string del JSON (o ausente en chunks legacy → default TEXT).
+        kind_str = c.get("kind", ChunkKind.TEXT.value)
+        chunk_kwargs = {k: v for k, v in c.items() if k in Chunk.__dataclass_fields__ and k != "kind"}
+        chunks.append(Chunk(**chunk_kwargs, kind=ChunkKind(kind_str)))
+
+    typer.echo(f"[enrich] Enriqueciendo {len(chunks)} chunks de {len(documents)} documentos...")
+
+    result = enrich_corpus(documents, chunks)
+    enriched = result.enriched_chunks
+    report = result.report
+
+    out_json = output_dir / "chunks_enriched.json"
+    out_json.write_text(
+        json.dumps([_enriched_to_dict(e) for e in enriched], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    if report:
+        report_json = output_dir / "enrichment_report.json"
+        report_json.write_text(
+            json.dumps(report.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    typer.secho(f"[enrich] ✓ {out_json} ({len(enriched)} chunks enriquecidos)",
+                fg=typer.colors.GREEN)
+    if report:
+        typer.echo("[enrich] Secciones (top):")
+        for section, count in sorted(
+            report.section_histogram.items(), key=lambda x: -x[1]
+        )[:10]:
+            typer.echo(f"           {section:<22} {count}")
+        typer.echo("[enrich] Variables económicas (top 10):")
+        for var_name, count in sorted(
+            report.variable_histogram.items(), key=lambda x: -x[1]
+        )[:10]:
+            typer.echo(f"           {var_name:<30} {count:>4}")
+        pct = 100 * report.high_importance_count // max(1, report.chunks_total)
+        typer.echo(
+            f"[enrich] Importance: media={report.avg_importance:.3f}, "
+            f"chunks ≥0.6: {report.high_importance_count} ({pct}%)"
+        )
 
 
 @app.command("vectorize")
