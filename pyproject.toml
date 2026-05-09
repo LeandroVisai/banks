@@ -1,0 +1,148 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "banks_rag"
+version = "0.1.0"
+description = "RAG + agent multimodal para banco central — Clean Architecture, llama.cpp, Qwen3-VL embeddings, catálogo SQL agentic"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "BCCh DACE" }]
+
+dependencies = [
+    # API
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.4.0",
+    "starlette>=0.40.0",
+
+    # CLI
+    "typer>=0.12.0",
+
+    # Persistencia
+    "psycopg[binary,pool]>=3.2.0",
+    "pgvector>=0.3.0",
+    "sqlalchemy>=2.0.0",
+    "duckdb>=1.0.0",  # SQL sobre parquets cuando no hay DW
+
+    # Embeddings + reranker
+    "sentence-transformers>=3.0.0",
+    "transformers>=4.46.0",
+    "torch>=2.4.0",
+    "Pillow>=10.0.0",
+    "numpy>=1.26.0",
+
+    # LLM (llama.cpp como inference engine — sin vLLM)
+    "llama-cpp-python>=0.3.0",
+
+    # Extracción
+    "pypdf>=4.0.0",
+    "PyMuPDF>=1.24.0",
+    "openpyxl>=3.1.0",
+
+    # Datos
+    "pandas>=2.2.0",
+    "pyarrow>=16.0.0",
+    "pyyaml>=6.0.0",
+
+    # Observability
+    "structlog>=24.1.0",
+    "prometheus-client>=0.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.6.0",
+    "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
+]
+eval = [
+    "ragas>=0.2.0",
+    "datasets>=2.20.0",
+]
+dw = [
+    # Solo en máquinas con conectividad al DW SQL Server
+    "pyodbc>=5.0.0",
+]
+
+[project.scripts]
+banks-ingest = "banks_rag.interface.cli.ingest:app"
+banks-search = "banks_rag.interface.cli.search:app"
+banks-chat = "banks_rag.interface.cli.chat:app"
+banks-eval = "banks_rag.interface.cli.evaluate:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/banks_rag"]
+
+# ── Ruff ────────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",     # pycodestyle, pyflakes
+    "I",                # isort
+    "B",                # bugbear
+    "UP",               # pyupgrade
+    "SIM",              # simplify
+    "RUF",              # ruff-specific
+    "N",                # pep8-naming
+    "ASYNC",
+]
+ignore = [
+    "E501",  # line too long (formatter handles)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ── Mypy ────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+strict = false  # arrancamos permisivo, endurecemos en Fase 6
+warn_return_any = true
+warn_unused_ignores = true
+no_implicit_optional = true
+ignore_missing_imports = true
+files = ["src/banks_rag"]
+
+# ── Pytest ─────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "unit: tests unitarios rápidos sin I/O",
+    "integration: tests con BD/filesystem/modelos",
+    "e2e: tests end-to-end del API",
+    "slow: tests > 5 segundos",
+    "requires_gpu: requiere GPU NVIDIA",
+    "requires_models: requiere modelos descargados localmente",
+]
+
+# ── Coverage ───────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["src/banks_rag"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+show_missing = true
