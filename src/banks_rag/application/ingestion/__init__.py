@@ -11,6 +11,11 @@ from .extract_corpus import (
     ExtractionResult,
     extract_corpus,
 )
+from .vectorize_corpus import (
+    VectorizationReport,
+    VectorizationResult,
+    vectorize_corpus,
+)
 
 __all__ = [
     "ExtractionReport",
@@ -20,4 +25,7 @@ __all__ = [
     "EnrichmentResult",
     "enrich_chunk",
     "enrich_corpus",
+    "VectorizationReport",
+    "VectorizationResult",
+    "vectorize_corpus",
 ]

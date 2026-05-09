@@ -25,6 +25,7 @@ import typer
 from banks_rag.application.ingestion import (
     enrich_corpus,
     extract_corpus,
+    vectorize_corpus,
 )
 from banks_rag.config import paths
 from banks_rag.domain.documents import Chunk, ChunkKind, Document
@@ -202,16 +203,103 @@ def cmd_enrich(
 
 
 @app.command("vectorize")
-def cmd_vectorize() -> None:
-    """[Fase 1.c — pendiente] Embeddings (texto + visuales).
+def cmd_vectorize(
+    input_dir: Path = typer.Option(
+        paths.LOGS_DIR,
+        "--input-dir", "-i",
+        help="Directorio con chunks_enriched.json del paso enrich.",
+    ),
+    output_dir: Path = typer.Option(
+        paths.LOGS_DIR,
+        "--output-dir", "-o",
+        help="Dónde guardar chunks_vectorized.json + records separados + cross_references.",
+    ),
+    batch_size: int = typer.Option(
+        4, "--batch-size",
+        help="Batch size para encode_text. Qwen3-Embedding-8B: 4–8. E5-small: 32+.",
+    ),
+) -> None:
+    """Vectoriza chunks enriquecidos con el embedder configurado.
 
-    Por ahora delega al script legacy ``02_vectorize.py``.
+    Modelo según ``RAG_EMBEDDING_MODEL`` (default ``Qwen/Qwen3-Embedding``);
+    fallback automático a ``intfloat/multilingual-e5-small``. Modelos
+    pre-descargados se buscan en ``models/<owner>--<name>/`` (offline).
     """
-    import subprocess
-    typer.echo("[vectorize] Delegando a 02_vectorize.py (legacy hasta Fase 1.c)")
-    rc = subprocess.run([sys.executable, "02_vectorize.py"]).returncode
-    if rc != 0:
-        raise typer.Exit(code=rc)
+    enriched_json = input_dir / "chunks_enriched.json"
+    if not enriched_json.exists():
+        typer.secho(
+            f"❌ Falta {enriched_json}. Corre primero: banks-ingest enrich",
+            fg=typer.colors.RED, err=True,
+        )
+        raise typer.Exit(code=1)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    chunks = json.loads(enriched_json.read_text(encoding="utf-8"))
+
+    typer.echo(f"[vectorize] Cargando embedder...")
+    from banks_rag.infrastructure.embeddings import build_default_embedder
+
+    embedder = build_default_embedder()
+    # Fuerza la carga (lazy) y muestra info del modelo.
+    embedder.encode_text(["warmup"], batch_size=1)
+    typer.secho(
+        f"[vectorize] ✓ Modelo: {embedder.name} (dim={embedder.dim}, "
+        f"max_seq={embedder.max_seq_length}, multimodal={embedder.is_multimodal})",
+        fg=typer.colors.GREEN,
+    )
+
+    typer.echo(f"[vectorize] Vectorizando {len(chunks)} chunks (batch={batch_size})...")
+    result = vectorize_corpus(chunks, embedder, batch_size=batch_size)
+
+    chunks_out = output_dir / "chunks_vectorized.json"
+    chunks_out.write_text(json.dumps(result.chunks, ensure_ascii=False), encoding="utf-8")
+
+    excel_out = output_dir / "excel_daily_records.json"
+    pdf_out = output_dir / "pdf_period_records.json"
+    cross_out = output_dir / "cross_references.json"
+    excel_out.write_text(
+        json.dumps(result.excel_daily_records, ensure_ascii=False), encoding="utf-8"
+    )
+    pdf_out.write_text(
+        json.dumps(result.pdf_period_records, ensure_ascii=False), encoding="utf-8"
+    )
+    cross_out.write_text(
+        json.dumps(result.cross_references, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    if result.report:
+        report_out = output_dir / "vectorization_report.json"
+        report_out.write_text(
+            json.dumps(result.report.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    size_mb = chunks_out.stat().st_size / (1024 * 1024)
+    typer.secho(
+        f"[vectorize] ✓ {chunks_out} ({size_mb:.1f} MB)", fg=typer.colors.GREEN
+    )
+    typer.echo(
+        f"[vectorize] ✓ excel_daily={len(result.excel_daily_records)}, "
+        f"pdf_period={len(result.pdf_period_records)}"
+    )
+    if result.report and result.report.image_chunks:
+        mode = "VL" if result.report.vl_model else "texto fallback"
+        typer.echo(
+            f"[vectorize] ✓ {result.report.image_chunks} chunks de imagen embebidos ({mode})"
+        )
+    if result.report and result.report.token_stats:
+        ts = result.report.token_stats
+        typer.echo(
+            f"[vectorize] tokens por chunk: min={ts['min']} mean={ts['mean']} max={ts['max']}"
+        )
+    if result.report and result.report.truncated_count:
+        pct = 100 * result.report.truncated_count // max(1, result.report.text_chunks)
+        typer.secho(
+            f"[vectorize] ⚠ {result.report.truncated_count} chunks ({pct}%) "
+            f"exceden {result.report.max_seq_length} tokens y serán truncados",
+            fg=typer.colors.YELLOW,
+        )
 
 
 @app.command("persist")

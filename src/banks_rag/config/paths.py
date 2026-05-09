@@ -18,6 +18,11 @@ DATA_RAW_DIR = ROOT / "Datos_prueba"  # legacy; en Fase 8 se mueve a data/raw/
 LOGS_DIR = ROOT / "logs"
 IMAGES_DIR = ROOT / "images"
 
+# Modelos pre-descargados (offline-friendly).
+# Convención: ``models/<owner>--<name>/`` para sentence-transformers / HF;
+# ``models/<archivo>.gguf`` para llama.cpp.
+MODELS_DIR = ROOT / "models"
+
 # Datos persistentes nuevos
 DATA_DIR = ROOT / "data"
 DATA_GOLDEN_SET_DIR = DATA_DIR / "golden_set"
