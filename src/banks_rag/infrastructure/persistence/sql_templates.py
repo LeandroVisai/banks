@@ -204,6 +204,47 @@ DATABASE_EXISTS_SQL = "SELECT 1 FROM pg_database WHERE datname = %s"
 PGVECTOR_AVAILABLE_SQL = "SELECT 1 FROM pg_available_extensions WHERE name = 'vector'"
 
 
+def list_documents_sql(docs_table: str) -> str:
+    """Lista documentos con filtros opcionales por tipo y/o año.
+
+    El caller pasa los filtros como params; la cláusula WHERE se construye
+    con ``COALESCE`` para que cada filtro sea opcional sin tocar SQL.
+    """
+    return f"""
+SELECT document_id, filename, doc_type_category, document_date, document_year
+FROM {docs_table}
+WHERE (%s::text IS NULL OR doc_type_category = %s)
+  AND (%s::int IS NULL OR document_year = %s)
+ORDER BY COALESCE(document_year, 0) DESC, document_date DESC NULLS LAST, filename
+LIMIT %s
+"""
+
+
+def get_document_by_filename_sql(docs_table: str) -> str:
+    return f"""
+SELECT document_id, filename, doc_type_category, institution,
+       document_date, document_year, total_pages, total_chunks
+FROM {docs_table}
+WHERE filename = %s
+LIMIT 1
+"""
+
+
+def get_chunks_by_document_id_sql(chunks_table: str) -> str:
+    """Trae chunks de un documento ordenados por página."""
+    return f"""
+SELECT chunk_id, document_id, text, char_count, page_start, page_end,
+       position_in_doc, section_type, section_confidence,
+       economic_variables, numeric_values, entities, tags,
+       importance_score, is_policy_decision, is_forward_looking,
+       chunk_date, image_path
+FROM {chunks_table}
+WHERE document_id = %s
+ORDER BY position_in_doc
+LIMIT %s
+"""
+
+
 def stats_queries(docs_table: str, chunks_table: str) -> dict[str, str]:
     """Set de queries para reporting; el caller los ejecuta y agrega."""
     return {

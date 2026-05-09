@@ -3,11 +3,13 @@
 Importar este paquete inicializa el registro: cada submódulo de tool registra
 su función vía decorador ``@register`` al ser importado.
 
-Las tools concretas (search_documents, document_lookup, historical_series)
-se agregan en sub-fases posteriores conforme se complete su integración con
-los adaptadores nuevos (hybrid_search, postgres_repo, dw_store).
+Tools registradas:
+  - ``search_documents``: hybrid search sobre el corpus.
+  - ``list_documents`` / ``get_document_chunks``: exploración por tipo/año/filename.
+  - ``list_historical_series`` / ``get_historical_series``: series macro vía DW.
 """
 
+from . import document_lookup, historical_series, search_documents  # noqa: F401
 from .registry import (
     TOOL_REGISTRY,
     TOOL_SCHEMAS,

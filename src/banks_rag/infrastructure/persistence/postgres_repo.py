@@ -216,6 +216,50 @@ class PostgresRepo:
             cur.execute(sql.update_text_tsv_sql(self.chunks_table))
         return len(rows)
 
+    # ── Lookup queries (para tools de exploración) ───────────────────────────
+
+    def list_documents(
+        self,
+        *,
+        doc_type: str | None = None,
+        year: int | None = None,
+        limit: int = 30,
+    ) -> list[dict]:
+        """Lista documentos con filtros opcionales por tipo y/o año."""
+        from psycopg2.extras import RealDictCursor
+
+        with self.connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                sql.list_documents_sql(self.docs_table),
+                (doc_type, doc_type, year, year, int(limit)),
+            )
+            return cur.fetchall()
+
+    def get_document_by_filename(self, filename: str) -> dict | None:
+        """Recupera metadata de un documento por nombre de archivo."""
+        from psycopg2.extras import RealDictCursor
+
+        with self.connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql.get_document_by_filename_sql(self.docs_table), (filename,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def get_chunks_by_document_id(
+        self,
+        document_id: str,
+        *,
+        limit: int = 30,
+    ) -> list[dict]:
+        """Trae chunks de un documento ordenados por position_in_doc."""
+        from psycopg2.extras import RealDictCursor
+
+        with self.connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                sql.get_chunks_by_document_id_sql(self.chunks_table),
+                (document_id, int(limit)),
+            )
+            return cur.fetchall()
+
     # ── Stats ─────────────────────────────────────────────────────────────────
 
     def stats(self) -> dict:
