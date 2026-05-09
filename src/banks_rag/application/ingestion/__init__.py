@@ -11,6 +11,13 @@ from .extract_corpus import (
     ExtractionResult,
     extract_corpus,
 )
+from .persist_corpus import (
+    PersistenceResult,
+    corpus_stats,
+    detect_embedding_dim,
+    persist_corpus,
+    setup_corpus,
+)
 from .vectorize_corpus import (
     VectorizationReport,
     VectorizationResult,
@@ -28,4 +35,9 @@ __all__ = [
     "VectorizationReport",
     "VectorizationResult",
     "vectorize_corpus",
+    "PersistenceResult",
+    "corpus_stats",
+    "detect_embedding_dim",
+    "persist_corpus",
+    "setup_corpus",
 ]

@@ -23,8 +23,12 @@ from pathlib import Path
 import typer
 
 from banks_rag.application.ingestion import (
+    corpus_stats,
+    detect_embedding_dim,
     enrich_corpus,
     extract_corpus,
+    persist_corpus,
+    setup_corpus,
     vectorize_corpus,
 )
 from banks_rag.config import paths
@@ -305,16 +309,128 @@ def cmd_vectorize(
 @app.command("persist")
 def cmd_persist(
     mode: str = typer.Argument("load", help="setup | load | reset | stats"),
+    input_dir: Path = typer.Option(
+        paths.LOGS_DIR,
+        "--input-dir", "-i",
+        help="Directorio con documents.json + chunks_vectorized.json.",
+    ),
+    table_prefix: str = typer.Option(
+        "",
+        "--table-prefix",
+        envvar="RAG_TABLE_PREFIX",
+        help="Prefijo de tablas (e.g. 'qwen_', 'gemma_'). "
+             "Permite coexistir múltiples modelos en la misma BD.",
+    ),
 ) -> None:
-    """[Fase 1.d — pendiente] Carga a PostgreSQL.
+    """Carga el corpus vectorizado a PostgreSQL + pgvector.
 
-    Por ahora delega al script legacy ``03_database.py``.
+    Modos:
+
+    \b
+      setup  — crea BD, extension vector, schema y 18 índices (idempotente).
+      reset  — DROP CASCADE + setup (destructivo).
+      load   — upsert documentos + insert chunks (re-load idempotente).
+      stats  — muestra métricas del corpus actual sin tocar nada.
     """
-    import subprocess
-    typer.echo(f"[persist] Delegando a 03_database.py {mode} (legacy hasta Fase 1.d)")
-    rc = subprocess.run([sys.executable, "03_database.py", mode]).returncode
-    if rc != 0:
-        raise typer.Exit(code=rc)
+    from banks_rag.infrastructure.persistence import PostgresRepo
+
+    if mode not in ("setup", "reset", "load", "stats"):
+        typer.secho(f"❌ modo inválido: {mode!r}. Usa setup|reset|load|stats",
+                    fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    repo = PostgresRepo(prefix=table_prefix)
+    typer.echo(
+        f"[persist] BD '{repo.database}', tablas {repo.docs_table} / {repo.chunks_table}"
+    )
+
+    if mode == "stats":
+        try:
+            stats = corpus_stats(repo)
+        except Exception as e:  # noqa: BLE001
+            typer.secho(f"[persist] ❌ no pude consultar la BD: {e}",
+                        fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from e
+        _print_stats(stats)
+        return
+
+    if mode in ("setup", "reset"):
+        # Inferir dim desde chunks_vectorized.json si existe.
+        chunks_json = input_dir / "chunks_vectorized.json"
+        chunks: list[dict] | None = None
+        if chunks_json.exists():
+            chunks = json.loads(chunks_json.read_text(encoding="utf-8"))
+        dim = detect_embedding_dim(chunks)
+        try:
+            setup_corpus(repo, dim=dim, drop_first=(mode == "reset"))
+        except RuntimeError as e:
+            typer.secho(f"[persist] ❌ {e}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2) from e
+        typer.secho(
+            f"[persist] ✓ schema {'reset' if mode == 'reset' else 'creado'} "
+            f"con dim={dim}",
+            fg=typer.colors.GREEN,
+        )
+        return
+
+    # mode == "load"
+    docs_json = input_dir / "documents.json"
+    chunks_json = input_dir / "chunks_vectorized.json"
+    if not docs_json.exists() or not chunks_json.exists():
+        typer.secho(
+            f"❌ Faltan inputs en {input_dir}/. Corre extract → enrich → vectorize antes.",
+            fg=typer.colors.RED, err=True,
+        )
+        raise typer.Exit(code=1)
+
+    documents = json.loads(docs_json.read_text(encoding="utf-8"))
+    chunks_data = json.loads(chunks_json.read_text(encoding="utf-8"))
+    dim = detect_embedding_dim(chunks_data)
+
+    typer.echo(
+        f"[persist] cargando {len(documents)} documents + {len(chunks_data)} chunks "
+        f"(dim={dim})..."
+    )
+    try:
+        result = persist_corpus(repo, documents, chunks_data, expected_dim=dim)
+    except ValueError as e:
+        typer.secho(f"[persist] ❌ {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from e
+
+    typer.secho(
+        f"[persist] ✓ documents upserted: {result.documents_upserted}",
+        fg=typer.colors.GREEN,
+    )
+    typer.secho(
+        f"[persist] ✓ chunks insertados: {result.chunks_inserted}", fg=typer.colors.GREEN
+    )
+    if result.chunks_skipped_invalid_dim:
+        typer.secho(
+            f"[persist] ⚠ {result.chunks_skipped_invalid_dim} chunks skipped "
+            f"(dimensión inválida)",
+            fg=typer.colors.YELLOW,
+        )
+
+    _print_stats(corpus_stats(repo))
+
+
+def _print_stats(stats: dict) -> None:
+    typer.echo(f"\n[persist] STATS para '{stats['database']}':")
+    typer.echo(f"           documents: {stats['documents']}")
+    typer.echo(f"           chunks:    {stats['chunks']}")
+    typer.echo(
+        f"           importance: media={stats['importance_avg']}, "
+        f"con score≥0.6: {stats['high_importance_count']}"
+    )
+    typer.echo(f"           policy_decision: {stats['policy_decision_count']}")
+    if stats["by_doc_type"]:
+        typer.echo("\n           Por tipo de documento:")
+        for t, n in stats["by_doc_type"]:
+            typer.echo(f"             {t:<22} {n}")
+    if stats["by_section"]:
+        typer.echo("\n           Por sección:")
+        for s, n in stats["by_section"]:
+            typer.echo(f"             {s:<22} {n}")
 
 
 @app.command("full")
