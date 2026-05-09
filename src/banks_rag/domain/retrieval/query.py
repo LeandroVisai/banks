@@ -49,6 +49,10 @@ class SearchFilters:
     exclude_boilerplate: bool = False
     exclude_doc_types: list[str] = field(default_factory=list)
     exclude_institutions: list[str] = field(default_factory=list)
+    # Fase 2: filtra por tipo de chunk. Vacío = todos (TEXT + VISUAL + TABLE).
+    # search_visuals usa ``kinds=["VISUAL"]``; búsquedas convencionales pueden
+    # usar ``kinds=["TEXT"]`` para excluir captions e inflar precisión.
+    kinds: list[str] = field(default_factory=list)
 
     def has_strict_filters(self) -> bool:
         """``True`` si hay filtros que pueden hacer que el retrieval no devuelva nada.

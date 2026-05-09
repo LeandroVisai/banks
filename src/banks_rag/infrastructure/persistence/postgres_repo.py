@@ -260,6 +260,18 @@ class PostgresRepo:
             )
             return cur.fetchall()
 
+    def get_chunk_image(self, chunk_id: str) -> dict | None:
+        """Recupera image_path + kind + visual_caption de un chunk visual.
+
+        Usado por ``GET /v1/images/{chunk_id}`` para servir el binario.
+        """
+        from psycopg2.extras import RealDictCursor
+
+        with self.connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql.get_chunk_image_sql(self.chunks_table), (chunk_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
     # ── Stats ─────────────────────────────────────────────────────────────────
 
     def stats(self) -> dict:
@@ -318,6 +330,12 @@ class PostgresRepo:
             if not embedding or len(embedding) != expected_dim:
                 # Skip silenciosamente; el orquestador imprime el resumen.
                 continue
+            kind = chunk.get("kind", "TEXT")
+            # Si viene como ChunkKind enum (Fase 2 in-memory pipeline), normaliza a string.
+            kind_str = kind.value if hasattr(kind, "value") else str(kind)
+            if kind_str not in ("TEXT", "VISUAL", "TABLE"):
+                kind_str = "TEXT"
+
             rows.append((
                 chunk["chunk_id"],
                 chunk["document_id"],
@@ -338,6 +356,8 @@ class PostgresRepo:
                 bool(chunk.get("is_forward_looking", False)),
                 chunk.get("chunk_date"),
                 chunk.get("image_path"),
+                kind_str,
+                chunk.get("visual_caption"),
                 format_vector(embedding),
                 chunk.get("embedding_model"),
             ))

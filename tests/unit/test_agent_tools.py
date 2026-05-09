@@ -259,6 +259,78 @@ class TestGetDocumentChunksTool:
 
 
 @pytest.mark.unit
+class TestSearchVisualsTool:
+    @pytest.mark.asyncio
+    async def test_filters_by_visual_kind(self) -> None:
+        state = AgentState()
+        captured_filters = {}
+
+        def fake_search(query, *, query_embedder, repo, extra_filters, k, use_mmr):
+            captured_filters["kinds"] = list(extra_filters.kinds)
+            return SearchResult(
+                query=query, clean_query=query,
+                hits=[{
+                    "chunk_id": "v1", "filename": "doc.pdf",
+                    "doc_type_category": "COMUNICADO",
+                    "page_start": 5, "page_end": 5,
+                    "kind": "VISUAL",
+                    "visual_caption": "Gráfico 3: TPM",
+                    "chunk_date": None, "document_date": "2024-03-15",
+                    "importance_score": 0.7,
+                }],
+                parsed_filters={},
+            )
+
+        with (
+            patch(
+                "banks_rag.application.agent.tools.search_visuals.hybrid_search",
+                fake_search,
+            ),
+            patch(
+                "banks_rag.application.agent.tools.search_visuals.build_default_embedder",
+                return_value=type("E", (), {"name": "fake"})(),
+            ),
+            patch("banks_rag.application.agent.tools.search_visuals.PostgresRepo"),
+        ):
+            result, _ = await dispatch(
+                state, "search_visuals", {"query": "curva swap"},
+            )
+
+        assert captured_filters["kinds"] == ["VISUAL"]
+        assert result["n_results"] == 1
+        assert result["results"][0]["caption"] == "Gráfico 3: TPM"
+        assert result["results"][0]["image_url"] == "/v1/images/v1"
+        assert result["filters_applied"]["kinds"] == ["VISUAL"]
+
+    @pytest.mark.asyncio
+    async def test_visual_kind_table(self) -> None:
+        state = AgentState()
+        captured = {}
+
+        def fake_search(*a, **kw):
+            captured["kinds"] = list(kw["extra_filters"].kinds)
+            return SearchResult(query="x", clean_query="x", hits=[], parsed_filters={})
+
+        with (
+            patch(
+                "banks_rag.application.agent.tools.search_visuals.hybrid_search",
+                fake_search,
+            ),
+            patch(
+                "banks_rag.application.agent.tools.search_visuals.build_default_embedder",
+                return_value=type("E", (), {"name": "fake"})(),
+            ),
+            patch("banks_rag.application.agent.tools.search_visuals.PostgresRepo"),
+        ):
+            await dispatch(
+                state, "search_visuals",
+                {"query": "tabla", "visual_kind": "TABLE"},
+            )
+
+        assert captured["kinds"] == ["TABLE"]
+
+
+@pytest.mark.unit
 class TestHistoricalSeriesTool:
     @pytest.mark.asyncio
     async def test_list_returns_error_without_dw_store(self) -> None:

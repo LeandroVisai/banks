@@ -1,5 +1,5 @@
-"""Routers FastAPI: chat, search, health."""
+"""Routers FastAPI: chat, search, health, images."""
 
-from . import chat, health, search
+from . import chat, health, images, search
 
-__all__ = ["chat", "health", "search"]
+__all__ = ["chat", "health", "images", "search"]

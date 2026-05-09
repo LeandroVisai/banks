@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS {chunks_table} (
     is_forward_looking BOOLEAN DEFAULT FALSE,
     chunk_date         DATE,
     image_path         TEXT,
+    kind               TEXT NOT NULL DEFAULT 'TEXT'
+                       CHECK (kind IN ('TEXT', 'VISUAL', 'TABLE')),
+    visual_caption     TEXT,
     embedding          vector({dim}) NOT NULL,
     embedding_model    TEXT,
     created_at         TIMESTAMPTZ DEFAULT NOW()
@@ -77,10 +80,25 @@ def drop_sql(docs_table: str, chunks_table: str) -> tuple[str, str]:
 
 
 def post_schema_migrations(chunks_table: str) -> list[str]:
-    """ALTER TABLE para columnas añadidas a tablas existentes (idempotente)."""
+    """ALTER TABLE para columnas añadidas a tablas existentes (idempotente).
+
+    Para tablas creadas antes de Fase 2 que aún no tienen ``kind`` y
+    ``visual_caption``: las añadimos con default ``'TEXT'`` (todos los chunks
+    legacy son texto) y un CHECK constraint. La constraint se crea solo si no
+    existe (vía ``DO $$`` block).
+    """
     return [
         f"ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS chunk_date DATE",
         f"ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS image_path TEXT",
+        f"ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'TEXT'",
+        f"ALTER TABLE {chunks_table} ADD COLUMN IF NOT EXISTS visual_caption TEXT",
+        # CHECK constraint idempotente. Si ya existe se ignora.
+        f"""DO $$ BEGIN
+            ALTER TABLE {chunks_table} ADD CONSTRAINT {chunks_table}_kind_check
+                CHECK (kind IN ('TEXT', 'VISUAL', 'TABLE'));
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END $$""",
     ]
 
 
@@ -117,6 +135,8 @@ def index_statements(docs_table: str, chunks_table: str) -> list[str]:
         # chunks — fechas y compuestos para filtros frecuentes
         f"CREATE INDEX IF NOT EXISTS idx_chunks_chunk_date ON {chunks_table}(chunk_date) "
         f"WHERE chunk_date IS NOT NULL",
+        # chunks — kind para filtrar TEXT vs VISUAL en search_visuals.
+        f"CREATE INDEX IF NOT EXISTS idx_chunks_kind ON {chunks_table}(kind)",
         f"CREATE INDEX IF NOT EXISTS idx_chunks_doc_section ON {chunks_table}(document_id, section_type)",
         f"CREATE INDEX IF NOT EXISTS idx_chunks_year_section ON {chunks_table}(document_id, section_type) "
         f"INCLUDE (importance_score)",
@@ -156,16 +176,16 @@ INSERT INTO {chunks_table} (
     position_in_doc, section_type, section_confidence,
     economic_variables, numeric_values, entities, temporal_refs,
     tags, importance_score, is_policy_decision, is_forward_looking,
-    chunk_date, image_path, embedding, embedding_model
+    chunk_date, image_path, kind, visual_caption, embedding, embedding_model
 ) VALUES %s
 """
 
 
 # Template para execute_values: el embedding va como string casteado a vector,
-# el resto como parámetros normales.
+# el resto como parámetros normales. 23 placeholders.
 INSERT_CHUNKS_TEMPLATE = (
     "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-    "%s, %s, %s, %s, %s, %s::vector, %s)"
+    "%s, %s, %s, %s, %s, %s, %s, %s::vector, %s)"
 )
 
 
@@ -228,6 +248,14 @@ FROM {docs_table}
 WHERE filename = %s
 LIMIT 1
 """
+
+
+def get_chunk_image_sql(chunks_table: str) -> str:
+    """Resuelve image_path + kind para un chunk_id (endpoint /v1/images)."""
+    return (
+        f"SELECT chunk_id, image_path, kind, visual_caption "
+        f"FROM {chunks_table} WHERE chunk_id = %s"
+    )
 
 
 def get_chunks_by_document_id_sql(chunks_table: str) -> str:

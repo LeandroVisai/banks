@@ -31,7 +31,7 @@ from banks_rag.interface.api.middleware import (
     APIKeyMiddleware,
     RequestIDMiddleware,
 )
-from banks_rag.interface.api.routes import chat, health, search
+from banks_rag.interface.api.routes import chat, health, images, search
 
 # Importar el paquete de tools para que el registry quede poblado.
 import banks_rag.application.agent.tools  # noqa: F401
@@ -109,6 +109,7 @@ def create_app(*, deps: AppState | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(chat.router)
     app.include_router(search.router)
+    app.include_router(images.router)
 
     return app
 

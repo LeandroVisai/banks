@@ -220,6 +220,54 @@ class TestSearch:
 
 
 @pytest.mark.integration
+class TestImagesEndpoint:
+    def test_404_when_chunk_not_found(self) -> None:
+        from banks_rag.interface.api import AppState
+
+        deps = AppState()
+        deps.repo = type("FakeRepo", (), {
+            "get_chunk_image": staticmethod(lambda cid: None),
+        })()
+        from banks_rag.interface.api.main import create_app
+        app = create_app(deps=deps)
+        client = TestClient(app)
+        response = client.get("/v1/images/nonexistent")
+        assert response.status_code == 404
+
+    def test_404_when_chunk_has_no_image(self) -> None:
+        from banks_rag.interface.api import AppState
+        deps = AppState()
+        deps.repo = type("FakeRepo", (), {
+            "get_chunk_image": staticmethod(
+                lambda cid: {"chunk_id": cid, "image_path": None,
+                             "kind": "TEXT", "visual_caption": None}
+            ),
+        })()
+        from banks_rag.interface.api.main import create_app
+        app = create_app(deps=deps)
+        client = TestClient(app)
+        response = client.get("/v1/images/text-chunk")
+        assert response.status_code == 404
+        assert "no tiene imagen" in response.json()["detail"]
+
+    def test_403_when_path_outside_images_dir(self, tmp_path) -> None:
+        from banks_rag.interface.api import AppState
+        # image_path apuntando a /etc/passwd → fuera de IMAGES_DIR
+        deps = AppState()
+        deps.repo = type("FakeRepo", (), {
+            "get_chunk_image": staticmethod(
+                lambda cid: {"chunk_id": cid, "image_path": "/etc/passwd",
+                             "kind": "VISUAL", "visual_caption": "evil"}
+            ),
+        })()
+        from banks_rag.interface.api.main import create_app
+        app = create_app(deps=deps)
+        client = TestClient(app)
+        response = client.get("/v1/images/evil-chunk")
+        assert response.status_code == 403
+
+
+@pytest.mark.integration
 class TestAuth:
     def test_no_auth_when_no_keys_configured(self) -> None:
         client, _ = _build_app()

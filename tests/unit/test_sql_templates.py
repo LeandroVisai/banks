@@ -102,6 +102,43 @@ def test_drop_sql_order() -> None:
 
 @pytest.mark.unit
 def test_post_schema_migrations_idempotent() -> None:
+    """Cada migración debe ser idempotente: ADD COLUMN IF NOT EXISTS o el
+    bloque DO $$ con EXCEPTION WHEN duplicate_object para CHECK constraints."""
     migrations = sql.post_schema_migrations("chunks")
     for m in migrations:
-        assert "ADD COLUMN IF NOT EXISTS" in m
+        assert (
+            "ADD COLUMN IF NOT EXISTS" in m
+            or "duplicate_object" in m
+        ), f"Migration no idempotente: {m!r}"
+
+
+@pytest.mark.unit
+def test_post_schema_migrations_includes_visual_columns() -> None:
+    """Fase 2: kind + visual_caption + CHECK constraint."""
+    migrations = sql.post_schema_migrations("chunks")
+    flat = " ".join(migrations)
+    assert "kind" in flat
+    assert "visual_caption" in flat
+    assert "VISUAL" in flat and "TABLE" in flat
+
+
+@pytest.mark.unit
+def test_schema_includes_kind_column() -> None:
+    """schema_sql debe incluir la columna kind con CHECK + visual_caption."""
+    ddl = sql.schema_sql(4096, "documents", "chunks")
+    assert "kind" in ddl
+    assert "visual_caption" in ddl
+    assert "CHECK (kind IN ('TEXT', 'VISUAL', 'TABLE'))" in ddl
+
+
+@pytest.mark.unit
+def test_index_statements_include_kind_index() -> None:
+    stmts = sql.index_statements("documents", "chunks")
+    assert any("idx_chunks_kind" in s for s in stmts)
+
+
+@pytest.mark.unit
+def test_insert_chunks_template_has_correct_placeholder_count() -> None:
+    """23 placeholders: 21 originales + kind + visual_caption."""
+    placeholders = sql.INSERT_CHUNKS_TEMPLATE.count("%s")
+    assert placeholders == 23

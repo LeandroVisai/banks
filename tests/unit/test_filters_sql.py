@@ -125,3 +125,26 @@ class TestBuildFiltersSql:
         )
         assert "qwen_chunks.chunk_date" in sql
         assert "qwen_documents.document_year" in sql
+
+    def test_kinds_filter_visual_only(self) -> None:
+        f = SearchFilters(kinds=["VISUAL"])
+        sql, params = build_filters_sql(
+            f, docs_table="documents", chunks_table="chunks"
+        )
+        assert "chunks.kind = ANY(%s)" in sql
+        assert params == [["VISUAL"]]
+
+    def test_kinds_empty_no_filter(self) -> None:
+        f = SearchFilters(kinds=[])
+        sql, _ = build_filters_sql(
+            f, docs_table="documents", chunks_table="chunks"
+        )
+        assert "kind" not in sql
+
+    def test_kinds_multi(self) -> None:
+        f = SearchFilters(kinds=["TEXT", "TABLE"])
+        sql, params = build_filters_sql(
+            f, docs_table="documents", chunks_table="chunks"
+        )
+        assert "chunks.kind = ANY(%s)" in sql
+        assert params == [["TEXT", "TABLE"]]

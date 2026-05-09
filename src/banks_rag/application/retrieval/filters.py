@@ -130,5 +130,10 @@ def build_filters_sql(
         clauses.append(f"{chunks_table}.importance_score > %s")
         params.append(0.0)
 
+    # Fase 2: filtro por tipo de chunk (TEXT/VISUAL/TABLE).
+    if filters.kinds:
+        clauses.append(f"{chunks_table}.kind = ANY(%s)")
+        params.append(filters.kinds)
+
     where_sql = " AND ".join(clauses) if clauses else "TRUE"
     return where_sql, params
