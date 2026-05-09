@@ -51,6 +51,7 @@ class EnrichedChunk:
 
     chunk_date: str | None = None
     image_path: str | None = None
+    visual_caption: str | None = None
     kind: ChunkKind = ChunkKind.TEXT
 
     # v1.1

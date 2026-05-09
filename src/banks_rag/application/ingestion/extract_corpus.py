@@ -31,7 +31,7 @@ from banks_rag.infrastructure.extractors import (
     detect_institution,
     extract_cell_chunks,
     extract_pages,
-    extract_visual_pages,
+    extract_visual_assets,
     is_pymupdf_available,
     normalize_page_text,
     slugify_document_id,
@@ -126,20 +126,29 @@ def _process_pdf(
             kind=ChunkKind.TEXT,
         ))
 
-    img_raw = extract_visual_pages(pdf_path, doc_id, images_dir)
-    for i, rc in enumerate(img_raw):
-        text = rc["text"]
+    visual_assets = extract_visual_assets(pdf_path, doc_id, images_dir)
+    for i, asset in enumerate(visual_assets):
+        # El texto del chunk visual incluye el tipo, la caption (si existe)
+        # y un snippet del texto vecino — para que BM25/full-text encuentre
+        # el chunk por descripción, aunque el embedding venga de la imagen.
+        text_parts: list[str] = [f"[{asset.kind} p.{asset.page}]"]
+        if asset.caption:
+            text_parts.append(asset.caption)
+        if asset.surrounding_text:
+            text_parts.append(asset.surrounding_text[:200])
+        text = "\n".join(text_parts)
         chunks.append(Chunk(
             chunk_id=f"{doc_id}_img_{i:04d}",
             document_id=doc_id,
             text=text,
             char_count=len(text),
-            token_estimate=1,
-            page_start=rc["page_start"],
-            page_end=rc["page_end"],
+            token_estimate=max(1, len(text) // 4),
+            page_start=asset.page,
+            page_end=asset.page,
             position_in_doc=len(chunks) + i,
-            section_title_raw=rc["section_title_raw"],
-            image_path=rc["image_path"],
+            section_title_raw=asset.caption,
+            image_path=asset.image_path,
+            visual_caption=asset.caption,
             kind=ChunkKind.VISUAL,
         ))
 

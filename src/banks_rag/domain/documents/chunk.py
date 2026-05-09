@@ -41,5 +41,6 @@ class Chunk:
     position_in_doc: int  # 0-based
     section_title_raw: str | None
     chunk_date: str | None = None  # ISO YYYY-MM-DD; solo Monitor PM
-    image_path: str | None = None  # solo páginas visuales
+    image_path: str | None = None  # solo chunks visuales
+    visual_caption: str | None = None  # "Gráfico 3: TPM" — solo chunks visuales
     kind: ChunkKind = ChunkKind.TEXT

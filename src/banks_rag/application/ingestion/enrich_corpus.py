@@ -149,6 +149,7 @@ def enrich_chunk(chunk: Chunk, doc: Document, total_chunks_in_doc: int) -> Enric
         is_forward_looking=is_fwd,
         chunk_date=chunk.chunk_date,
         image_path=chunk.image_path,
+        visual_caption=chunk.visual_caption,
         kind=chunk.kind if isinstance(chunk.kind, ChunkKind) else ChunkKind.TEXT,
         indicator_types=indicator_types,
         signal_strength=signal_strength,
