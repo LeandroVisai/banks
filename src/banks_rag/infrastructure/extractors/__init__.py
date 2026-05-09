@@ -1,6 +1,10 @@
 """Adaptadores de extracción: PDF, Excel, charts, encoding fixers."""
 
 from .chart_detector import (
+    DEFAULT_IMAGE_DPI,
+    detect_caption,
+    extract_surrounding_text,
+    extract_visual_assets,
     extract_visual_pages,
     is_pymupdf_available,
     page_has_visuals,
@@ -37,4 +41,8 @@ __all__ = [
     "is_pymupdf_available",
     "page_has_visuals",
     "extract_visual_pages",
+    "extract_visual_assets",
+    "detect_caption",
+    "extract_surrounding_text",
+    "DEFAULT_IMAGE_DPI",
 ]
