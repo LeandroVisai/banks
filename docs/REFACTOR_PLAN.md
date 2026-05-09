@@ -22,14 +22,17 @@
 | 1F · Agent core (loop + registry + LLM Protocol) | `340cb17` | +27 (237) | Por construcción + 27 tests unitarios con mock LLM |
 | 1F.b · Tools concretas (search/lookup/series) | `99733cf` | +12 (249) | 5 tools registradas con schemas alineados; mocks de infra + tests |
 | 1G · FastAPI unificado | `b89a2b4` | +16 (265) | TestClient con health/chat/search/auth; reemplaza `chatbot/` + `chatbot_calling_tool/` |
+| 2A · VisualAsset domain + chart_detector | `7ca9de5` | +19 (284) | Captions detectadas via regex, surrounding text, BoundingBox |
+| 2B+2C · Schema kind/visual_caption + search_visuals + /v1/images | `a00ccd0` | +12 (296) | 6 tools, 9 routes; `kinds` filter en hybrid_search |
+| 2D · Wire VisualAsset al extract pipeline | `46dbc9a` | 296 | 32 chunks VISUAL extraídos en datos reales (7 con caption) |
 
-**Total Fase 1: 8 commits, 265/265 tests passing en 0.55s, paridad funcional verificada en datos reales.**
+**Total Fase 1+2 parcial: 11 commits, 296/296 tests passing en 0.62s; 32 chunks visuales generados con `kind=VISUAL` + `visual_caption` end-to-end.**
 
 ### Sub-fases pendientes
 
 | Fase | Estado | Notas |
 |---|---|---|
-| 2 · Multimodal embeddings + chart preservation | 🚧 En progreso | Qwen3-VL-Embedding-8B + bbox-level chart extraction |
+| 2.b · Multimodal embedder + bbox cropping | ⏳ Pendiente | Qwen3-VL-Embedding-8B en H100 (modelo ~16GB en `models/`) |
 | 3 · LLM swappable llama.cpp (Qwen3.6 → Gemma) | ⏳ Pendiente | `LlamaCppEngine` implementando el Protocol existente |
 | 4 · SQL catalog agentic | ⏳ Pendiente | 75 queries de `Monitor.py` → `discover_query` + `execute_query` |
 | 5 · Re-ranker + query routing | ⏳ Pendiente | bge-reranker-v2-m3 + RAG/SQL/VISUAL classifier |
@@ -48,13 +51,13 @@ src/banks_rag/
 ├── domain_knowledge/   taxonomy + enrichment + importance_rules + cross_references
 ├── application/        ingestion (extract, enrich, vectorize, persist)
 │                       retrieval (parse, filters, fusion, hybrid_search)
-│                       agent     (loop, prompts, citation_verifier, 5 tools)
+│                       agent     (loop, prompts, citation_verifier, 6 tools)
 ├── infrastructure/     extractors (pdf, excel, chart, encoding, normalizer, doc_metadata)
 │                       chunking, embeddings (Protocol + sentence_transformers + builder)
 │                       persistence (sql_templates, postgres_repo)
 │                       sql (recall_queries), llm (Protocol + tool_call_parser)
 ├── interface/          cli (banks-ingest, banks-search)
-│                       api (FastAPI: /healthz, /readyz, /v1/chat, /v1/search)
+│                       api (FastAPI: /healthz, /readyz, /v1/chat, /v1/search, /v1/images/{id})
 └── config/             paths, settings (Pydantic)
 ```
 
