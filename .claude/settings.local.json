@@ -27,7 +27,20 @@
       "Bash(PYTHONIOENCODING=utf-8 python 02_vectorize.py)",
       "Bash(PYTHONIOENCODING=utf-8 python 03_database.py load)",
       "Bash(python -c \"import json; docs=json.load\\(open\\('logs/documents.json'\\)\\); [print\\(d['document_id'], '|', d['filepath']\\) for d in docs]\")",
-      "Bash(PYTHONIOENCODING=utf-8 python 04_search.py \"política monetaria 2022\" 3)"
+      "Bash(PYTHONIOENCODING=utf-8 python 04_search.py \"política monetaria 2022\" 3)",
+      "Bash(nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader)",
+      "Bash(python -c \"import transformers; print\\('transformers:', transformers.__version__\\)\")",
+      "Bash(python -c \"import bitsandbytes; print\\('bitsandbytes:', bitsandbytes.__version__\\)\")",
+      "Bash(python -c \"import qwen_vl_utils; print\\('qwen_vl_utils: OK'\\)\")",
+      "PowerShell(Get-Command py, python, python3 -ErrorAction SilentlyContinue)",
+      "PowerShell(py -c \"import sys; print\\(sys.version\\); import torch; print\\('torch:', torch.__version__, '| CUDA:', torch.cuda.is_available\\(\\)\\); import transformers; print\\('transformers:', transformers.__version__\\)\" 2>&1)",
+      "PowerShell(py -c \"import bitsandbytes; print\\('bitsandbytes:', bitsandbytes.__version__\\)\" 2>&1)",
+      "PowerShell(py -c \"import qwen_vl_utils; print\\('qwen_vl_utils: OK'\\)\" 2>&1)",
+      "PowerShell(py --version)",
+      "PowerShell(nvcc --version 2>$null)",
+      "PowerShell(py -m pip index versions torch --index-url https://download.pytorch.org/whl/cu124 2>&1)",
+      "PowerShell(py -m pip index versions torch --index-url https://download.pytorch.org/whl/cu126 2>&1)",
+      "PowerShell(py -m pip index versions torch --index-url https://download.pytorch.org/whl/cu128 2>&1)"
     ]
   }
 }
