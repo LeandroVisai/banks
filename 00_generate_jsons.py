@@ -619,8 +619,11 @@ def _page_has_visuals(page) -> bool:
 
 
 def extract_visual_pages(pdf_path: Path, doc_id: str, pages_text: list[str]) -> list[dict]:
-    """
-    Renderiza como PNG las páginas con contenido visual relevante.
+    """Renderiza como PNG las regiones con contenido visual relevante (Fase 2.b).
+
+    Delega en ``banks_rag.infrastructure.extractors.chart_detector.extract_visual_assets``
+    que detecta el bbox real del chart y lo recorta. Una página puede generar
+    varios chunks (varios charts) o ninguno (heurística inicial fue falso positivo).
 
     Retorna lista de raw_chunks con keys:
       text, page_start, page_end, section_title_raw, image_path
@@ -628,38 +631,34 @@ def extract_visual_pages(pdf_path: Path, doc_id: str, pages_text: list[str]) -> 
     if not _PYMUPDF_AVAILABLE:
         return []
 
-    IMAGE_OUTPUT_DIR.mkdir(exist_ok=True)
-    image_chunks: list[dict] = []
-
     try:
-        import fitz
-        doc = fitz.open(str(pdf_path))
-    except Exception:
+        from banks_rag.infrastructure.extractors.chart_detector import (
+            extract_visual_assets,
+        )
+    except ImportError:
         return []
 
-    for page_num, page in enumerate(doc, start=1):
-        if not _page_has_visuals(page):
-            continue
+    assets = extract_visual_assets(pdf_path, doc_id, IMAGE_OUTPUT_DIR)
+    return [
+        {
+            "text": _legacy_chunk_text(a),
+            "page_start": a.page,
+            "page_end": a.page,
+            "section_title_raw": a.caption,
+            "image_path": a.image_path,
+        }
+        for a in assets
+    ]
 
-        img_name = f"{doc_id}_p{page_num:03d}.png"
-        img_path = IMAGE_OUTPUT_DIR / img_name
-        try:
-            mat = fitz.Matrix(IMAGE_DPI / 72, IMAGE_DPI / 72)
-            pix = page.get_pixmap(matrix=mat)
-            pix.save(str(img_path))
-        except Exception:
-            continue
 
-        image_chunks.append({
-            "text": f"[Imagen p.{page_num}]",
-            "page_start": page_num,
-            "page_end": page_num,
-            "section_title_raw": None,
-            "image_path": str(img_path),
-        })
-
-    doc.close()
-    return image_chunks
+def _legacy_chunk_text(asset) -> str:
+    """Texto del chunk visual: marker + caption + surrounding text para BM25."""
+    parts = [f"[{asset.kind} p.{asset.page}]"]
+    if asset.caption:
+        parts.append(asset.caption)
+    if asset.surrounding_text:
+        parts.append(asset.surrounding_text[:200])
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -713,7 +712,23 @@ def process_pdf(pdf_path: Path) -> tuple[Optional[Document], list[Chunk]]:
     # Chunks de imagen: páginas con gráficos, tablas o figuras
     img_raw = extract_visual_pages(pdf_path, doc_id, pages)
     for i, rc in enumerate(img_raw):
-        text = rc["text"]
+        # Header de metadata para que BM25 + retrieval encuentren visuales
+        # por institución, tipo, fecha. El embedder VL también lo verá si
+        # 02_vectorize.py hace dual-embedding (image + this text).
+        meta_parts = [
+            "VISUAL",
+            f"institution={institution}",
+            f"doc_type={doc_type}",
+        ]
+        if doc_date:
+            meta_parts.append(f"date={doc_date}")
+            if len(str(doc_date)) >= 4 and str(doc_date)[:4].isdigit():
+                meta_parts.append(f"year={str(doc_date)[:4]}")
+                if len(str(doc_date)) >= 7:
+                    meta_parts.append(f"month={str(doc_date)[5:7]}")
+        meta_header = "[" + " | ".join(meta_parts) + "]"
+        text = f"{meta_header}\n{rc['text']}"
+
         chunks.append(Chunk(
             chunk_id=f"{doc_id}_img_{i:04d}",
             document_id=doc_id,

@@ -56,7 +56,7 @@ else:
     DEFAULT_MODEL = _DEFAULT_MODEL_ID
 
 FALLBACK_MODEL = "intfloat/multilingual-e5-small"
-BATCH_SIZE = 4   # Qwen3-Embedding-8B es grande; batch pequeño para no OOM en carga
+BATCH_SIZE = int(os.environ.get("RAG_EMBED_BATCH", "2"))  # bf16 8B en RTX 3080 → batch chico
 USE_METADATA_CONTEXT = os.environ.get("RAG_PURE_TEXT", "0") != "1"
 
 E5_PASSAGE_PREFIX = "passage: "
@@ -192,9 +192,16 @@ def _build_cross_references(
 
 def load_model(name: str):
     from sentence_transformers import SentenceTransformer
+    import torch
 
     print(f"[02] Cargando modelo: {name}")
-    return SentenceTransformer(name, trust_remote_code=True)
+    kwargs: dict = {"trust_remote_code": True}
+    n = name.lower()
+    is_large = is_vl_model(name) or is_qwen_embedding(name) or "8b" in n or "7b" in n
+    if is_large and torch.cuda.is_available():
+        kwargs["model_kwargs"] = {"torch_dtype": torch.bfloat16}
+        print("[02] → bfloat16 + cuda (modelo grande, ~8GB VRAM)")
+    return SentenceTransformer(name, **kwargs)
 
 
 def main() -> int:
@@ -270,23 +277,38 @@ def main() -> int:
         normalize_embeddings=True,
     )
 
-    # ── Imágenes: embed individual ────────────────────────────────────────────
+    # ── Imágenes: dual-embedding (imagen + metadata text) ────────────────────
+    # En modelos VL se promedia el embedding de la imagen con el del texto
+    # descriptivo (institución, fecha, doc_type, importance, vars). Esto hace
+    # que la similitud por imagen también responda a metadata semántico.
+    # Pesos: IMAGE_WEIGHT * img + (1-IMAGE_WEIGHT) * txt, luego L2-normalizado.
     image_embeddings: dict[int, np.ndarray] = {}
+    IMAGE_WEIGHT = float(os.environ.get("RAG_VISUAL_IMG_WEIGHT", "0.7"))
+
     if image_idxs:
         if _vl:
-            print(f"[02] Embebiendo {len(image_idxs)} chunks de imagen (modelo VL)...")
+            print(f"[02] Dual-embedding {len(image_idxs)} chunks visuales "
+                  f"(imagen={IMAGE_WEIGHT:.2f}, texto={1-IMAGE_WEIGHT:.2f})...")
         else:
             print(f"[02] ⚠ {len(image_idxs)} chunks de imagen — modelo no es VL, "
                   f"se usará texto descriptivo como embedding")
         for i in image_idxs:
             chunk = chunks[i]
-            emb = None
+            img_emb = None
             if _vl:
-                emb = _embed_image(chunk.get("image_path", ""), model)
-            if emb is None:
-                # Fallback: el texto "[Imagen p.N]" ya tiene contexto mínimo
-                text = build_embed_text(chunk, model_name_used)
-                emb = model.encode([text], normalize_embeddings=True, convert_to_numpy=True)[0]
+                img_emb = _embed_image(chunk.get("image_path", ""), model)
+
+            # Embed el texto enriquecido del chunk (incluye [VISUAL | inst | type | year | vars])
+            txt = build_embed_text(chunk, model_name_used)
+            txt_emb = model.encode([txt], normalize_embeddings=True, convert_to_numpy=True)[0]
+
+            if img_emb is not None:
+                combined = IMAGE_WEIGHT * img_emb + (1.0 - IMAGE_WEIGHT) * txt_emb
+                norm = float(np.linalg.norm(combined)) or 1.0
+                emb = combined / norm
+            else:
+                # Sin imagen: usar solo texto como fallback
+                emb = txt_emb
             image_embeddings[i] = emb
 
     # ── Combinar y guardar ────────────────────────────────────────────────────
