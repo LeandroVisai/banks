@@ -292,8 +292,10 @@ def main() -> int:
         else:
             print(f"[02] ⚠ {len(image_idxs)} chunks de imagen — modelo no es VL, "
                   f"se usará texto descriptivo como embedding")
-        for i in image_idxs:
+        import time
+        for n, i in enumerate(image_idxs, start=1):
             chunk = chunks[i]
+            t0 = time.time()
             img_emb = None
             if _vl:
                 img_emb = _embed_image(chunk.get("image_path", ""), model)
@@ -310,6 +312,8 @@ def main() -> int:
                 # Sin imagen: usar solo texto como fallback
                 emb = txt_emb
             image_embeddings[i] = emb
+            print(f"[02]   visual {n}/{len(image_idxs)} ({time.time()-t0:.1f}s) "
+                  f"{Path(chunk.get('image_path', '')).name}", flush=True)
 
     # ── Combinar y guardar ────────────────────────────────────────────────────
     all_embeddings: list = [None] * len(chunks)
