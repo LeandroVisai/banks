@@ -656,7 +656,7 @@ def load_embedding_model():
     if _MODEL is not None:
         return _MODEL, _MODEL_NAME
     from sentence_transformers import SentenceTransformer
-    model_id = os.environ.get("RAG_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding")
+    model_id = os.environ.get("RAG_EMBEDDING_MODEL", "Qwen3-VL-Embedding-8B")
     local_path = _MODELS_DIR / model_id.replace("/", "--")
     name = str(local_path) if local_path.exists() else model_id
     try:
