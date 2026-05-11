@@ -98,6 +98,12 @@ class TestDetectCaption:
     def test_english_table(self) -> None:
         assert detect_caption("Table 5: Annual GDP growth") == "Table 5: Annual GDP growth"
 
+    def test_exhibit_jpm_format(self) -> None:
+        assert detect_caption("Exhibit 1: EM FX has failed to benefit") == "Exhibit 1: EM FX has failed to benefit"
+
+    def test_panel_format(self) -> None:
+        assert detect_caption("Panel 7: TPM evolution") == "Panel 7: TPM evolution"
+
     def test_case_insensitive(self) -> None:
         assert detect_caption("GRÁFICO 8: x") == "GRÁFICO 8: x"
 
