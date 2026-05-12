@@ -1,0 +1,25 @@
+[Unit]
+Description=Banks RAG — Ingesta one-shot de documentos nuevos
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=banks_rag
+Group=banks_rag
+WorkingDirectory=/opt/banks_rag
+EnvironmentFile=/etc/banks_rag.env
+
+# Fuente configurable vía BANKS_INGEST_SOURCE (default Datos_prueba/)
+ExecStart=/opt/banks_rag/.venv/bin/banks-ingest run \
+    --source ${BANKS_INGEST_SOURCE:-Datos_prueba/}
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=banks-ingest
+
+# No reiniciar automáticamente — es one-shot manual
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

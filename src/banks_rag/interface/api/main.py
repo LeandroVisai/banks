@@ -26,12 +26,15 @@ from fastapi import FastAPI
 
 from banks_rag import __version__
 from banks_rag.config import get_settings
+from banks_rag.infrastructure.observability import configure_logging, setup_tracing
 from banks_rag.interface.api.dependencies import AppState
 from banks_rag.interface.api.middleware import (
     APIKeyMiddleware,
+    RateLimitMiddleware,
     RequestIDMiddleware,
 )
 from banks_rag.interface.api.routes import chat, health, images, search
+from banks_rag.interface.api.routes import metrics as metrics_route
 
 # Importar el paquete de tools para que el registry quede poblado.
 import banks_rag.application.agent.tools  # noqa: F401
@@ -49,6 +52,8 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     deps: AppState = app.state.deps
 
+    configure_logging(json=settings.log_json, level=settings.log_level)
+    setup_tracing()
     log.info("API iniciando — version=%s", __version__)
 
     # PostgresRepo es barato (sin conexión hasta ser usado).
@@ -100,13 +105,15 @@ def create_app(*, deps: AppState | None = None) -> FastAPI:
 
     app.state.deps = deps if deps is not None else AppState()
 
-    # Middlewares (orden: outer → inner).
+    # Middlewares (orden: outer → inner, se ejecutan en orden inverso).
     app.add_middleware(RequestIDMiddleware)
     if settings.api_keys_set:
         app.add_middleware(APIKeyMiddleware, api_keys=settings.api_keys_set)
+    app.add_middleware(RateLimitMiddleware)
 
     # Routes.
     app.include_router(health.router)
+    app.include_router(metrics_route.router)
     app.include_router(chat.router)
     app.include_router(search.router)
     app.include_router(images.router)

@@ -75,10 +75,16 @@ serve-dev: ## Servicio con reload
 # ── Evaluación ──────────────────────────────────────────────────────────
 
 eval: ## Corre golden set + RAGAS y emite reporte
-	banks-eval run
+	banks-eval all
 
 eval-retrieval: ## Solo métricas de retrieval (recall@k, MRR)
 	banks-eval retrieval
+
+eval-routing: ## Solo métricas de routing SQL
+	banks-eval routing
+
+eval-ci: ## Gate CI: falla si recall@5 cae >5% vs baseline
+	banks-eval all --ci
 
 # ── Mantenimiento ───────────────────────────────────────────────────────
 

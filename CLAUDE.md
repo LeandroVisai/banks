@@ -4,39 +4,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Qué es este proyecto
 
-Sistema RAG para banco central chileno. Procesa PDFs financieros (Comunicados BCCh, Minutas del Consejo, reportes JPMorgan, Fed Statements) y un Excel de Monitor PM en un corpus semántico consultable con citación por página.
+Sistema RAG + agente multimodal para el Banco Central de Chile. Procesa PDFs financieros (Comunicados BCCh, Minutas del Consejo, Fed Statements, research JPMorgan) y un Excel de Monitor PM en un corpus semántico consultable con citación por página. El agente puede además consultar 23 series financieras del catálogo SQL vía DuckDB offline.
 
-Stack: `pypdf` + `openpyxl` + `sentence-transformers` (Qwen3-Embedding-8B, 4096-dim) + PostgreSQL + pgvector (HNSW) + búsqueda híbrida BM25/vector con RRF y MMR.
+Stack: `sentence-transformers` (Qwen3-VL-Embedding-8B, 4096-dim) + `llama-cpp-python` + PostgreSQL 16 + pgvector (HNSW) + búsqueda híbrida BM25/vector con RRF, MMR y cross-encoder reranking + FastAPI.
+
+**Arquitectura**: Clean Architecture + DDD. Los scripts numerados legacy (`00-05_*.py`, `run.py`, `chatbot/`, `chatbot_calling_tool/`) fueron eliminados. Todo el código productivo vive en `src/banks_rag/`.
 
 ## Comandos esenciales
 
 ```bash
-# Pipeline completo (extracción → enriquecimiento → embeddings → BD)
-python3 run.py full
-
-# Pasos individuales
-python3 run.py step 0          # extracción PDF/Excel → chunks.json
-python3 run.py step 1          # enriquecimiento → chunks_enriched.json
-python3 run.py step 2          # embeddings → chunks_vectorized.json
-python3 run.py step 3 reset    # drop + recrear schema PostgreSQL + cargar
-python3 run.py step 3 stats    # métricas de la BD sin tocar nada
+# Ingesta (extracción → enriquecimiento → embeddings → BD)
+banks-ingest run --source Datos_prueba/
 
 # Búsqueda
-python3 04_search.py "tasa de interés 2022" 5
-python3 04_search.py "commodities riesgos" 10 --json
-python3 04_search.py "inflación" 5 --no-mmr
+banks-search "tasa de interés 2022" --k 5
+banks-search "commodities riesgos" --k 10 --json
 
-# Generar prompt RAG listo para LLM local (Ollama, llama.cpp)
-python3 05_query.py "política monetaria 2022" 3
+# API
+uvicorn banks_rag.interface.api.main:create_app --factory --port 8080
 
-# Validación de que el sistema funciona correctamente
-python3 04_search.py "política monetaria 2022" 3
-# → top-1 debe ser comunicado1.pdf, sección DECISION, importance ≥ 0.90
+# Evaluación
+make eval          # golden set completo → eval_report.md
+make eval-ci       # gate CI recall@5
+
+# Tests
+PYTHONPATH=src pytest tests/unit/ -q     # 498 tests, <2s
+make test                                # suite completa
+make lint                                # ruff
 ```
 
-## Arquitectura
-
-### Flujo de datos
+## Arquitectura — flujo de datos
 
 ```
 Datos_prueba/Comunicados/*.pdf
@@ -44,99 +41,80 @@ Datos_prueba/Minutas/*.pdf
 Datos_prueba/Fed/*.pdf
 Datos_prueba/Researchs/**/*.pdf
 Datos_prueba/Monitor PM/textos_monitor_pm.xlsx
-  → [00] chunks.json + documents.json        (extracción + chunking)
-  → [01] chunks_enriched.json               (taxonomía semántica)
-  → [02] chunks_vectorized.json             (embeddings normalizados)
-  → [03] PostgreSQL rag_banco               (schema + HNSW + GIN)
-  → [04] búsqueda híbrida                   (HNSW + BM25 → RRF → MMR)
-  → [05] prompt para LLM                    (contexto delimitado + citas)
+  → banks-ingest run
+  → [extract]    chunks.json + documents.json
+  → [enrich]     chunks_enriched.json  (taxonomía semántica)
+  → [vectorize]  chunks_vectorized.json  (dual-embed: txt+img, Qwen3-VL)
+  → [load]       PostgreSQL rag_banco  (HNSW + GIN)
+  → hybrid_search  (HNSW + BM25 → RRF → MMR → reranker)
+  → agente tool-calling  (Qwen3.6 / Gemma 4 vía llama.cpp)
+  → FastAPI  /v1/chat · /v1/search · /metrics
 ```
 
-### Módulos y responsabilidades
+## Módulos y responsabilidades
 
-| Archivo | Responsabilidad única |
+| Paquete | Responsabilidad |
 |---|---|
-| `models.py` | Dataclasses `Document`, `Chunk`, `EnrichedChunk` — única fuente de verdad de estructuras |
-| `taxonomy.py` | Patterns de variables, secciones, entidades, boilerplate. Compartido por paso 1 y paso 4 |
-| `00_generate_jsons.py` | PDF+Excel → chunks semánticos (por párrafos, target 600 chars, overlap 100) |
-| `01_enrich_metadata.py` | Scoring de sección, variables económicas, importance_score |
-| `02_vectorize.py` | Embeddings con E5-multilingual, prefijo contextual, normalización L2 |
-| `03_database.py` | Schema PostgreSQL, HNSW index, bulk upsert, stats |
-| `04_search.py` | Parse query NL, recall dual (vector+BM25), RRF, MMR, importance boost |
-| `05_query.py` | Formatea contexto RAG + few-shot prompt para LLM local |
-| `run.py` | Orquestador — delega a los scripts numerados vía subprocess |
+| `domain/` | Dataclasses puras (`Document`, `Chunk`, `EnrichedChunk`, `SearchResult`, `ParsedQuery`, `SearchFilters`) |
+| `application/ingestion/` | Extract → enrich → vectorize → load |
+| `application/retrieval/` | `hybrid_search`, `query_parser`, `query_router`, `fusion`, `filters` |
+| `application/agent/` | Loop de tool-calling, registro de tools, `run_agent` |
+| `application/evaluation/` | `retrieval_metrics`, `ragas_runner`, golden set |
+| `infrastructure/embeddings/` | `SentenceTransformersEmbedder`, `build_default_embedder` |
+| `infrastructure/llm/` | `LlamaCppEngine` (Protocol `LLMEngine`) |
+| `infrastructure/reranker/` | `CrossEncoderReranker` (Protocol `Reranker`) |
+| `infrastructure/persistence/` | `PostgresRepo`, `recall_queries`, `catalog_loader` |
+| `infrastructure/observability/` | logging (structlog), metrics (Prometheus), tracing (OTel) |
+| `interface/api/` | FastAPI app, middlewares, routes |
+| `interface/cli/` | `banks-ingest`, `banks-search`, `banks-eval` |
 
-### Procesamiento del Excel (Monitor PM)
+## Invariantes críticos
 
-El archivo `textos_monitor_pm.xlsx` tiene estructura tabular especial:
-- **Filas** = fechas (cada fila es un día de mercado)
-- **Columnas** = segmentos de mercado (ej. "Mercado Cambiario", "Renta Fija")
-- **Celdas** = texto narrativo completo
+- **`src/banks_rag/domain/` es la fuente de verdad de estructuras**: no duplicar dataclasses en otros módulos.
 
-Cada celda se convierte en un `Chunk` independiente con `chunk_date` = fecha de esa fila (ISO `YYYY-MM-DD`). El `section_type` se asigna directamente desde `MONITOR_PM_SECTION_MAP` en `taxonomy.py` con confianza 1.0 — nunca pasa por el scorer genérico de secciones.
+- **`taxonomy.py` en `infrastructure/extractors/`**: los patrones de variables económicas, secciones, entidades y boilerplate viven ahí. Los pasos de ingesta lo importan en tiempo de ejecución.
 
-### Invariantes críticos
+- **`doc_type` se hereda del filepath, nunca del contenido del chunk**: `detect_doc_type()` opera sobre la ruta relativa.
 
-- **`taxonomy.py` es la fuente de verdad**: si agregas una variable, sección, entidad o patrón, edita solo este archivo. Los pasos 1 y 4 lo importan en tiempo de ejecución.
+- **Embeddings normalizados L2 + `vector_cosine_ops`**: los embeddings se normalizan en `vectorize_corpus()`. El índice HNSW usa `vector_cosine_ops`. Cambiar uno sin el otro rompe la similitud.
 
-- **doc_type se hereda del filepath, nunca del contenido del chunk**: `detect_doc_type()` en `00_generate_jsons.py` opera sobre la ruta relativa. Un chunk de una minuta que menciona "comunicado" no se re-clasifica.
+- **Dual embedding para chunks visuales**: `combined = IMAGE_WEIGHT * img_emb + (1 - IMAGE_WEIGHT) * txt_emb`, normalizado L2. `IMAGE_WEIGHT` default 0.7, override con `RAG_VISUAL_IMG_WEIGHT`.
 
-- **Embeddings normalizados L2 + `vector_cosine_ops`**: los embeddings se normalizan en `02_vectorize.py`. El índice HNSW usa `vector_cosine_ops`. Cambiar uno sin el otro rompe la similitud.
+- **Modelos en `models/<owner>--<name>/`**: convención offline H100. Si el directorio existe se usa; si no, se descarga desde HuggingFace. Nunca hardcodear rutas absolutas.
 
-- **models_cache/ se auto-detecta**: `02_vectorize.py` y `04_search.py` setean `SENTENCE_TRANSFORMERS_HOME=./models_cache` automáticamente si la carpeta existe junto al script. En el servidor sin internet, el modelo ya está ahí.
+- **LlamaCppEngine usa lazy import**: `from llama_cpp import Llama` solo en `_sync_load()`. Permite tests sin el binario instalado.
 
-- **Filtro de variables incluye DECISION**: en `04_search.py`, `build_filters_sql()` siempre incluye chunks con `section_type='DECISION'` aunque no tengan la variable etiquetada.
+- **CrossEncoderReranker usa lazy import**: `from sentence_transformers import CrossEncoder` solo en `load()`.
 
-- **chunk_date vs document_date**: los chunks del Monitor PM tienen `chunk_date` (fecha de la celda). Los PDFs tienen `chunk_date = NULL`. Los filtros de año en `04_search.py` usan `COALESCE(chunk_date year, document_year)` para manejar ambos casos correctamente.
+- **SQL catalog en `sql_catalog/catalog.yaml`**: 23 queries DuckDB sobre parquets en `data_pipeline/snapshots/`. Para agregar una serie nueva, añadir entrada al YAML; no tocar el código Python.
 
-## Taxonomía (`taxonomy.py`) — mapa de conceptos
+- **Tests unitarios sin BD ni modelos**: todos los tests en `tests/unit/` usan mocks. `PYTHONPATH=src pytest tests/unit/ -q` debe pasar en < 2s sin internet ni GPU.
 
-| Constante | Propósito |
-|---|---|
-| `ECONOMIC_VARIABLES` | 14 variables con listas de keywords y nivel de importancia (CRITICAL/HIGH/MEDIUM) |
-| `SECTION_KEYWORDS` | Patrones para clasificar secciones canónicas de PDFs |
-| `MONITOR_PM_SECTION_MAP` | Mapeo directo columna Excel → section_type canónico (11 columnas) |
-| `MONITOR_PM_SECTIONS` | Frozenset de los 11 section_type del Monitor PM (usado en importance scoring) |
-| `ENTITY_KEYWORDS` | Keywords de entidades (PAIS_CHILE, BANCO_CENTRAL_CHILE, FEDERAL_RESERVE, etc.) |
-| `BOILERPLATE_PATTERN` | Regex para detectar texto legal/disclaimer de reportes JPMorgan |
-| `FORWARD_LOOKING_PATTERN` | Detecta lenguaje prospectivo |
+- **Golden set en `data/golden_set/`**: `retrieval.jsonl` (30 casos), `sql_routing.jsonl` (30 casos), `generation.jsonl` (15 casos). Curado para el dominio BCCh.
 
-### Importance score — señales y pesos (`01_enrich_metadata.py`)
-
-```
-CRITICAL variable presente   → +0.35  (+0.10 si hay 2+)
-HIGH variable (sin CRITICAL) → +0.20
-MEDIUM variable (sin HIGH)   → +0.08
-Datos numéricos (satura 3)   → +0.20
-Sección DECISION/VOTACION    → +0.25
-Sección PROYECCION/RIESGOS   → +0.15
-Sección ANALISIS             → +0.08
-Sección Monitor PM           → +0.12  (las 11 secciones del Excel)
-Forward-looking              → +0.08
-Entidades (satura 2)         → +0.10
-Sin variables ni datos       → -0.12  (penalización)
-Boilerplate legal            → = 0.0  (forzado, no acumulable)
-```
+- **Gate CI**: `make eval-ci` falla (exit 1) si `recall@5` cae > 5% vs baseline en `eval_baseline.json`.
 
 ## Agregar nuevos tipos de documento
 
-Dos cambios necesarios:
+1. `infrastructure/extractors/pdf_extractor.py` → `detect_doc_type()`: añadir rama `if` con la carpeta nueva.
+2. `infrastructure/extractors/taxonomy.py` → `SECTION_KEYWORDS`: añadir patrones del nuevo tipo.
+3. Ejecutar `banks-ingest run` (idempotente).
 
-1. **`00_generate_jsons.py` → `detect_doc_type()`**: agregar rama `if` que reconozca la carpeta nueva (ej. `if "bce" in p: return "BCE_STATEMENT"`).
+## Agregar nuevas series al catálogo SQL
 
-2. **`taxonomy.py` → `SECTION_KEYWORDS`**: agregar los patrones de texto característicos del nuevo tipo.
-
-Luego correr `python3 run.py full` — el pipeline es idempotente.
+1. Generar parquet en `data_pipeline/snapshots/<nombre>.parquet` con columnas `(date, series_id, value[, tenor])`.
+2. Añadir entrada en `sql_catalog/catalog.yaml` con `query_id`, `name`, `description`, `segment`, `tags`, `parquet`, `sql`.
+3. Añadir caso a `data/golden_set/sql_routing.jsonl`.
 
 ## Ajustar parámetros de búsqueda
 
-| Parámetro | Archivo | Qué controla |
+| Parámetro | Módulo | Qué controla |
 |---|---|---|
-| `IMPORTANCE_WEIGHTS` | `01_enrich_metadata.py` | Peso de cada señal en importance_score |
-| `RECALL_N` | `04_search.py` | Candidatos por rama (vector + BM25) antes de RRF |
-| `RRF_K` | `04_search.py` | Hiperparámetro de RRF (60 = estándar) |
-| `MMR_LAMBDA` | `04_search.py` | 1.0 = solo relevancia, 0.0 = solo diversidad |
-| `IMPORTANCE_BOOST` | `04_search.py` | Peso de importance en el re-rank final |
+| `RECALL_N` | `hybrid_search.py` | Candidatos por rama antes de RRF |
+| `RRF_K` | `fusion.py` | Hiperparámetro RRF (60 = estándar) |
+| `MMR_LAMBDA` | `fusion.py` | 1.0 = solo relevancia, 0.0 = solo diversidad |
+| `IMPORTANCE_BOOST` | `fusion.py` | Peso de importance en el re-rank |
+| `IMAGE_WEIGHT` | `vectorize_corpus.py` | Peso imagen en dual embedding (default 0.7) |
 
 ## Schema PostgreSQL (referencia rápida)
 
@@ -148,11 +126,14 @@ chunks    (chunk_id PK, document_id FK,
            text, text_tsv TSVECTOR,              -- BM25
            embedding VECTOR(4096),               -- HNSW cosine
            section_type, section_confidence,
-           economic_variables JSONB,             -- GIN jsonb_path_ops
-           entities JSONB,                       -- GIN jsonb_path_ops
+           economic_variables JSONB,             -- GIN
+           entities JSONB,                       -- GIN
            importance_score, is_policy_decision, is_forward_looking,
-           chunk_date DATE,                      -- solo Monitor PM, NULL para PDFs
-           tags TEXT[])                          -- GIN
+           chunk_date DATE,                      -- solo Monitor PM
+           tags TEXT[],                          -- GIN
+           kind TEXT,                            -- 'TEXT' | 'VISUAL'
+           visual_caption TEXT,
+           image_path TEXT)
 ```
 
 ## Variables de entorno
@@ -161,10 +142,14 @@ chunks    (chunk_id PK, document_id FK,
 |---|---|---|
 | `PGDATABASE` | `rag_banco` | Usar otra BD |
 | `PGUSER` / `PGPASSWORD` | SO / vacío | Servidor con auth |
-| `RAG_EMBEDDING_MODEL` | `Qwen/Qwen3-Embedding` | Cambiar modelo |
-| `RAG_PURE_TEXT` | `0` | `1` = no inyectar metadata context en embedding |
-| `SENTENCE_TRANSFORMERS_HOME` | auto-detectado | Solo si `models_cache/` no está junto al script |
+| `BANKS_LLM_FAMILY` | `mock` | `qwen` o `gemma` en producción |
+| `BANKS_LLM_MODEL_PATH` | `` | Ruta al `.gguf` |
+| `BANKS_API_KEYS` | `` | CSV de API keys (vacío = sin auth) |
+| `BANKS_LOG_JSON` | `false` | `true` en producción |
+| `BANKS_TRACING` | `off` | `otlp` para OpenTelemetry |
+| `BANKS_RATE_LIMIT_RPM` | `60` | Requests/minuto por API key |
+| `RAG_VISUAL_IMG_WEIGHT` | `0.7` | Peso imagen en dual embedding |
 
 ## Gemelo de desarrollo
 
-Este repo tiene un gemelo en `/Users/leandrovenegas/Desktop/Proyecto_rag/` (sandbox Mac). Mantener paridad entre ambos — cambios en uno se copian al otro. `taxonomy.py` es la fuente de verdad para patrones compartidos.
+Este repo tiene un gemelo en `/Users/leandrovenegas/Desktop/Proyecto_rag/` (sandbox Mac). Mantener paridad entre ambos. `taxonomy.py` en `infrastructure/extractors/` es la fuente de verdad para patrones compartidos.

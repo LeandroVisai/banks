@@ -32,14 +32,14 @@
 
 | Fase | Estado | Notas |
 |---|---|---|
-| 2.b · Multimodal embedder + bbox cropping | ⏳ Pendiente | Qwen3-VL-Embedding-8B en H100 (modelo ~16GB en `models/`) |
-| 3 · LLM swappable llama.cpp (Qwen3.6 → Gemma) | ⏳ Pendiente | `LlamaCppEngine` implementando el Protocol existente |
-| 4 · SQL catalog agentic | ⏳ Pendiente | 75 queries de `Monitor.py` → `discover_query` + `execute_query` |
-| 5 · Re-ranker + query routing | ⏳ Pendiente | bge-reranker-v2-m3 + RAG/SQL/VISUAL classifier |
-| 6 · Evaluación reproducible | ⏳ Pendiente | golden set + RAGAS + recall@k + CI gate |
-| 7 · Observability + hardening | ⏳ Pendiente | structlog + Prometheus + tracing + rate limit |
-| 8 · Limpieza + cutover | ⏳ Pendiente | Eliminar `00–05_*.py`, `chatbot/`, `chatbot_calling_tool/`, `run.py` |
-| 9 · Deploy H100 + validación | ⏳ Pendiente | Wheels offline + systemd + 5 queries de validación |
+| 2.b · Multimodal embedder + bbox cropping | ✅ Completo | dual-embed IMAGE_WEIGHT; 12 tests; 308 passing |
+| 3 · LLM swappable llama.cpp (Qwen3.6 → Gemma) | ✅ Completo | `LlamaCppEngine` + lazy import + `<think>` stripping; 26 tests |
+| 4 · SQL catalog agentic | ✅ Completo | 23 queries DuckDB; `discover_query` + `execute_query`; 26 tests |
+| 5 · Re-ranker + query routing | ✅ Completo | `CrossEncoderReranker` + `QueryRouter`; 28 tests; 417 total passing |
+| 6 · Evaluación reproducible | ✅ Completo | golden set 75 casos; recall@k, MRR, nDCG; ragas offline; CI gate; 45 tests; 462 total passing |
+| 7 · Observability + hardening | ✅ Completo | structlog+stdlib fallback, Prometheus noop/real, OTel noop/real, rate_limit token bucket, /metrics, deploy H100 + Grafana; 36 tests; 498 total passing |
+| 8 · Limpieza + cutover | ✅ Completo | Eliminados legacy scripts, chatbot/, requirements.txt; README+CLAUDE.md reescritos; .gitignore actualizado; 498 tests passing |
+| 9 · Deploy H100 + validación | ✅ Completo (scripts) | package_for_h100.sh, setup_h100.sh, validate_h100.sh, systemd units, nginx, checklist; ejecución real presencial en server |
 
 ### Arquitectura entregada hasta hoy
 

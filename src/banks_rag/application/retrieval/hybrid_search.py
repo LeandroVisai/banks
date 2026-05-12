@@ -3,6 +3,7 @@
 Pipeline:
 
     parse_query → vector_recall + lexical_recall → RRF → MMR → importance_boost
+    → [CrossEncoderReranker opcional] → top-k
 
 Si el primer recall viene vacío con filtros estrictos (variables/sections),
 relaja esos dos filtros y reintenta. Si sigue vacío, cae a date_importance_fallback.
@@ -14,7 +15,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -167,6 +168,7 @@ def hybrid_search(
     mmr_lambda: float = DEFAULT_MMR_LAMBDA,
     importance_weight: float = DEFAULT_IMPORTANCE_BOOST,
     recency_weight: float = DEFAULT_RECENCY_WEIGHT,
+    reranker: Any | None = None,
 ) -> SearchResult:
     """Búsqueda híbrida unificada con filtros automáticos + explícitos.
 
@@ -181,6 +183,9 @@ def hybrid_search(
         use_mmr: aplicar diversificación MMR antes del importance_boost.
         recall_n: top-N por rama antes de fusionar.
         rrf_k, mmr_lambda, importance_weight, recency_weight: hiperparámetros.
+        reranker: objeto opcional con ``rerank(query, chunks, top_k) → list[dict]``
+            (e.g. ``CrossEncoderReranker``). Si se provee, re-ordena el pool
+            post-MMR+importance antes de cortar a ``k``.
 
     Returns:
         ``SearchResult`` con ``hits`` ordenados (top-K), ``parsed_filters``
@@ -248,7 +253,13 @@ def hybrid_search(
         fused = mmr_select(fused, query_vec, k=min(k * 2, len(fused)), lambda_param=mmr_lambda)
 
     ranked = importance_boost(fused, weight=importance_weight, recency_weight=recency_weight)
-    top = ranked[:k]
+
+    # Reranker de segunda pasada: re-score con cross-encoder antes de cortar a k.
+    if reranker is not None and ranked:
+        top = reranker.rerank(parsed.clean_query, ranked, top_k=k)
+    else:
+        top = ranked[:k]
+
     mark_low_confidence(top)
 
     return SearchResult(

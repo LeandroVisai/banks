@@ -1,0 +1,44 @@
+[Unit]
+Description=Banks RAG API — Banco Central de Chile
+Documentation=file:///opt/banks_rag/docs/DEPLOYMENT_H100.md
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=exec
+User=banks_rag
+Group=banks_rag
+WorkingDirectory=/opt/banks_rag
+EnvironmentFile=/etc/banks_rag.env
+
+ExecStart=/opt/banks_rag/.venv/bin/python -m banks_rag.interface.api.main
+
+# Reinicio automático ante crash (no ante stop manual)
+Restart=on-failure
+RestartSec=10s
+StartLimitIntervalSec=60s
+StartLimitBurst=3
+
+# Output al journal de systemd
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=banks-api
+
+# Límites de recursos
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# CUDA necesita acceso a los dispositivos NVIDIA
+DeviceAllow=/dev/nvidia0 rw
+DeviceAllow=/dev/nvidia1 rw
+DeviceAllow=/dev/nvidiactl rw
+DeviceAllow=/dev/nvidia-uvm rw
+DeviceAllow=/dev/nvidia-uvm-tools rw
+
+# Seguridad básica (no aplica PrivateTmp porque CUDA necesita /tmp)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/banks_rag/logs /opt/banks_rag/data /tmp
+
+[Install]
+WantedBy=multi-user.target
