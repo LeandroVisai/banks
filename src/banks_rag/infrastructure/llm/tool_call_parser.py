@@ -30,6 +30,16 @@ def _new_call_id() -> str:
     return f"call_{uuid.uuid4().hex[:12]}"
 
 
+def _is_registered_tool(name: str) -> bool:
+    """True si ``name`` es una tool registrada. Import perezoso para evitar
+    un ciclo de imports con el paquete de tools."""
+    try:
+        from banks_rag.application.agent.tools.registry import TOOL_REGISTRY
+        return name in TOOL_REGISTRY
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def parse_tool_calls(text: str) -> tuple[list[ToolCall], str]:
     """Extrae ``ToolCall``s del texto generado.
 
@@ -75,10 +85,15 @@ def parse_tool_calls(text: str) -> tuple[list[ToolCall], str]:
             except json.JSONDecodeError:
                 return calls, cleaned
 
+            # El fallback solo acepta el candidato si ``name`` es una tool
+            # realmente registrada: así una respuesta final que casualmente
+            # empiece con `{` o contenga un bloque ```json no se interpreta
+            # por error como tool call (lo que vaciaría la respuesta).
             if (
                 isinstance(payload, dict)
                 and "name" in payload
                 and "arguments" in payload
+                and _is_registered_tool(payload["name"])
             ):
                 calls.append(ToolCall(
                     id=_new_call_id(),

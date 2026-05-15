@@ -5,9 +5,14 @@ Dos modos:
      de palabras clave entre la respuesta y los chunks de contexto.
      Siempre disponible, no requiere dependencias adicionales.
 
+     ADVERTENCIA: el ``faithfulness`` offline es solapamiento léxico (Jaccard).
+     Una respuesta puede repetir el vocabulario del contexto y aun así alucinar
+     cifras o relaciones — el solapamiento no detecta contradicciones. Úsese
+     SOLO como smoke-test, NUNCA como gate de calidad de producción.
+
   2. **RAGAS** (opcional): usa el paquete ``ragas`` si está instalado y se
      provee un LLM compatible. Se activa automáticamente cuando ``use_ragas=True``
-     y el paquete está disponible.
+     y el paquete está disponible. Este es el modo válido para medir calidad.
 
 Uso típico (offline):
     result = evaluate_generation(

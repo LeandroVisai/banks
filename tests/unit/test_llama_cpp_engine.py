@@ -240,7 +240,8 @@ class TestTokenCounting:
         engine, mock_llama = _make_engine(tmp_path)
         mock_llama.tokenize.return_value = list(range(20))
         n = engine.count_tokens(MESSAGES, tools=TOOLS)
-        assert n == 20
+        # 20 tokens crudos × 1.15 de margen por overhead del chat template.
+        assert n == int(20 * 1.15)
         mock_llama.tokenize.assert_called_once()
 
     def test_count_tokens_returns_zero_when_unloaded(self, tmp_path: Path) -> None:

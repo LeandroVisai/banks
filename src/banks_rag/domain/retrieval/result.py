@@ -19,3 +19,9 @@ class SearchResult:
     clean_query: str
     hits: list[dict] = field(default_factory=list)
     parsed_filters: dict | None = None  # snapshot de SearchFilters como dict para serialización
+
+    # Trazabilidad de degradación del retrieval: si el primer recall vino vacío
+    # se relajan filtros y/o se cae al fallback por importancia. Estos campos
+    # permiten al agente avisar que el resultado NO respeta los filtros pedidos.
+    relaxed_filters: list[str] = field(default_factory=list)  # filtros ignorados (ej. ["variables", "sections"])
+    fallback_used: bool = False  # True si se usó date_importance_fallback

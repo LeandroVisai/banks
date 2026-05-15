@@ -59,18 +59,32 @@ def rrf_fuse(
     return ordered
 
 
-def parse_embedding(emb) -> np.ndarray:
-    """pgvector devuelve embeddings como string ``'[0.1,0.2,...]'`` o lista."""
-    if isinstance(emb, str):
-        emb = emb.strip("[]").split(",")
-        return np.array([float(x) for x in emb], dtype=np.float32)
-    return np.asarray(emb, dtype=np.float32)
+def parse_embedding(emb) -> np.ndarray | None:
+    """Parsea un embedding de pgvector (string ``'[0.1,0.2,...]'`` o lista).
+
+    Devuelve ``None`` si el embedding es inválido (vacío, no parseable o con
+    valores no finitos), para que el caller lo descarte en vez de propagar
+    ``NaN``/``inf`` o caer con ``ValueError``.
+    """
+    try:
+        if isinstance(emb, str):
+            tokens = [t for t in emb.strip("[]").split(",") if t.strip()]
+            if not tokens:
+                return None
+            vec = np.array([float(x) for x in tokens], dtype=np.float32)
+        else:
+            vec = np.asarray(emb, dtype=np.float32)
+    except (ValueError, TypeError):
+        return None
+    if vec.size == 0 or not np.isfinite(vec).all():
+        return None
+    return vec
 
 
 def _mmr_score(
     candidate_idx: int,
     cand_vecs: list[np.ndarray],
-    sims_to_query: np.ndarray,
+    relevance: np.ndarray,
     selected_idx: list[int],
     lambda_param: float,
 ) -> float:
@@ -78,7 +92,7 @@ def _mmr_score(
         float(np.dot(cand_vecs[candidate_idx], cand_vecs[selected]))
         for selected in selected_idx
     )
-    return lambda_param * sims_to_query[candidate_idx] - (1 - lambda_param) * max_redundancy
+    return lambda_param * relevance[candidate_idx] - (1 - lambda_param) * max_redundancy
 
 
 def mmr_select(
@@ -98,20 +112,41 @@ def mmr_select(
     if not candidates:
         return []
 
-    cand_vecs = [parse_embedding(c["embedding"]) for c in candidates]
-    sims_to_query = np.array([float(np.dot(query_vec, v)) for v in cand_vecs])
+    # Descarta candidatos con embedding inválido (NaN, vacío, no parseable):
+    # incluirlos rompería el argmax de MMR con comparaciones contra NaN.
+    valid: list[dict] = []
+    cand_vecs: list[np.ndarray] = []
+    for c in candidates:
+        vec = parse_embedding(c.get("embedding"))
+        if vec is not None:
+            valid.append(c)
+            cand_vecs.append(vec)
+    if not valid:
+        return candidates[:k]
+    candidates = valid
+
+    # Relevancia para MMR: usa el ``rrf_score`` ya fusionado (incluye la señal
+    # léxica BM25), normalizado a [0,1]. Cae a la similitud coseno solo si
+    # algún candidato no trae rrf_score (p. ej. viene del fallback por
+    # importancia, que no pasa por rrf_fuse).
+    rrf_scores = [c.get("rrf_score") for c in candidates]
+    if all(s is not None for s in rrf_scores):
+        max_rrf = max(rrf_scores) or 1.0
+        relevance = np.array([float(s) / max_rrf for s in rrf_scores])
+    else:
+        relevance = np.array([float(np.dot(query_vec, v)) for v in cand_vecs])
 
     selected_idx: list[int] = []
     remaining = set(range(len(candidates)))
 
     while len(selected_idx) < k and remaining:
         if not selected_idx:
-            best = max(remaining, key=lambda i: sims_to_query[i])
+            best = max(remaining, key=lambda i: relevance[i])
         else:
             best = max(
                 remaining,
                 key=lambda i: _mmr_score(
-                    i, cand_vecs, sims_to_query, selected_idx, lambda_param
+                    i, cand_vecs, relevance, selected_idx, lambda_param
                 ),
             )
         selected_idx.append(best)
@@ -131,13 +166,21 @@ def doc_year(hit: dict) -> int | None:
     return None
 
 
+_RECENCY_HALF_LIFE_YEARS = 8.0
+
+
 def recency_factor(year: int | None, today_year: int | None = None) -> float:
-    """0.0–1.0 — penaliza 5% por año de antigüedad. Sin año → 0.5 neutral."""
+    """0.0–1.0 — decae con la antigüedad. Sin año → 0.5 neutral.
+
+    Usa decay exponencial (vida media de 8 años) en vez de lineal: así los
+    documentos antiguos conservan un gradiente y no colapsan todos a 0 — un
+    decay lineal de 5%/año igualaba todo lo anterior a ~20 años atrás.
+    """
     if year is None:
         return 0.5
     today_year = today_year if today_year is not None else datetime.date.today().year
-    age = today_year - year
-    return max(0.0, 1.0 - age * 0.05)
+    age = max(0, today_year - year)
+    return float(0.5 ** (age / _RECENCY_HALF_LIFE_YEARS))
 
 
 def importance_boost(

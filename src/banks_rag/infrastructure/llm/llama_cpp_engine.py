@@ -99,6 +99,11 @@ class LlamaCppEngine:
         self._max_tokens = max_tokens
         self._chat_format = chat_format or _detect_chat_format(model_path)
         self._model: Any = None
+        # Una sola instancia del modelo no es concurrente: con n_threads=1
+        # las requests a /v1/chat se serializan en este executor. Es el
+        # comportamiento correcto (evita corromper el estado del modelo),
+        # pero define el techo de throughput — escalar requiere réplicas
+        # del proceso o una cola con back-pressure, no subir n_threads.
         self._executor = ThreadPoolExecutor(
             max_workers=n_threads,
             thread_name_prefix="llama_cpp",
@@ -111,7 +116,7 @@ class LlamaCppEngine:
         """Carga el modelo GGUF en GPU. Idempotente."""
         if self.loaded:
             return
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(self._executor, self._sync_load)
 
     def _sync_load(self) -> None:
@@ -143,7 +148,7 @@ class LlamaCppEngine:
         """Libera el modelo y la VRAM. Idempotente."""
         if not self.loaded:
             return
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(self._executor, self._sync_unload)
 
     def _sync_unload(self) -> None:
@@ -164,7 +169,7 @@ class LlamaCppEngine:
     ) -> GenerationResult:
         if not self.loaded:
             raise RuntimeError(f"Modelo {self.name!r} no cargado. Llama load() primero.")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
             functools.partial(
@@ -237,12 +242,17 @@ class LlamaCppEngine:
 
     # ── Conteo de tokens ──────────────────────────────────────────────────────
 
+    # El chat template real (tokens de rol, separadores, formato de tools)
+    # añade overhead que la concatenación en texto plano no refleja. Se
+    # aplica un margen para no subestimar y arriesgar exceder n_ctx.
+    _CHAT_TEMPLATE_OVERHEAD = 1.15
+
     def count_tokens(
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
     ) -> int:
-        """Cuenta tokens del prompt completo (concatenación texto plano)."""
+        """Estima tokens del prompt completo (concatenación + margen de template)."""
         if not self.loaded or self._model is None:
             return 0
         parts: list[str] = []
@@ -250,7 +260,8 @@ class LlamaCppEngine:
             parts.append(json.dumps(tools, ensure_ascii=False))
         for m in messages:
             parts.append(f"{m.get('role', '')}: {m.get('content', '')}")
-        return self.count_text_tokens("\n".join(parts))
+        raw = self.count_text_tokens("\n".join(parts))
+        return int(raw * self._CHAT_TEMPLATE_OVERHEAD)
 
     def count_text_tokens(self, text: str) -> int:
         """Cuenta tokens de texto plano usando el tokenizer del modelo."""

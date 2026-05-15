@@ -43,3 +43,7 @@ class AgentResult:
     finish_reason: str
     total_tokens: int
     latency_ms: int
+    # Refs [N] que el LLM citó fuera del rango de chunks vistos: señal directa
+    # de alucinación. Se eliminan del texto pero se reportan aquí en vez de
+    # ocultarse, para que la evaluación de faithfulness pueda medirlas.
+    invalid_refs: list[int] = field(default_factory=list)

@@ -294,8 +294,17 @@ BCCh.ChartCard = ChartCard;
 
 BCCh.renderSection = async (section, container) => {
     container.innerHTML = "";
+    container.classList.remove("market-grid", "markets-online");
     if (section.kind === "chat" && BCCh.mountInlineChat) {
         BCCh.mountInlineChat(container);
+        return [];
+    }
+    if (section.kind === "markets" && BCCh.renderMarkets) {
+        BCCh.renderMarkets(section, container);
+        return [];
+    }
+    if (section.kind === "markets-online" && BCCh.renderMarketsOnline) {
+        BCCh.renderMarketsOnline(section, container);
         return [];
     }
     const cards = (section.charts || []).map((c) => new ChartCard(c, container));

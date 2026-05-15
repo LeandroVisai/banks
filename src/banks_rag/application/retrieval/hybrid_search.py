@@ -108,14 +108,16 @@ def _adjust_query_vec_to_db(
 ) -> np.ndarray:
     """Ajusta la dimensión del query vector al de la BD si difieren.
 
-    Trunca si es más grande, padea con ceros si es más chico. Los embeddings
-    están normalizados L2; tras truncado puede no estar normalizado pero el
-    impacto es despreciable en práctica.
+    Trunca si es más grande, padea con ceros si es más chico. Tras truncar
+    se **re-normaliza L2**: truncar un vector normalizado reduce su norma y
+    distorsiona la distancia coseno contra los embeddings de la BD.
     """
     if db_dim is None or query_vec.shape[0] == db_dim:
         return query_vec
     if query_vec.shape[0] > db_dim:
-        return query_vec[:db_dim]
+        truncated = query_vec[:db_dim]
+        norm = np.linalg.norm(truncated)
+        return truncated / norm if norm > 0 else truncated
     return np.pad(query_vec, (0, db_dim - query_vec.shape[0]))
 
 
@@ -215,8 +217,14 @@ def hybrid_search(
             n=recall_n, rrf_k=rrf_k,
         )
 
+    relaxed_filters: list[str] = []
+    fallback_used = False
+
     # Si hay filtros estrictos y no hubo resultados, relajar y reintentar.
     if not fused and filters.has_strict_filters():
+        relaxed_filters = [
+            name for name in ("variables", "sections") if getattr(filters, name)
+        ]
         relaxed = SearchFilters(**{**asdict(filters), "variables": [], "sections": []})
         with repo.connect() as conn:
             fused = _recall_and_fuse(
@@ -238,6 +246,7 @@ def hybrid_search(
 
     # Fallback final: importance + página
     if not fused:
+        fallback_used = True
         with repo.connect() as conn:
             where_sql, where_params = build_filters_sql(
                 filters, docs_table=docs_table, chunks_table=chunks_table,
@@ -267,4 +276,6 @@ def hybrid_search(
         clean_query=parsed.clean_query,
         hits=top,
         parsed_filters=asdict(filters),
+        relaxed_filters=relaxed_filters,
+        fallback_used=fallback_used,
     )

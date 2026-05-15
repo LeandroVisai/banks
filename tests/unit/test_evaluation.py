@@ -117,13 +117,13 @@ class TestEvaluateRetrieval:
         hits = [_chunk("COMUNICADO", "DECISION")]
         r = evaluate_retrieval(hits, expected_doc_types=["COMUNICADO"],
                                expected_sections=["DECISION"], k=5)
-        assert r.recall_at_k == pytest.approx(1.0)
+        assert r.hit_rate_at_k == pytest.approx(1.0)
         assert r.mrr_at_k == pytest.approx(1.0)
         assert r.ndcg_at_k == pytest.approx(1.0)
 
     def test_zero_hits(self) -> None:
         r = evaluate_retrieval([], expected_doc_types=["COMUNICADO"], k=5)
-        assert r.recall_at_k == pytest.approx(0.0)
+        assert r.hit_rate_at_k == pytest.approx(0.0)
         assert r.mrr_at_k == pytest.approx(0.0)
 
     def test_hit_at_rank_3(self) -> None:
@@ -133,7 +133,7 @@ class TestEvaluateRetrieval:
         ]
         r = evaluate_retrieval(hits, expected_doc_types=["COMUNICADO"],
                                expected_sections=["DECISION"], k=5)
-        assert r.recall_at_k == pytest.approx(1.0)
+        assert r.hit_rate_at_k == pytest.approx(1.0)
         assert r.mrr_at_k == pytest.approx(1 / 3)
         assert 3 in r.matched_at
 
@@ -142,7 +142,7 @@ class TestEvaluateRetrieval:
         r = evaluate_retrieval(hits, expected_doc_types=["COMUNICADO"],
                                expected_sections=["DECISION"],
                                min_importance=0.7, k=5)
-        assert r.recall_at_k == pytest.approx(0.0)
+        assert r.hit_rate_at_k == pytest.approx(0.0)
 
     def test_top_k_respected(self) -> None:
         hits = [_chunk("MINUTA")] * 10 + [_chunk("COMUNICADO", "DECISION")]
@@ -159,14 +159,14 @@ class TestAggregate:
         r1 = RetrievalResult("q1", 5, 1.0, 1.0, 1.0, 1, [1])
         r2 = RetrievalResult("q2", 5, 0.0, 0.0, 0.0, 0, [])
         agg = aggregate([r1, r2])
-        assert agg.recall_at_k == pytest.approx(0.5)
+        assert agg.hit_rate_at_k == pytest.approx(0.5)
         assert agg.mrr_at_k == pytest.approx(0.5)
         assert agg.n_queries == 2
 
     def test_empty_list(self) -> None:
         agg = aggregate([])
         assert agg.n_queries == 0
-        assert agg.recall_at_k == pytest.approx(0.0)
+        assert agg.hit_rate_at_k == pytest.approx(0.0)
 
 
 # ── Tests evaluate_sql_routing ────────────────────────────────────────────────
@@ -340,25 +340,25 @@ class TestAggregateGeneration:
 class TestCiGate:
     def test_no_baseline_always_passes(self) -> None:
         from banks_rag.interface.cli.evaluate import _check_ci_gate
-        agg = AggregateMetrics(n_queries=5, recall_at_k=0.0, mrr_at_k=0.0, ndcg_at_k=0.0, k=5)
+        agg = AggregateMetrics(n_queries=5, hit_rate_at_k=0.0, mrr_at_k=0.0, ndcg_at_k=0.0, k=5)
         assert _check_ci_gate(agg, None) is True
 
     def test_no_drop_passes(self) -> None:
         from banks_rag.interface.cli.evaluate import _check_ci_gate
-        baseline = {"retrieval": {"recall_at_k": 0.8}}
-        agg = AggregateMetrics(n_queries=5, recall_at_k=0.8, mrr_at_k=0.0, ndcg_at_k=0.0, k=5)
+        baseline = {"retrieval": {"hit_rate_at_k": 0.8}}
+        agg = AggregateMetrics(n_queries=5, hit_rate_at_k=0.8, mrr_at_k=0.0, ndcg_at_k=0.0, k=5)
         assert _check_ci_gate(agg, baseline) is True
 
     def test_small_drop_passes(self) -> None:
         from banks_rag.interface.cli.evaluate import _check_ci_gate
-        baseline = {"retrieval": {"recall_at_k": 0.8}}
-        agg = AggregateMetrics(n_queries=5, recall_at_k=0.76, mrr_at_k=0.0, ndcg_at_k=0.0, k=5)
+        baseline = {"retrieval": {"hit_rate_at_k": 0.8}}
+        agg = AggregateMetrics(n_queries=5, hit_rate_at_k=0.76, mrr_at_k=0.0, ndcg_at_k=0.0, k=5)
         assert _check_ci_gate(agg, baseline) is True  # 4% < 5%
 
     def test_large_drop_fails(self) -> None:
         from banks_rag.interface.cli.evaluate import _check_ci_gate
-        baseline = {"retrieval": {"recall_at_k": 0.8}}
-        agg = AggregateMetrics(n_queries=5, recall_at_k=0.7, mrr_at_k=0.0, ndcg_at_k=0.0, k=5)
+        baseline = {"retrieval": {"hit_rate_at_k": 0.8}}
+        agg = AggregateMetrics(n_queries=5, hit_rate_at_k=0.7, mrr_at_k=0.0, ndcg_at_k=0.0, k=5)
         assert _check_ci_gate(agg, baseline) is False  # 10% > 5%
 
 
@@ -366,20 +366,20 @@ class TestCiGate:
 class TestBuildReport:
     def test_report_contains_sections(self) -> None:
         from banks_rag.interface.cli.evaluate import _build_report
-        agg = AggregateMetrics(n_queries=10, recall_at_k=0.8, mrr_at_k=0.7, ndcg_at_k=0.75, k=5)
+        agg = AggregateMetrics(n_queries=10, hit_rate_at_k=0.8, mrr_at_k=0.7, ndcg_at_k=0.75, k=5)
         routing = {"accuracy": 0.9, "sql_recall": 0.88, "n_cases": 30}
         gen = {"faithfulness": 0.85, "answer_relevancy": 0.8, "context_precision": 0.9, "n_evaluated": 15}
         report = _build_report(agg, routing, gen, k=5, baseline=None)
-        assert "Recall@5" in report
+        assert "Hit-rate@5" in report
         assert "SQL Routing" in report
         assert "Generation" in report
-        assert "80.0%" in report  # recall
+        assert "80.0%" in report  # hit-rate
 
     def test_report_shows_delta_vs_baseline(self) -> None:
         from banks_rag.interface.cli.evaluate import _build_report
-        agg = AggregateMetrics(n_queries=5, recall_at_k=0.9, mrr_at_k=0.8, ndcg_at_k=0.85, k=5)
+        agg = AggregateMetrics(n_queries=5, hit_rate_at_k=0.9, mrr_at_k=0.8, ndcg_at_k=0.85, k=5)
         routing = {"accuracy": 0.9, "sql_recall": 0.9, "n_cases": 10}
         gen = {"faithfulness": 0.9, "answer_relevancy": 0.9, "context_precision": 0.9, "n_evaluated": 5}
-        baseline = {"retrieval": {"recall_at_k": 0.8, "mrr_at_k": 0.7, "ndcg_at_k": 0.75}}
+        baseline = {"retrieval": {"hit_rate_at_k": 0.8, "mrr_at_k": 0.7, "ndcg_at_k": 0.75}}
         report = _build_report(agg, routing, gen, k=5, baseline=baseline)
         assert "+10.0%" in report  # delta recall 0.9 - 0.8 = +10%

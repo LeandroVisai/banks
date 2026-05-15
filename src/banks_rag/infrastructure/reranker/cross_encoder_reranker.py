@@ -121,7 +121,11 @@ class CrossEncoderReranker:
         chunks: list[dict],
         top_k: int | None = None,
     ) -> list[dict]:
-        """Re-ordena chunks por score cross-encoder. Añade ``reranker_score``."""
+        """Re-ordena chunks por score cross-encoder. Añade ``reranker_score``.
+
+        Si el modelo falla (OOM, par malformado, etc.) se degrada con gracia:
+        devuelve el orden previo recortado a ``top_k`` en vez de tumbar la query.
+        """
         if not chunks:
             return chunks
 
@@ -129,11 +133,16 @@ class CrossEncoderReranker:
             self.load()
 
         pairs = [(query, _extract_text(c)) for c in chunks]
-        scores: list[float] = self._model.predict(
-            pairs,
-            batch_size=self._batch_size,
-            show_progress_bar=False,
-        ).tolist()
+        try:
+            scores: list[float] = self._model.predict(
+                pairs,
+                batch_size=self._batch_size,
+                show_progress_bar=False,
+            ).tolist()
+        except Exception:  # noqa: BLE001
+            log.exception("Reranker falló; se mantiene el orden previo de retrieval")
+            limit = top_k if top_k is not None else len(chunks)
+            return chunks[:limit]
 
         scored = sorted(
             zip(scores, chunks),

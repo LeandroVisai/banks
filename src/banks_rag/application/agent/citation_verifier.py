@@ -20,18 +20,21 @@ from banks_rag.domain.agent import AgentState
 CITATION_RE = re.compile(r"\[(\d+)\]")
 
 
-def verify_citations(response: str, state: AgentState) -> tuple[str, list[int]]:
-    """Limpia citas inválidas y devuelve las usadas efectivamente.
+def verify_citations(response: str, state: AgentState) -> tuple[str, list[int], list[int]]:
+    """Limpia citas inválidas y devuelve las usadas y las inválidas.
 
     Args:
         response: texto generado por el LLM con citas ``[N]``.
         state: estado del agente con ``chunks_seen`` (define el rango válido).
 
     Returns:
-        ``(cleaned_text, used_refs)``. ``used_refs`` está en orden de aparición.
+        ``(cleaned_text, used_refs, invalid_refs)``. ``used_refs`` está en
+        orden de aparición; ``invalid_refs`` son las refs fuera de rango (sin
+        duplicados) — señal de alucinación que el caller debe registrar.
     """
     n_chunks = len(state.chunks_seen)
     used: list[int] = []
+    invalid: list[int] = []
 
     def _replace(m: re.Match) -> str:
         n = int(m.group(1))
@@ -39,9 +42,11 @@ def verify_citations(response: str, state: AgentState) -> tuple[str, list[int]]:
             if n not in used:
                 used.append(n)
             return m.group(0)
+        if n not in invalid:
+            invalid.append(n)
         return ""
 
     cleaned = CITATION_RE.sub(_replace, response)
     cleaned = re.sub(r"\s+([.,;:])", r"\1", cleaned)
     cleaned = re.sub(r" {2,}", " ", cleaned)
-    return cleaned.strip(), used
+    return cleaned.strip(), used, invalid

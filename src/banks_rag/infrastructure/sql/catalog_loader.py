@@ -12,6 +12,7 @@ Funciones públicas:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -20,6 +21,14 @@ from typing import Any
 import yaml
 
 from banks_rag.config.paths import ROOT
+
+# Solo estos tipos de parámetro pasan por una coacción segura en
+# ``_resolve_param``. Cualquier otro tipo permitiría inyectar SQL arbitrario
+# vía la interpolación de ``render_sql`` — se rechaza al cargar el catálogo.
+_ALLOWED_PARAM_TYPES = frozenset({"date", "int"})
+
+# Placeholder con forma de identificador: ``{nombre_param}``.
+_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 @dataclass
@@ -102,21 +111,39 @@ def render_sql(
     sql = entry.sql
     for key, val in resolved.items():
         sql = sql.replace("{" + key + "}", val)
+
+    # Defensa en profundidad: ningún placeholder debe quedar sin resolver.
+    # Uno sin ``ParamSpec`` indicaría un catálogo mal formado y podría
+    # filtrar texto no validado al SQL.
+    leftover = sorted(set(_PLACEHOLDER_RE.findall(sql)))
+    if leftover:
+        raise ValueError(
+            f"Query '{entry.query_id}': placeholders sin resolver {leftover}. "
+            "Cada {placeholder} del SQL debe tener un ParamSpec correspondiente."
+        )
     return sql
 
 
 # ── Internos ──────────────────────────────────────────────────────────────────
 
 def _parse_entry(raw: dict) -> CatalogEntry:
-    params = [
-        ParamSpec(
-            name=p["name"],
-            type=p.get("type", "str"),
-            default=str(p.get("default", "")),
-            description=p.get("description", ""),
+    params = []
+    for p in raw.get("params", []):
+        ptype = p.get("type", "")
+        if ptype not in _ALLOWED_PARAM_TYPES:
+            raise ValueError(
+                f"Query '{raw.get('query_id')}': el parámetro '{p.get('name')}' "
+                f"declara type={ptype!r}. Tipos permitidos: {sorted(_ALLOWED_PARAM_TYPES)}. "
+                "Un tipo no whitelisted permitiría SQL injection vía render_sql."
+            )
+        params.append(
+            ParamSpec(
+                name=p["name"],
+                type=ptype,
+                default=str(p.get("default", "")),
+                description=p.get("description", ""),
+            )
         )
-        for p in raw.get("params", [])
-    ]
     return CatalogEntry(
         query_id=raw["query_id"],
         name=raw["name"],
@@ -143,9 +170,13 @@ def _resolve_param(spec: ParamSpec, raw: str) -> str:
         try:
             return str(int(raw))
         except ValueError:
-            return str(spec.default)
+            raise ValueError(
+                f"Parámetro '{spec.name}': se esperaba un entero, se recibió {raw!r}."
+            ) from None
 
-    return raw
+    # _parse_entry garantiza type ∈ _ALLOWED_PARAM_TYPES; este punto es
+    # inalcanzable salvo regresión — fallar es más seguro que interpolar texto crudo.
+    raise ValueError(f"Tipo de parámetro no soportado: {spec.type!r}")
 
 
 def _resolve_date(raw: str) -> str:
@@ -182,4 +213,7 @@ def _resolve_date(raw: str) -> str:
         date.fromisoformat(raw)
         return raw
     except ValueError:
-        return today.isoformat()
+        raise ValueError(
+            f"Fecha inválida: {raw!r}. Use formato ISO YYYY-MM-DD, "
+            "'hoy', o un offset relativo como '-365d' / '-12m'."
+        ) from None

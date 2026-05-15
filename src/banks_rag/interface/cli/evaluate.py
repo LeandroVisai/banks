@@ -136,7 +136,7 @@ def _build_report(
         "## Retrieval Metrics",
         f"\n| Métrica | Valor | vs Baseline |",
         "|---|---|---|",
-        f"| Recall@{k} | {_format_metric(retrieval_agg.recall_at_k, b_ret.get('recall_at_k'))} | {'—' if not b_ret else ''} |",
+        f"| Hit-rate@{k} | {_format_metric(retrieval_agg.hit_rate_at_k, b_ret.get('hit_rate_at_k'))} | {'—' if not b_ret else ''} |",
         f"| MRR@{k}    | {_format_metric(retrieval_agg.mrr_at_k,    b_ret.get('mrr_at_k'))}    | |",
         f"| nDCG@{k}   | {_format_metric(retrieval_agg.ndcg_at_k,   b_ret.get('ndcg_at_k'))}   | |",
         f"| N queries  | {retrieval_agg.n_queries} | |",
@@ -166,13 +166,13 @@ def _build_report(
 
 
 def _check_ci_gate(retrieval_agg: AggregateMetrics, baseline: dict | None) -> bool:
-    """Devuelve True si pasa el gate CI (recall no cae >5% vs baseline)."""
+    """Devuelve True si pasa el gate CI (hit-rate no cae >5% vs baseline)."""
     if baseline is None:
         return True
-    prev = baseline.get("retrieval", {}).get("recall_at_k", 0.0)
+    prev = baseline.get("retrieval", {}).get("hit_rate_at_k", 0.0)
     if prev == 0.0:
         return True
-    drop = prev - retrieval_agg.recall_at_k
+    drop = prev - retrieval_agg.hit_rate_at_k
     return drop <= _RECALL_DROP_THRESHOLD
 
 
@@ -180,9 +180,9 @@ def _check_ci_gate(retrieval_agg: AggregateMetrics, baseline: dict | None) -> bo
 
 @app.command()
 def retrieval(k: int = typer.Option(5, help="Top-K a evaluar")) -> None:
-    """Métricas de retrieval (recall@k, MRR, nDCG) contra el golden set."""
+    """Métricas de retrieval (hit-rate@k, MRR, nDCG) contra el golden set."""
     agg, _ = _run_retrieval_eval(k)
-    typer.echo(f"Recall@{k}:  {agg.recall_at_k:.1%}")
+    typer.echo(f"Hit-rate@{k}: {agg.hit_rate_at_k:.1%}")
     typer.echo(f"MRR@{k}:     {agg.mrr_at_k:.1%}")
     typer.echo(f"nDCG@{k}:    {agg.ndcg_at_k:.1%}")
     typer.echo(f"N queries: {agg.n_queries}")
@@ -231,7 +231,7 @@ def all(
     typer.echo(f"\nReporte escrito en: {output}")
 
     typer.echo(f"\nRouting accuracy: {routing_metrics['accuracy']:.1%}")
-    typer.echo(f"Recall@{k}: {retrieval_agg.recall_at_k:.1%}")
+    typer.echo(f"Hit-rate@{k}: {retrieval_agg.hit_rate_at_k:.1%}")
 
     if update_baseline:
         _save_baseline({

@@ -1,13 +1,18 @@
 """Métricas de recuperación para el pipeline RAG.
 
-Implementa recall@k, MRR@k y nDCG@k sobre resultados de hybrid_search.
+Implementa hit-rate@k, MRR@k y nDCG@k sobre resultados de hybrid_search.
 Diseñado para correr offline contra el golden set en ``data/golden_set/``.
+
+Nota sobre ``hit_rate_at_k``: es 1.0 si hay al menos un chunk relevante en el
+top-k y 0.0 si no — NO es recall (fracción de relevantes recuperada), porque
+el golden set no enumera los chunk_ids relevantes. Se renombró desde
+``recall_at_k`` para que el gate de CI no sugiera más de lo que mide.
 
 Uso mínimo:
     hits = hybrid_search("query", ...)
     result = evaluate_retrieval(hits, expected_doc_types=["COMUNICADO"],
                                 expected_sections=["DECISION"])
-    print(result.recall_at_k)
+    print(result.hit_rate_at_k)
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ class RetrievalResult:
 
     query: str
     k: int
-    recall_at_k: float
+    hit_rate_at_k: float
     mrr_at_k: float
     ndcg_at_k: float
     hits_count: int
@@ -42,7 +47,7 @@ class AggregateMetrics:
     """Métricas agregadas sobre todos los casos del golden set."""
 
     n_queries: int
-    recall_at_k: float
+    hit_rate_at_k: float
     mrr_at_k: float
     ndcg_at_k: float
     k: int
@@ -84,7 +89,7 @@ def evaluate_retrieval(
         k: tamaño del ranking evaluado; si None usa len(hits).
 
     Returns:
-        ``RetrievalResult`` con recall, MRR y nDCG.
+        ``RetrievalResult`` con hit-rate, MRR y nDCG.
     """
     doc_types = expected_doc_types or []
     sections = expected_sections or []
@@ -102,14 +107,14 @@ def evaluate_retrieval(
         if rel:
             matched_at.append(rank)
 
-    recall = min(1.0, sum(relevances))  # al menos 1 hit relevante = recall 1
+    hit_rate = min(1.0, sum(relevances))  # 1.0 si hay ≥1 chunk relevante en top-k
     mrr = _mrr(relevances)
     ndcg = _ndcg(relevances)
 
     return RetrievalResult(
         query=query,
         k=actual_k,
-        recall_at_k=recall,
+        hit_rate_at_k=hit_rate,
         mrr_at_k=mrr,
         ndcg_at_k=ndcg,
         hits_count=len(hits_to_eval),
@@ -134,11 +139,11 @@ def _ndcg(relevances: list[int]) -> float:
 def aggregate(results: list[RetrievalResult]) -> AggregateMetrics:
     """Calcula métricas promedio sobre una lista de RetrievalResult."""
     if not results:
-        return AggregateMetrics(n_queries=0, recall_at_k=0.0, mrr_at_k=0.0, ndcg_at_k=0.0, k=0)
+        return AggregateMetrics(n_queries=0, hit_rate_at_k=0.0, mrr_at_k=0.0, ndcg_at_k=0.0, k=0)
     n = len(results)
     return AggregateMetrics(
         n_queries=n,
-        recall_at_k=sum(r.recall_at_k for r in results) / n,
+        hit_rate_at_k=sum(r.hit_rate_at_k for r in results) / n,
         mrr_at_k=sum(r.mrr_at_k for r in results) / n,
         ndcg_at_k=sum(r.ndcg_at_k for r in results) / n,
         k=results[0].k,

@@ -152,4 +152,9 @@ def route_query(query: str) -> RouteDecision:
 
 
 def _count_matches(pattern: re.Pattern, text: str) -> int:
-    return len(pattern.findall(text))
+    """Cuenta señales *distintas* que matchean, no ocurrencias totales.
+
+    Usar coincidencias únicas evita que repetir una misma palabra infle el
+    score de routing (p. ej. "tasa tasa tasa" valdría como una sola señal).
+    """
+    return len({m.group(0).lower() for m in pattern.finditer(text)})

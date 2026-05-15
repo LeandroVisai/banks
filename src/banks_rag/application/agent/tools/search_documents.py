@@ -190,7 +190,7 @@ async def search_documents(
         ref = state.add_chunk(chunk)
         results.append(_format_chunk(chunk, ref))
 
-    return {
+    response: dict[str, Any] = {
         "results": results,
         "n_results": len(results),
         "filters_applied": {
@@ -200,3 +200,22 @@ async def search_documents(
             "date_to": date_to,
         },
     }
+
+    # Avisa al agente si el retrieval tuvo que degradarse: los resultados
+    # NO respetan plenamente los filtros pedidos y debe advertirlo al usuario.
+    if search_result.relaxed_filters:
+        response["filters_relaxed"] = search_result.relaxed_filters
+        response["warning"] = (
+            "Sin resultados con los filtros estrictos; se ignoraron "
+            f"{search_result.relaxed_filters}. Advierte al usuario que la "
+            "respuesta puede no ceñirse a esos filtros."
+        )
+    if search_result.fallback_used:
+        response["fallback_used"] = True
+        response["warning"] = (
+            "Sin resultados por relevancia; se devolvieron fragmentos por "
+            "importancia general. Advierte al usuario que la respuesta "
+            "puede no ser específica a la consulta."
+        )
+
+    return response

@@ -20,6 +20,28 @@ const AGENTE_GOEM = {
     charts: [],
 };
 
+// ── MERCADOS (terminal Bloomberg-dense) ─────────────────────────────────
+
+const MERCADOS = {
+    id: "mercados",
+    title: "Mercados",
+    subtitle: "Monitor denso de mercados Chile y externos · 6 paneles",
+    group: "Inicio",
+    kind: "markets",
+    charts: [],
+};
+
+// ── MERCADOS EN LÍNEA (vista retail estilo LarrainVial) ─────────────────
+
+const MERCADOS_ONLINE = {
+    id: "mercados_online",
+    title: "Mercados en Línea",
+    subtitle: "Índices, acciones, monedas, commodities, tasas e indicadores",
+    group: "Inicio",
+    kind: "markets-online",
+    charts: [],
+};
+
 // ── OVERVIEW ─────────────────────────────────────────────────────────────
 
 const OVERVIEW = {
@@ -419,12 +441,14 @@ const S16 = {
 BCCh.SECTIONS = [
     AGENTE_GOEM,
     OVERVIEW,
+    MERCADOS,
+    MERCADOS_ONLINE,
     S1, S2, S3, S4, S5, S6, S7,
     S8, S9, S10, S11, S12, S13, S14, S15, S16,
 ];
 
 BCCh.SECTION_GROUPS = [
-    { id: "inicio",      label: "Inicio",      ids: ["agente_goem", "overview"] },
+    { id: "inicio",      label: "Inicio",      ids: ["agente_goem", "overview", "mercados", "mercados_online"] },
     { id: "mercado",     label: "Mercado",     ids: ["s1","s2","s3","s4","s5","s6","s7"] },
     { id: "portafolios", label: "Portafolios", ids: ["s8","s9","s10","s11","s12","s13","s14","s15","s16"] },
 ];

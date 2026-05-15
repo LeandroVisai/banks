@@ -171,8 +171,10 @@ class TestResolveDate:
     def test_iso_passthrough(self) -> None:
         assert _resolve_date("2023-06-15") == "2023-06-15"
 
-    def test_invalid_falls_back_to_today(self) -> None:
-        assert _resolve_date("garbage") == date.today().isoformat()
+    def test_invalid_date_raises(self) -> None:
+        # Una fecha inválida debe fallar ruidosamente, no enmascararse como hoy.
+        with pytest.raises(ValueError):
+            _resolve_date("garbage")
 
 
 # ── Tests discover_query (tool) ───────────────────────────────────────────────

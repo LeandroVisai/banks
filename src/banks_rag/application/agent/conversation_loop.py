@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_MAX_ITERATIONS = 6
 DEFAULT_MAX_TOOL_RESULT_TOKENS = 1500
+DEFAULT_TOOL_TIMEOUT_S = 30.0
 
 
 def _serialize_tool_result(result: Any) -> str:
@@ -55,14 +56,81 @@ def _summarize(result: Any) -> str:
     return "ok"
 
 
-def _truncate_to_token_budget(text: str, budget: int, count_tokens) -> str:
-    """Si el texto supera el budget, lo recorta proporcionalmente por chars."""
-    n = count_tokens(text)
-    if n <= budget:
-        return text
-    ratio = budget / max(n, 1)
-    cutoff = int(len(text) * ratio * 0.95)
-    return text[:cutoff] + "\n\n[...truncated...]"
+_TEXT_KEYS = ("text", "content", "chunk_text", "snippet", "visual_caption")
+_TRUNCABLE_LIST_HINT = ("results", "rows", "chunks", "series", "documents", "items", "hits")
+
+
+def _clip_str(value: Any, max_chars: int) -> Any:
+    if isinstance(value, str) and len(value) > max_chars:
+        return value[:max_chars] + "…"
+    return value
+
+
+def _shrink_texts(obj: Any, text_max: int) -> Any:
+    """Recorta recursivamente los campos de texto largos de una estructura."""
+    if isinstance(obj, dict):
+        return {
+            k: (_clip_str(v, text_max) if k in _TEXT_KEYS else _shrink_texts(v, text_max))
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_shrink_texts(x, text_max) for x in obj]
+    return obj
+
+
+def _longest_list_key(d: dict) -> str | None:
+    """Clave de la lista más larga del dict — candidata a recortar."""
+    best, best_len = None, 1
+    for k, v in d.items():
+        if isinstance(v, list) and len(v) > best_len:
+            best, best_len = k, len(v)
+    if best is not None:
+        return best
+    # Si ninguna lista supera 1 elemento, prioriza una clave-hint si existe.
+    for k in _TRUNCABLE_LIST_HINT:
+        if isinstance(d.get(k), list):
+            return k
+    return None
+
+
+def _truncate_tool_result(result: Any, budget: int, count_tokens) -> str:
+    """Serializa el resultado de una tool recortándolo al budget de tokens.
+
+    Trunca a nivel de estructura — acorta campos de texto largos y reduce el
+    número de elementos de las listas, luego re-serializa — de modo que el
+    string entregado al LLM **siempre es JSON válido** (a diferencia de un
+    corte ciego del string, que partiría el JSON a la mitad).
+    """
+    serialized = _serialize_tool_result(result)
+    if count_tokens(serialized) <= budget:
+        return serialized
+
+    if not isinstance(result, dict):
+        # No estructurado: corte por chars como último recurso.
+        ratio = budget / max(count_tokens(serialized), 1)
+        cutoff = int(len(serialized) * ratio * 0.9)
+        return serialized[:cutoff] + " […truncado…]"
+
+    work = dict(result)
+    list_key = _longest_list_key(work)
+    text_max = 800
+    for _ in range(8):
+        work = _shrink_texts(work, text_max)
+        if list_key and isinstance(work.get(list_key), list) and len(work[list_key]) > 1:
+            keep = max(1, len(work[list_key]) // 2)
+            work[list_key] = work[list_key][:keep]
+        work["truncated"] = True
+        candidate = _serialize_tool_result(work)
+        if count_tokens(candidate) <= budget:
+            return candidate
+        text_max = max(120, text_max // 2)
+
+    # Último recurso: conserva solo escalares + nota; serializa garantizado.
+    return _serialize_tool_result({
+        "truncated": True,
+        "truncated_note": "Resultado demasiado grande; se omitió el detalle.",
+        **{k: v for k, v in result.items() if not isinstance(v, (list, dict, str))},
+    })
 
 
 def _format_chunks_seen(state: AgentState) -> list[dict]:
@@ -89,6 +157,7 @@ async def run_agent(
     llm,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     max_tool_result_tokens: int = DEFAULT_MAX_TOOL_RESULT_TOKENS,
+    tool_timeout_s: float = DEFAULT_TOOL_TIMEOUT_S,
     temperature: float | None = None,
     max_tokens: int | None = None,
     system_prompt: str = SYSTEM_PROMPT,
@@ -101,6 +170,9 @@ async def run_agent(
         llm: motor LLM que cumple ``LLMEngine`` Protocol.
         max_iterations: hard cap de iteraciones LLM↔tools.
         max_tool_result_tokens: cap por resultado de tool antes de inyectarlo al contexto.
+        tool_timeout_s: tiempo límite por tool; al excederlo se devuelve un error
+            estructurado y el turno continúa (evita que una tool colgada bloquee
+            el worker indefinidamente).
         temperature, max_tokens: overrides para el LLM.
         system_prompt: override del system prompt (default: el de prompts.py).
     """
@@ -117,15 +189,28 @@ async def run_agent(
     total_tokens = 0
     final_text = ""
     finish_reason = "stop"
-    hit_max = False
 
     while iteration < max_iterations:
         iteration += 1
-        log.info("agent iteration %d/%d", iteration, max_iterations)
+        # En la última iteración no se ofrecen tools: se fuerza una respuesta
+        # final con la evidencia ya reunida, en vez de ejecutar tool calls
+        # cuyos resultados ya no podrían sintetizarse.
+        is_last = iteration == max_iterations
+        tools_arg = None if is_last else TOOL_SCHEMAS
+
+        # Observabilidad de contexto: tamaño aproximado del prompt por iteración.
+        prompt_tokens = (
+            llm.count_tokens(messages, tools_arg)
+            if hasattr(llm, "count_tokens") else 0
+        )
+        log.info(
+            "agent iteration %d/%d — prompt ≈%d tokens",
+            iteration, max_iterations, prompt_tokens,
+        )
 
         result = await llm.generate(
             messages,
-            tools=TOOL_SCHEMAS,
+            tools=tools_arg,
             temperature=temperature,
             max_tokens=max_tokens,
         )
@@ -137,29 +222,69 @@ async def run_agent(
             log.info("agent done at iter %d (no more tool calls)", iteration)
             break
 
+        if is_last:
+            # El LLM aún pidió tools pero ya no quedan iteraciones: se usa su
+            # texto (o el fallback) en vez de descartar el turno.
+            log.warning(
+                "agent agotó %d iteraciones; se fuerza la respuesta final",
+                max_iterations,
+            )
+            final_text = result.text or MAX_ITERATIONS_FALLBACK_MESSAGE
+            finish_reason = "max_iterations"
+            break
+
         log.info(
             "agent iter %d: %d tool call(s) %s",
             iteration, len(result.tool_calls), [tc.name for tc in result.tool_calls],
         )
 
+        # Deduplica tool calls idénticas de la misma iteración: el LLM a veces
+        # emite la misma búsqueda varias veces; ejecutarlas todas solo amplifica
+        # la carga (N conexiones a Postgres, N cargas del embedder).
+        unique_calls = []
+        seen_calls: set[tuple] = set()
+        for tc in result.tool_calls:
+            key = (tc.name, json.dumps(tc.arguments, sort_keys=True, default=str))
+            if key not in seen_calls:
+                seen_calls.add(key)
+                unique_calls.append(tc)
+
         # Mensaje del assistant con los tool_calls.
         messages.append({
             "role": "assistant",
             "content": result.text or "",
-            "tool_calls": [tc.to_message_block() for tc in result.tool_calls],
+            "tool_calls": [tc.to_message_block() for tc in unique_calls],
         })
 
-        # Ejecutar tools en paralelo.
+        # Ejecutar tools en paralelo, cada una con timeout propio.
+        # _run_one nunca lanza: captura timeout y excepciones devolviéndolas
+        # como dict de error, de modo que una tool defectuosa no aborta el
+        # gather ni descarta los resultados de las demás.
         async def _run_one(tc):
-            tool_result, duration_ms = await dispatch(state, tc.name, tc.arguments)
-            return tc, tool_result, duration_ms
+            t0_tool = time.perf_counter()
+            try:
+                tool_result, duration_ms = await asyncio.wait_for(
+                    dispatch(state, tc.name, tc.arguments),
+                    timeout=tool_timeout_s,
+                )
+                return tc, tool_result, duration_ms
+            except asyncio.TimeoutError:
+                duration_ms = int((time.perf_counter() - t0_tool) * 1000)
+                log.warning("tool %s excedió el timeout de %.0fs", tc.name, tool_timeout_s)
+                return tc, {
+                    "error": f"La herramienta '{tc.name}' excedió el tiempo límite "
+                             f"({tool_timeout_s:.0f}s) y fue cancelada.",
+                }, duration_ms
+            except Exception as exc:  # noqa: BLE001
+                duration_ms = int((time.perf_counter() - t0_tool) * 1000)
+                log.exception("tool %s lanzó una excepción no controlada", tc.name)
+                return tc, {"error": f"Error inesperado en '{tc.name}': {exc}"}, duration_ms
 
-        executions = await asyncio.gather(*(_run_one(tc) for tc in result.tool_calls))
+        executions = await asyncio.gather(*(_run_one(tc) for tc in unique_calls))
 
         for tc, tool_result, duration_ms in executions:
-            content_str = _serialize_tool_result(tool_result)
-            content_str = _truncate_to_token_budget(
-                content_str, max_tool_result_tokens, llm.count_text_tokens,
+            content_str = _truncate_tool_result(
+                tool_result, max_tool_result_tokens, llm.count_text_tokens,
             )
 
             messages.append({
@@ -177,15 +302,15 @@ async def run_agent(
                 result_size_chars=len(content_str),
                 duration_ms=duration_ms,
             )
-    else:
-        hit_max = True
 
-    if hit_max:
-        log.warning("agent hit max_iterations=%d without finalizing", max_iterations)
-        final_text = MAX_ITERATIONS_FALLBACK_MESSAGE
-        finish_reason = "max_iterations"
-
-    cleaned_response, cited_refs = verify_citations(final_text, state)
+    # La última iteración siempre produce final_text (respuesta directa o
+    # forzada sin tools), así que el loop nunca termina sin respuesta.
+    cleaned_response, cited_refs, invalid_refs = verify_citations(final_text, state)
+    if invalid_refs:
+        log.warning(
+            "agente citó %d ref(s) inválida(s) %s — posible alucinación",
+            len(invalid_refs), invalid_refs,
+        )
 
     return AgentResult(
         response=cleaned_response,
@@ -197,4 +322,5 @@ async def run_agent(
         finish_reason=finish_reason,
         total_tokens=total_tokens,
         latency_ms=int((time.perf_counter() - t0) * 1000),
+        invalid_refs=invalid_refs,
     )

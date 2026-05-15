@@ -17,6 +17,7 @@ El ``clean_query`` removueve los tokens consumidos por filtros.
 from __future__ import annotations
 
 import re
+from datetime import date
 
 from banks_rag.domain.retrieval import ParsedQuery, SearchFilters
 from banks_rag.domain_knowledge.taxonomy import (
@@ -85,6 +86,19 @@ DOC_TYPE_HINTS: dict[str, list[str]] = {
 }
 
 
+def _is_real_date(year: int, month: int, day: int) -> bool:
+    """True si (year, month, day) es una fecha de calendario válida.
+
+    Rechaza combinaciones imposibles como el 31 de febrero, que un chequeo
+    de rango día∈[1,31]/mes∈[1,12] dejaría pasar.
+    """
+    try:
+        date(year, month, day)
+        return True
+    except ValueError:
+        return False
+
+
 def parse_query(query: str) -> ParsedQuery:
     """Parsea una query en NL extrayendo filtros y devolviendo ``ParsedQuery``.
 
@@ -102,7 +116,7 @@ def parse_query(query: str) -> ParsedQuery:
     if fm:
         d_val, m_name, y_val = int(fm.group(1)), fm.group(2), int(fm.group(3))
         m_val = MONTH_NAMES.get(m_name)
-        if m_val and 1 <= d_val <= 31:
+        if m_val and _is_real_date(y_val, m_val, d_val):
             filters.day = d_val
             filters.month = m_val
             filters.year_from = y_val
@@ -114,7 +128,7 @@ def parse_query(query: str) -> ParsedQuery:
         fm = FULL_DATE_YMD_RE.search(norm)
         if fm:
             y_val, m_val, d_val = int(fm.group(1)), int(fm.group(2)), int(fm.group(3))
-            if 1 <= m_val <= 12 and 1 <= d_val <= 31:
+            if _is_real_date(y_val, m_val, d_val):
                 filters.day = d_val
                 filters.month = m_val
                 filters.year_from = y_val
@@ -128,7 +142,7 @@ def parse_query(query: str) -> ParsedQuery:
             d_val, m_val = int(fm.group(1)), int(fm.group(2))
             y_str = fm.group(3)
             y_val = int(y_str) if len(y_str) == 4 else 2000 + int(y_str)
-            if 1 <= m_val <= 12 and 1 <= d_val <= 31:
+            if _is_real_date(y_val, m_val, d_val):
                 filters.day = d_val
                 filters.month = m_val
                 filters.year_from = y_val

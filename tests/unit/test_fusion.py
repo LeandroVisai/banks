@@ -121,12 +121,19 @@ class TestRecencyFactor:
     def test_current_year_is_max(self) -> None:
         assert recency_factor(2024, today_year=2024) == 1.0
 
-    def test_decay_per_year(self) -> None:
-        # 5% por año
-        assert recency_factor(2020, today_year=2024) == pytest.approx(0.80, abs=0.001)
+    def test_exponential_decay(self) -> None:
+        # Decay exponencial con vida media de 8 años: a 4 años → 0.5**0.5.
+        assert recency_factor(2020, today_year=2024) == pytest.approx(0.7071, abs=0.001)
+        # A una vida media exacta (8 años) → 0.5.
+        assert recency_factor(2016, today_year=2024) == pytest.approx(0.5, abs=0.001)
 
-    def test_floors_at_zero(self) -> None:
-        assert recency_factor(1900, today_year=2024) == 0.0
+    def test_old_docs_decay_near_zero_but_keep_gradient(self) -> None:
+        # Documentos muy antiguos tienden a 0 pero conservan gradiente
+        # (a diferencia del decay lineal, que colapsaba todo a 0 exacto).
+        v1900 = recency_factor(1900, today_year=2024)
+        v1950 = recency_factor(1950, today_year=2024)
+        assert v1900 < 0.001
+        assert v1950 > v1900  # más reciente ⇒ mayor score, no empate en 0
 
     def test_no_year_neutral(self) -> None:
         assert recency_factor(None) == 0.5

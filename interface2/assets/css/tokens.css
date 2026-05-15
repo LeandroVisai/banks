@@ -99,6 +99,31 @@
     --transition-fast: 0.15s ease;
     --transition:      0.22s cubic-bezier(0.4, 0, 0.2, 1);
 
+    /* ── Semánticos de mercado (Bloomberg-dense, paleta cálida BCCh) ── */
+    --c-up:           #4F8C5D;
+    --c-up-soft:      rgba(79, 140, 93, 0.10);
+    --c-up-tint:      #eaf3ec;
+    --c-down:         #B23A2E;
+    --c-down-soft:    rgba(178, 58, 46, 0.10);
+    --c-down-tint:    #f6e9e7;
+    --c-flat:         #8a8478;
+    --c-flat-soft:    rgba(138, 132, 120, 0.10);
+
+    /* Header de panel + zebra rows */
+    --mkt-header-bg:    #1f2a3a;
+    --mkt-header-fg:    var(--c-gold);
+    --mkt-row-hover:    var(--c-gold-tint);
+    --mkt-row-stripe:   rgba(0, 0, 0, 0.018);
+    --mkt-grid-line:    rgba(0, 0, 0, 0.05);
+
+    /* Densidad */
+    --pad-row-y:        4px;
+    --pad-row-x:        8px;
+    --pad-panel:        8px;
+    --gap-panel:        10px;
+    --spark-w:          64px;
+    --spark-h:          20px;
+
     /* ── Paleta de gráficos (ApexCharts categorical) ── */
     --chart-1: #BF9C69;
     --chart-2: #001730;

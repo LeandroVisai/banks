@@ -223,6 +223,41 @@ html, body {
     .chart-grid { grid-template-columns: 1fr; }
 }
 
+/* ── Markets grid (sección Mercados, Bloomberg-dense) ──────────────── */
+.market-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-rows: min-content;
+    align-items: start;
+    gap: var(--gap-panel);
+}
+@media (max-width: 1240px) {
+    .market-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .market-panel--span2 { grid-column: span 2; }
+}
+@media (max-width: 900px) {
+    .market-grid { grid-template-columns: 1fr; }
+    .market-panel--span2 { grid-column: span 1; }
+}
+
+/* ── Mercados en Línea (vista retail LarrainVial) ──────────────────── */
+.markets-online {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-auto-rows: min-content;
+    align-items: start;
+    gap: var(--gap-panel);
+}
+.markets-online .mo-cell--hero { grid-column: span 3; }
+@media (max-width: 1240px) {
+    .markets-online { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .markets-online .mo-cell--hero { grid-column: span 2; }
+}
+@media (max-width: 900px) {
+    .markets-online { grid-template-columns: 1fr; }
+    .markets-online .mo-cell--hero { grid-column: span 1; }
+}
+
 /* ── FOOTER ──────────────────────────────────────────────────────────── */
 
 .footer {
