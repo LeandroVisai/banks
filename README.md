@@ -82,6 +82,22 @@ curl http://localhost:8080/v1/search \
   -d '{"query": "TPM actual", "k": 5}'
 ```
 
+### Frontend (interface2)
+
+`interface2/` es un dashboard estático (HTML + JS + ApexCharts) que la API monta en `/`. **Mismo origen que el backend** — abrir directamente `http://localhost:8080/`, no servir aparte.
+
+```bash
+# Con el paquete instalado (pip install -e ".[api]")
+python -m banks_rag.interface.api.main
+
+# Sin instalar (sandbox/dev rápido)
+PYTHONPATH=src python3 -m banks_rag.interface.api.main
+```
+
+Notas:
+- La pill superior derecha pasa por `SIN CONEXIÓN → LLM CARGANDO → OK` mientras `llama-cpp` carga. Los charts del catálogo no esperan al LLM; sólo el panel "Agente IA" sí.
+- Los charts usan `/v1/query/{query_id}` (DuckDB sobre parquets) y los KPIs son hardcoded en `kpi.js` — no requieren PostgreSQL para renderizar.
+
 ### Evaluación
 
 ```bash
