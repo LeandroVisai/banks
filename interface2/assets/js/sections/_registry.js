@@ -9,6 +9,17 @@ window.BCCh = window.BCCh || {};
 const catalog = (query_id, opts = {}) => ({ type: "catalog", query_id, ...opts });
 const mock    = (seed = 42, opts = {}) => ({ type: "mock", seed, ...opts });
 
+// ── AGENTE GOEM (chat embebido) ──────────────────────────────────────────
+
+const AGENTE_GOEM = {
+    id: "agente_goem",
+    title: "Agente GOEM",
+    subtitle: "Conversa con el agente sobre el corpus BCCh y el catálogo SQL",
+    group: "Inicio",
+    kind: "chat",
+    charts: [],
+};
+
 // ── OVERVIEW ─────────────────────────────────────────────────────────────
 
 const OVERVIEW = {
@@ -406,13 +417,14 @@ const S16 = {
 // ── Export ───────────────────────────────────────────────────────────────
 
 BCCh.SECTIONS = [
+    AGENTE_GOEM,
     OVERVIEW,
     S1, S2, S3, S4, S5, S6, S7,
     S8, S9, S10, S11, S12, S13, S14, S15, S16,
 ];
 
 BCCh.SECTION_GROUPS = [
-    { id: "inicio",      label: "Inicio",      ids: ["overview"] },
+    { id: "inicio",      label: "Inicio",      ids: ["agente_goem", "overview"] },
     { id: "mercado",     label: "Mercado",     ids: ["s1","s2","s3","s4","s5","s6","s7"] },
     { id: "portafolios", label: "Portafolios", ids: ["s8","s9","s10","s11","s12","s13","s14","s15","s16"] },
 ];

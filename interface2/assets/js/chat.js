@@ -1,5 +1,7 @@
 /* ─────────────────────────────────────────────────────────────────────────
-   CHAT PANEL — agente IA lateral colapsable. Conecta a /v1/chat.
+   CHAT — agente IA. Dos vistas comparten ChatController:
+     • ChatPanel        → panel lateral colapsable (HTML estático en index.html)
+     • mountInlineChat  → vista full-width embebida en sección "Agente GOEM"
    ───────────────────────────────────────────────────────────────────── */
 "use strict";
 
@@ -31,28 +33,21 @@ const ROUTE_CLASSES = {
     visual: "route-pill--visual",
 };
 
-class ChatPanel {
-    constructor() {
-        this.panel    = $("#chat-panel");
-        this.toggle   = $("#chat-toggle");
-        this.close    = $("#chat-close");
-        this.messages = $("#chat-messages");
-        this.form     = $("#chat-form");
-        this.input    = $("#chat-input");
-        this.send     = this.form.querySelector(".chat-input-send");
-        this.suggestionsEl = $("#chat-suggestions");
+class ChatController {
+    constructor({ messages, form, input, sendBtn, suggestions }) {
+        this.messages = messages;
+        this.form = form;
+        this.input = input;
+        this.send = sendBtn;
+        this.suggestionsEl = suggestions;
 
-        this.history = [];   // [{role, content}]
-        this.open    = localStorage.getItem("bcch_chat_open") === "true";
+        this.history = [];
 
-        this._bindEvents();
+        this._bindForm();
         this._renderSuggestions();
-        this._applyOpenState();
     }
 
-    _bindEvents() {
-        this.toggle.addEventListener("click", () => this.setOpen(!this.open));
-        this.close.addEventListener("click",  () => this.setOpen(false));
+    _bindForm() {
         this.form.addEventListener("submit", (e) => {
             e.preventDefault();
             const msg = this.input.value.trim();
@@ -60,20 +55,8 @@ class ChatPanel {
         });
     }
 
-    _applyOpenState() {
-        this.panel.dataset.open = String(this.open);
-        document.body.dataset.chatOpen = String(this.open);
-        this.toggle.dataset.active = String(this.open);
-        localStorage.setItem("bcch_chat_open", String(this.open));
-    }
-
-    setOpen(value) {
-        this.open = value;
-        this._applyOpenState();
-        if (value) setTimeout(() => this.input.focus(), 250);
-    }
-
     _renderSuggestions() {
+        if (!this.suggestionsEl) return;
         this.suggestionsEl.innerHTML = "";
         SUGGESTIONS.forEach((q) => {
             this.suggestionsEl.appendChild(h("button", {
@@ -84,16 +67,13 @@ class ChatPanel {
     }
 
     async ask(message) {
-        // Limpia empty state
         const empty = this.messages.querySelector(".chat-empty");
         if (empty) empty.remove();
 
-        // Renderiza mensaje user
         this._appendUserMsg(message);
         this.input.value = "";
-        this.send.disabled = true;
+        if (this.send) this.send.disabled = true;
 
-        // Loading multi-step
         const loadingEl = this._appendLoading();
 
         try {
@@ -106,12 +86,11 @@ class ChatPanel {
 
             loadingEl.remove();
             this._appendAssistantMsg(data, elapsed);
-
         } catch (e) {
             loadingEl.remove();
             this._appendError(e);
         } finally {
-            this.send.disabled = false;
+            if (this.send) this.send.disabled = false;
             this._scrollToBottom();
         }
     }
@@ -133,7 +112,6 @@ class ChatPanel {
         const chunksSeen = data.chunks_seen || [];
         const seriesUsed = data.series_used || [];
 
-        // Determinar route a partir de tool_trace (si execute_query → sql, search → rag)
         let route = "rag";
         if (data.tool_trace?.some((t) => t.tool === "execute_query")) route = "sql";
 
@@ -151,7 +129,6 @@ class ChatPanel {
             meta,
         ]);
 
-        // Sources
         const sources = this._buildSources(citedRefs, chunksSeen, seriesUsed);
         if (sources) msg.appendChild(sources);
 
@@ -215,7 +192,6 @@ class ChatPanel {
         this.messages.appendChild(el);
         this._scrollToBottom();
 
-        // Avance automático cada 1.5s para feedback (no real, sólo UX)
         let idx = 0;
         const interval = setInterval(() => {
             const s = stepEls[idx];
@@ -230,7 +206,6 @@ class ChatPanel {
             }
         }, 1500);
 
-        el._interval = interval;
         const origRemove = el.remove.bind(el);
         el.remove = () => {
             clearInterval(interval);
@@ -259,7 +234,6 @@ class ChatPanel {
     }
 
     _markdown(text) {
-        // Markdown mínimo: párrafos, **bold**, `code`, [n] refs
         if (!text) return "";
         const escape = (s) => s
             .replace(/&/g, "&amp;")
@@ -275,5 +249,74 @@ class ChatPanel {
     }
 }
 
+class ChatPanel {
+    constructor() {
+        this.panel    = $("#chat-panel");
+        this.toggle   = $("#chat-toggle");
+        this.close    = $("#chat-close");
+        this.open     = localStorage.getItem("bcch_chat_open") === "true";
+
+        const form = $("#chat-form");
+        this.controller = new ChatController({
+            messages:    $("#chat-messages"),
+            form,
+            input:       $("#chat-input"),
+            sendBtn:     form.querySelector(".chat-input-send"),
+            suggestions: $("#chat-suggestions"),
+        });
+
+        this.toggle.addEventListener("click", () => this.setOpen(!this.open));
+        this.close.addEventListener("click",  () => this.setOpen(false));
+        this._applyOpenState();
+    }
+
+    _applyOpenState() {
+        this.panel.dataset.open = String(this.open);
+        document.body.dataset.chatOpen = String(this.open);
+        this.toggle.dataset.active = String(this.open);
+        localStorage.setItem("bcch_chat_open", String(this.open));
+    }
+
+    setOpen(value) {
+        this.open = value;
+        this._applyOpenState();
+        if (value) setTimeout(() => this.controller.input.focus(), 250);
+    }
+}
+
+BCCh.mountInlineChat = (container) => {
+    container.innerHTML = "";
+
+    const suggestions = h("div", { "class": "chat-suggestions" });
+    const empty = h("div", { "class": "chat-empty" }, [
+        h("div", { "class": "chat-empty-icon" }, "◈"),
+        h("div", { "class": "chat-empty-label" }, "Consultas sugeridas"),
+        suggestions,
+    ]);
+    const messages = h("div", { "class": "chat-inline__messages" }, [empty]);
+
+    const input = h("input", {
+        type: "text",
+        "class": "chat-input-field",
+        placeholder: "Pregunta al agente…",
+        "aria-label": "Pregunta",
+        autocomplete: "off",
+    });
+    const sendBtn = h("button", {
+        type: "submit",
+        "class": "chat-input-send",
+        "aria-label": "Enviar",
+    }, "Enviar");
+    const form = h("form", { "class": "chat-input chat-inline__form", autocomplete: "off" }, [
+        input, sendBtn,
+    ]);
+
+    const wrapper = h("div", { "class": "chat-inline" }, [messages, form]);
+    container.appendChild(wrapper);
+
+    return new ChatController({ messages, form, input, sendBtn, suggestions });
+};
+
 BCCh.ChatPanel = ChatPanel;
+BCCh.ChatController = ChatController;
 }());

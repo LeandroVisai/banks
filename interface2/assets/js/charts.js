@@ -294,6 +294,10 @@ BCCh.ChartCard = ChartCard;
 
 BCCh.renderSection = async (section, container) => {
     container.innerHTML = "";
+    if (section.kind === "chat" && BCCh.mountInlineChat) {
+        BCCh.mountInlineChat(container);
+        return [];
+    }
     const cards = (section.charts || []).map((c) => new ChartCard(c, container));
     await Promise.allSettled(cards.map((c) => c.load()));
     return cards;

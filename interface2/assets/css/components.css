@@ -698,3 +698,32 @@
 }
 .chat-input-send:hover { background: var(--c-gold-2); }
 .chat-input-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── CHAT INLINE (sección Agente GOEM, embebida en #chart-grid) ──────── */
+.chat-inline {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    min-height: 70vh;
+    background: var(--bg-card, #fff);
+    border: 1px solid var(--border-soft);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.chat-inline__messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+.chat-inline__form {
+    border-top: 1px solid var(--border-soft);
+    padding: var(--space-4);
+    margin: 0;
+}
+.chat-inline .chat-input-send {
+    padding: 0 var(--space-4);
+    width: auto;
+}
