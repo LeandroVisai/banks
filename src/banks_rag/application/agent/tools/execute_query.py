@@ -125,15 +125,20 @@ async def execute_query(
 
 
 def _run_duckdb(sql: str) -> list[dict]:
-    """Ejecuta SQL con DuckDB y retorna lista de dicts. Síncrono — se llama vía to_thread."""
+    """Ejecuta SQL con DuckDB y retorna lista de dicts. Síncrono — se llama vía to_thread.
+
+    Abre una conexión propia para que las llamadas concurrentes (varios charts
+    en paralelo) no compartan el cursor del singleton de duckdb.sql().
+    """
     import duckdb
 
-    rel = duckdb.sql(sql)
-    columns = [d[0] for d in rel.description]
-    return [
-        {col: _serialize(val) for col, val in zip(columns, row)}
-        for row in rel.fetchall()
-    ]
+    with duckdb.connect(":memory:") as con:
+        rel = con.sql(sql)
+        columns = [d[0] for d in rel.description]
+        return [
+            {col: _serialize(val) for col, val in zip(columns, row)}
+            for row in rel.fetchall()
+        ]
 
 
 def _serialize(val: Any) -> Any:

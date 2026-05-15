@@ -141,3 +141,45 @@ class SearchResponse(BaseModel):
     filters: dict
     n_results: int
     results: list[SearchHit]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Catalog (SQL queries para alimentar el frontend de gráficos)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class CatalogParamSpec(BaseModel):
+    name: str
+    type: str
+    default: str
+    description: str = ""
+
+
+class CatalogEntry(BaseModel):
+    query_id: str
+    name: str
+    description: str
+    segment: str
+    tags: list[str]
+    unit: str
+    frequency: str
+    columns: list[str]
+    params: list[CatalogParamSpec]
+
+
+class CatalogListResponse(BaseModel):
+    n_entries: int
+    entries: list[CatalogEntry]
+
+
+class QueryResponse(BaseModel):
+    query_id: str
+    name: str
+    unit: str
+    frequency: str
+    segment: str
+    columns: list[str]
+    rows: list[dict]
+    n_rows: int
+    truncated: bool
+    truncated_note: str | None = None

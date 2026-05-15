@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BCCh · Banks RAG · Terminal de Análisis</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+    <script src="assets/vendor/apexcharts.min.js"></script>
+
+    <link rel="stylesheet" href="assets/css/reset.css?v=3" />
+    <link rel="stylesheet" href="assets/css/tokens.css?v=3" />
+    <link rel="stylesheet" href="assets/css/layout.css?v=3" />
+    <link rel="stylesheet" href="assets/css/components.css?v=3" />
+
+    <link rel="icon" type="image/svg+xml" href="assets/img/bcch-logo.svg" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     PAGE TOP — Logo + Intro institucional + actions
+     ════════════════════════════════════════════════════════════════ -->
+<header class="page-top">
+    <div class="page-top-logo">
+        <img src="assets/img/bcch-logo.svg" alt="BCCh" />
+        <div class="page-top-brand">
+            <div class="page-top-brand-name">BCCh</div>
+            <div class="page-top-brand-sub">Banks RAG</div>
+        </div>
+    </div>
+
+    <div class="page-top-intro">
+        <div class="page-top-intro-inner">
+            <h2>Terminal de Análisis Financiero</h2>
+            <p>Sistema RAG + agente IA sobre el corpus de documentos del Banco Central de Chile (Comunicados, Minutas del Consejo, IPOM, IEF, research) y catálogo de 23 series financieras.</p>
+        </div>
+        <div class="page-top-actions">
+            <span class="status-pill" id="api-status">
+                <span class="status-pill-dot"></span>
+                <span class="status-pill-label">VERIFICANDO</span>
+            </span>
+            <span class="page-top-clock mono" id="clock">--:--:--</span>
+            <button class="btn-primary" id="chat-toggle" aria-label="Abrir agente">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                </svg>
+                <span>Agente IA</span>
+            </button>
+        </div>
+    </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SIDEBAR — Navegación de secciones (accordion)
+     ════════════════════════════════════════════════════════════════ -->
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-search">
+        <div class="sidebar-search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="7"/>
+                <path d="m21 21-4.3-4.3"/>
+            </svg>
+            <input type="search" id="nav-search" placeholder="Buscar sección o gráfico…" />
+        </div>
+    </div>
+    <nav class="sidebar-nav" id="sidebar-nav">
+        <!-- Generado por app.js -->
+    </nav>
+    <footer class="sidebar-footer">
+        <span class="mono">Banks RAG · v1.0</span>
+    </footer>
+</aside>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     KPI TICKER (top of main)
+     ════════════════════════════════════════════════════════════════ -->
+<div class="main" id="main">
+    <div class="kpi-strip" id="kpi-strip">
+        <!-- Generado por kpi.js -->
+    </div>
+
+    <div class="content">
+        <div class="section-heading" id="section-eyebrow">CARGANDO</div>
+        <h1 class="section-title" id="section-title">Cargando…</h1>
+        <p class="section-subtitle" id="section-subtitle"></p>
+
+        <div class="chart-grid" id="chart-grid">
+            <!-- Generado por charts.js -->
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="footer-left">Banco Central de Chile · Interno</div>
+        <div class="footer-center">Banks RAG <strong>v1.0</strong> · Datos: SQL Catalog + Corpus PDF</div>
+        <div class="footer-right mono" id="footer-build">build · dev</div>
+    </footer>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     CHAT PANEL (slide-in derecha)
+     ════════════════════════════════════════════════════════════════ -->
+<aside class="chat-panel" id="chat-panel" data-open="false">
+    <div class="chat-panel-header">
+        <h3>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+            </svg>
+            Agente IA
+        </h3>
+        <button class="chat-panel-close" id="chat-close" aria-label="Cerrar">×</button>
+    </div>
+
+    <div class="chat-panel-body" id="chat-messages">
+        <div class="chat-empty">
+            <div class="chat-empty-icon">◈</div>
+            <div class="chat-empty-label">Consultas sugeridas</div>
+            <div class="chat-suggestions" id="chat-suggestions"></div>
+        </div>
+    </div>
+
+    <div class="chat-panel-footer">
+        <form class="chat-input" id="chat-form" autocomplete="off">
+            <input type="text" class="chat-input-field" id="chat-input" placeholder="Pregunta al agente…" aria-label="Pregunta" />
+            <button class="chat-input-send" type="submit" aria-label="Enviar">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <line x1="22" y1="2" x2="11" y2="13"/>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+            </button>
+        </form>
+    </div>
+</aside>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     CHART MODAL — pantalla completa con brush/range
+     ════════════════════════════════════════════════════════════════ -->
+<div id="chart-modal" aria-hidden="true">
+    <div id="chart-modal-overlay"></div>
+    <div id="chart-modal-box">
+        <header id="chart-modal-header">
+            <div id="chart-modal-meta">
+                <div id="chart-modal-title">—</div>
+                <div id="chart-modal-page" class="mono">—</div>
+            </div>
+            <div id="chart-modal-actions">
+                <div id="chart-modal-temporality"></div>
+                <button id="chart-modal-close" aria-label="Cerrar">×</button>
+            </div>
+        </header>
+        <div id="chart-modal-body">
+            <div id="chart-modal-main"></div>
+            <div id="chart-modal-brush" aria-label="Selector de rango"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     JS
+     ════════════════════════════════════════════════════════════════ -->
+<script src="assets/js/config.js?v=3"></script>
+<script src="assets/js/api.js?v=3"></script>
+<script src="assets/js/mock.js?v=3"></script>
+<script src="assets/js/charts.js?v=3"></script>
+<script src="assets/js/kpi.js?v=3"></script>
+<script src="assets/js/chat.js?v=3"></script>
+<script src="assets/js/sections/_registry.js?v=3"></script>
+<script src="assets/js/router.js?v=3"></script>
+<script src="assets/js/app.js?v=3"></script>
+
+<!-- DEBUG — eliminar en producción -->
+<script>
+(function () {
+    var bar = document.createElement('div');
+    bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:9999;background:#001730;color:#BF9C69;font:11px/2 "IBM Plex Mono",monospace;padding:0 12px;display:flex;gap:16px;overflow:hidden';
+    document.body.appendChild(bar);
+
+    window.addEventListener('error', function (e) {
+        var item = document.createElement('span');
+        item.style.color = '#C00000';
+        item.textContent = '✗ ' + (e.message || '') + ' @ ' + (e.filename || '?').split('/').pop() + ':' + e.lineno;
+        bar.appendChild(item);
+    });
+
+    setTimeout(function () {
+        var B = window.BCCh || {};
+        var checks = [
+            'BCCh:' + typeof B,
+            '$:' + typeof B.$,
+            'ChatPanel:' + typeof B.ChatPanel,
+            'ChartModal:' + typeof B.ChartModal,
+            'Router:' + typeof B.Router,
+            'SECTIONS:' + (Array.isArray(B.SECTIONS) ? B.SECTIONS.length : 'NO'),
+            'ApexCharts:' + typeof window.ApexCharts,
+        ];
+        var ok = document.createElement('span');
+        ok.style.color = '#70AD47';
+        ok.textContent = checks.join('  ·  ');
+        bar.appendChild(ok);
+    }, 300);
+}());
+</script>
+
+</body>
+</html>

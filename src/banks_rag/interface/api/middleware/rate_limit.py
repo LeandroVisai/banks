@@ -88,7 +88,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return f"ip:{ip}"
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        if request.url.path in PUBLIC_PATHS:
+        path = request.url.path
+        if path in PUBLIC_PATHS or path == "/" or path.startswith("/assets/"):
             return await call_next(request)
 
         key = self._key(request)

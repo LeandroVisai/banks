@@ -1,0 +1,112 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   DESIGN TOKENS — Light theme inspirado en template institucional BCCh
+   ───────────────────────────────────────────────────────────────────── */
+
+:root {
+    /* ── Paleta oficial BCCh ── */
+    --c-gold:        #BF9C69;
+    --c-gold-2:      #A8864F;
+    --c-gold-soft:   rgba(191, 156, 105, 0.12);
+    --c-gold-tint:   #faf6f0;
+    --c-navy:        #001730;
+    --c-navy-2:      #002347;
+    --c-navy-soft:   rgba(0, 23, 48, 0.05);
+    --c-red:         #C00000;
+    --c-green:       #70AD47;
+    --c-yellow:      #FFC000;
+    --c-orange:      #ED7D31;
+    --c-violet:      #57257D;
+    --c-blue:        #4472C4;
+    --c-blue-gray:   #44546A;
+    --c-gray:        #7F7F7F;
+
+    /* ── Fondos institucionales ── */
+    --bg:            #f0ede8;       /* cream / beige cálido (canvas) */
+    --bg-card:       #ffffff;       /* superficie de cards */
+    --bg-sidebar:    var(--c-navy); /* sidebar oscuro */
+    --bg-elev:       #f8f6f1;       /* hover suave */
+
+    --border-soft:   #d6d0c9;
+    --border-card:   rgba(0, 0, 0, 0.05);
+    --border-strong: var(--c-gold);
+
+    /* ── Texto ── */
+    --text:          #2C3E50;
+    --text-lt:       #7F8C8D;
+    --text-mute:     #9aa5ad;
+    --text-strong:   var(--c-navy);
+    --text-inv:      #ffffff;
+
+    /* ── Sidebar (oscuro) ── */
+    --side-text:     rgba(255, 255, 255, 0.72);
+    --side-text-dim: rgba(255, 255, 255, 0.42);
+    --side-text-mute:rgba(255, 255, 255, 0.32);
+    --side-hover-bg: rgba(255, 255, 255, 0.07);
+    --side-active-bg:rgba(255, 255, 255, 0.10);
+    --side-border:   rgba(255, 255, 255, 0.10);
+    --side-input-bg: rgba(255, 255, 255, 0.08);
+
+    /* ── Tipografía ── */
+    --font-sans:     'Inter', system-ui, -apple-system, sans-serif;
+    --font-mono:     'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+
+    --fs-2xs:        10px;
+    --fs-xs:         11px;
+    --fs-sm:         12px;
+    --fs-base:       13px;
+    --fs-md:         14px;
+    --fs-lg:         16px;
+    --fs-xl:         20px;
+    --fs-2xl:        28px;
+
+    --fw-light:      300;
+    --fw-normal:     400;
+    --fw-medium:     500;
+    --fw-semi:       600;
+    --fw-bold:       700;
+
+    --tracking-tight: -0.01em;
+    --tracking-wide:  0.08em;
+    --tracking-wider: 0.12em;
+
+    /* ── Espaciado ── */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+
+    /* ── Radios ── */
+    --r-sm:   4px;
+    --r-md:   6px;
+    --r-lg:   10px;
+
+    /* ── Sombras ── */
+    --shadow-sm:    0 1px 3px rgba(0, 0, 0, 0.04), 0 3px 10px rgba(0, 0, 0, 0.05);
+    --shadow-md:    0 4px 16px rgba(191, 156, 105, 0.18), 0 8px 24px rgba(0, 0, 0, 0.08);
+    --shadow-lg:    0 20px 60px rgba(0, 0, 0, 0.30);
+
+    /* ── Layout ── */
+    --header-h:        76px;    /* page-top */
+    --kpi-h:           58px;
+    --sidebar-w:       260px;
+    --footer-h:        58px;
+    --chat-w:          400px;
+
+    --transition-fast: 0.15s ease;
+    --transition:      0.22s cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* ── Paleta de gráficos (ApexCharts categorical) ── */
+    --chart-1: #BF9C69;
+    --chart-2: #001730;
+    --chart-3: #4472C4;
+    --chart-4: #70AD47;
+    --chart-5: #C00000;
+    --chart-6: #ED7D31;
+    --chart-7: #57257D;
+    --chart-8: #44546A;
+    --chart-9: #FFC000;
+}

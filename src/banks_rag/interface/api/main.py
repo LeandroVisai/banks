@@ -20,12 +20,16 @@ Para tests, importa ``create_app`` directamente y usa ``TestClient(create_app())
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from banks_rag import __version__
 from banks_rag.config import get_settings
+from banks_rag.config.paths import ROOT
 from banks_rag.infrastructure.observability import configure_logging, setup_tracing
 from banks_rag.interface.api.dependencies import AppState
 from banks_rag.interface.api.middleware import (
@@ -33,7 +37,7 @@ from banks_rag.interface.api.middleware import (
     RateLimitMiddleware,
     RequestIDMiddleware,
 )
-from banks_rag.interface.api.routes import chat, health, images, search
+from banks_rag.interface.api.routes import catalog, chat, health, images, search
 from banks_rag.interface.api.routes import metrics as metrics_route
 
 # Importar el paquete de tools para que el registry quede poblado.
@@ -105,6 +109,17 @@ def create_app(*, deps: AppState | None = None) -> FastAPI:
 
     app.state.deps = deps if deps is not None else AppState()
 
+    # CORS (necesario si el frontend se sirve desde otro origen en dev).
+    cors_origins_env = os.getenv("BANKS_CORS_ORIGINS", "*")
+    cors_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     # Middlewares (orden: outer → inner, se ejecutan en orden inverso).
     app.add_middleware(RequestIDMiddleware)
     if settings.api_keys_set:
@@ -117,6 +132,28 @@ def create_app(*, deps: AppState | None = None) -> FastAPI:
     app.include_router(chat.router)
     app.include_router(search.router)
     app.include_router(images.router)
+    app.include_router(catalog.router)
+
+    # Static frontend: sirve interface2/ en / (same-origin con la API).
+    # Montado al final para que las rutas /v1/* y /healthz tengan prioridad.
+    interface2_dir = ROOT / "interface2"
+    if interface2_dir.is_dir():
+        no_cache = os.getenv("BANKS_DEV", "1") == "1"
+
+        class _NoCacheStaticFiles(StaticFiles):
+            async def get_response(self, path, scope):
+                resp = await super().get_response(path, scope)
+                if no_cache and hasattr(resp, "headers"):
+                    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+                    resp.headers["Pragma"] = "no-cache"
+                    resp.headers["Expires"] = "0"
+                return resp
+
+        app.mount(
+            "/",
+            _NoCacheStaticFiles(directory=str(interface2_dir), html=True),
+            name="interface2",
+        )
 
     return app
 
