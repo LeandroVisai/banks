@@ -1,8 +1,8 @@
 """Catalog endpoints: exponen el SQL catalog vía REST para alimentar gráficos.
 
-Reutiliza ``catalog_loader`` + ``execute_query._run_duckdb`` para evitar duplicar
-lógica. El frontend ``interface2/`` consume estos endpoints sin pasar por el
-agente (latencia baja, sin coste de LLM).
+Reutiliza ``catalog_loader`` + ``duckdb_runner`` para evitar duplicar lógica.
+El frontend ``interface2/`` consume estos endpoints sin pasar por el agente
+(latencia baja, sin coste de LLM).
 
 Endpoints:
   - ``GET /v1/catalog``           → lista las 23 queries del catálogo
@@ -16,13 +16,14 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
-from banks_rag.application.agent.tools.execute_query import _MAX_ROWS, _run_duckdb
 from banks_rag.config.paths import ROOT
 from banks_rag.infrastructure.sql.catalog_loader import (
     get_entry,
     load_catalog,
     render_sql,
 )
+from banks_rag.infrastructure.sql.duckdb_runner import MAX_ROWS as _MAX_ROWS
+from banks_rag.infrastructure.sql.duckdb_runner import run_duckdb as _run_duckdb
 from banks_rag.interface.api.schemas import (
     CatalogEntry,
     CatalogListResponse,

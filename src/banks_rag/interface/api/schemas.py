@@ -68,6 +68,8 @@ class ToolTraceEntry(BaseModel):
     result_summary: str
     result_size_chars: int
     duration_ms: int
+    # Agente que emitió la tool call: "orquestador" o la key de un especialista.
+    agent: str = ""
 
 
 class ChatResponse(BaseModel):

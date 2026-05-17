@@ -54,7 +54,10 @@ class AgentState:
         result_summary: str,
         result_size_chars: int,
         duration_ms: int,
+        agent: str = "",
     ) -> None:
+        """Registra una tool call. ``agent`` identifica qué agente la emitió
+        (``orquestador`` o la ``key`` de un sub-agente especialista)."""
         self.tool_trace.append({
             "iteration": iteration,
             "tool": tool,
@@ -62,6 +65,7 @@ class AgentState:
             "result_summary": result_summary,
             "result_size_chars": result_size_chars,
             "duration_ms": duration_ms,
+            "agent": agent,
         })
 
 

@@ -9,7 +9,6 @@ Limita la salida a ``max_rows`` para no saturar el contexto del LLM.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from banks_rag.config.paths import ROOT
@@ -18,6 +17,8 @@ from banks_rag.infrastructure.sql.catalog_loader import (
     load_catalog,
     render_sql,
 )
+from banks_rag.infrastructure.sql.duckdb_runner import MAX_ROWS as _MAX_ROWS
+from banks_rag.infrastructure.sql.duckdb_runner import run_duckdb as _run_duckdb
 
 from .registry import register
 
@@ -25,7 +26,8 @@ if TYPE_CHECKING:
     from banks_rag.domain.agent import AgentState
 
 _SNAPSHOTS_DIR = ROOT / "data_pipeline" / "snapshots"
-_MAX_ROWS = 500  # techo duro; la tool advierte si se truncó
+# _MAX_ROWS: techo duro de filas, compartido con duckdb_runner; la tool
+# advierte al modelo si el resultado se truncó.
 
 _SCHEMA = {
     "type": "function",
@@ -71,7 +73,7 @@ _SCHEMA = {
 
 @register("execute_query", _SCHEMA)
 async def execute_query(
-    state: "AgentState",
+    state: AgentState,
     query_id: str,
     fecha_inicio: str | None = None,
     fecha_fin: str | None = None,
@@ -124,31 +126,5 @@ async def execute_query(
     }
 
 
-def _run_duckdb(sql: str) -> list[dict]:
-    """Ejecuta SQL con DuckDB y retorna lista de dicts. Síncrono — se llama vía to_thread.
-
-    Abre una conexión propia para que las llamadas concurrentes (varios charts
-    en paralelo) no compartan el cursor del singleton de duckdb.sql().
-    """
-    import duckdb
-
-    with duckdb.connect(":memory:") as con:
-        rel = con.sql(sql)
-        columns = [d[0] for d in rel.description]
-        return [
-            {col: _serialize(val) for col, val in zip(columns, row)}
-            for row in rel.fetchall()
-        ]
-
-
-def _serialize(val: Any) -> Any:
-    """Convierte tipos no-JSON-serializable a string."""
-    if val is None:
-        return None
-    if isinstance(val, float):
-        return round(val, 6)
-    # datetime / date → ISO string
-    iso = getattr(val, "isoformat", None)
-    if callable(iso):
-        return iso()
-    return val
+# _run_duckdb se importa de infrastructure.sql.duckdb_runner (helper compartido
+# con las analytics tools). Se re-exporta con nombre privado por compatibilidad.
