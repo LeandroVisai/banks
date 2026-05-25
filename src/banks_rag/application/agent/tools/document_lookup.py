@@ -38,8 +38,8 @@ LIST_SCHEMA = {
                 "doc_type": {
                     "type": "string",
                     "enum": [
-                        "COMUNICADO", "MINUTA", "FED_STATEMENT",
-                        "REPORTE_RESEARCH", "MONITOR_PM",
+                        "COMUNICADO_RPM", "MINUTA_RPM", "MINUTA_IPOM", "IPOM",
+                        "IEF", "FED_STATEMENT", "REPORTE_RESEARCH", "MONITOR_PM",
                     ],
                     "description": "Tipo de documento a listar.",
                 },

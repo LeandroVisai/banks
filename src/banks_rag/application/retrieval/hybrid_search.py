@@ -134,6 +134,7 @@ def _recall_and_fuse(
 ) -> list[dict]:
     where_sql, where_params = build_filters_sql(
         filters, docs_table=docs_table, chunks_table=chunks_table,
+        chunks_alias="c", docs_alias="d",
     )
 
     vec_hits = vector_recall(
@@ -250,6 +251,7 @@ def hybrid_search(
         with repo.connect() as conn:
             where_sql, where_params = build_filters_sql(
                 filters, docs_table=docs_table, chunks_table=chunks_table,
+                chunks_alias="c", docs_alias="d",
             )
             fused = date_importance_fallback(
                 conn,

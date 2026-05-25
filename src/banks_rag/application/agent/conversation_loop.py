@@ -27,6 +27,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from datetime import date
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,6 +45,28 @@ from .subagents import (
 from .tools.registry import dispatch
 
 log = logging.getLogger(__name__)
+
+
+def _with_today(system_prompt: str) -> str:
+    """Antepone la fecha actual al system prompt.
+
+    Sin esto el LLM razona sobre "hoy" con su fecha de entrenamiento. Inyectar
+    la fecha real permite resolver consultas relativas ("hoy", "este mes",
+    "último dato") contra el calendario correcto.
+    """
+    hoy = date.today()
+    meses = [
+        "enero", "febrero", "marzo", "abril", "mayo", "junio",
+        "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+    ]
+    fecha_legible = f"{hoy.day} de {meses[hoy.month - 1]} de {hoy.year}"
+    encabezado = (
+        f"La fecha de hoy es {fecha_legible} ({hoy.isoformat()}). "
+        f"Usa esta fecha para resolver referencias temporales relativas "
+        f"como 'hoy', 'este mes' o 'el último dato'.\n\n"
+    )
+    return encabezado + system_prompt
+
 
 DEFAULT_MAX_ITERATIONS = 6
 DEFAULT_SUBAGENT_MAX_ITERATIONS = 4
@@ -264,6 +287,25 @@ async def _run_tool_loop(
         finish_reason = result.finish_reason
 
         if not result.has_tool_calls:
+            # Si el modelo ignoró las tools en la primera iteración, inyectar un
+            # recordatorio explícito y reintentar una sola vez. Esto compensa
+            # modelos pequeños (Gemma 3 12B) que tienden a responder directo.
+            if tools_arg and iteration == 1:
+                log.warning(
+                    "[%s] iter 1: respondió sin usar tools — inyectando recordatorio",
+                    agent_label,
+                )
+                messages = messages + [
+                    {"role": "assistant", "content": result.text or ""},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Necesito que uses una herramienta antes de responder. "
+                            "Llama ahora a la herramienta apropiada con <tool_call>."
+                        ),
+                    },
+                ]
+                continue
             final_text = result.text
             log.info("[%s] termina en iter %d (sin más tool calls)", agent_label, iteration)
             break
@@ -394,7 +436,7 @@ async def run_subagent(
     ``state`` se comparte con el orquestador para que las citas sean globales.
     """
     messages: list[dict] = [
-        {"role": "system", "content": spec.system_prompt},
+        {"role": "system", "content": _with_today(spec.system_prompt)},
         {"role": "user", "content": task},
     ]
     outcome = await _run_tool_loop(
@@ -459,7 +501,7 @@ async def run_agent(
     t0 = time.perf_counter()
 
     messages: list[dict] = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": _with_today(system_prompt)},
         *history,
         {"role": "user", "content": user_message},
     ]

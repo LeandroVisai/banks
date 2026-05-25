@@ -10,7 +10,7 @@ el golden set no enumera los chunk_ids relevantes. Se renombró desde
 
 Uso mínimo:
     hits = hybrid_search("query", ...)
-    result = evaluate_retrieval(hits, expected_doc_types=["COMUNICADO"],
+    result = evaluate_retrieval(hits, expected_doc_types=["COMUNICADO_RPM"],
                                 expected_sections=["DECISION"])
     print(result.hit_rate_at_k)
 """

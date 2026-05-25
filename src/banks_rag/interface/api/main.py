@@ -70,14 +70,15 @@ async def lifespan(app: FastAPI):
         from banks_rag.infrastructure.embeddings import build_default_embedder
         deps.embedder = build_default_embedder()
 
-    # LLM: en Fase 3 será LlamaCppEngine. Por ahora si no hay implementation
-    # registrada, queda como None y los endpoints de chat retornan 503.
-    if deps.llm is None and settings.llm_family != "mock":
-        log.warning(
-            "LLM family=%s pero no hay implementación registrada — "
-            "el endpoint /v1/chat retornará 503 hasta Fase 3.",
-            settings.llm_family,
-        )
+    # LLM: instancia LlamaCppEngine para familias qwen/gemma.
+    if deps.llm is None and settings.llm_family not in ("mock", ""):
+        try:
+            from banks_rag.infrastructure.llm.llama_cpp_engine import LlamaCppEngine
+            deps.llm = LlamaCppEngine.from_settings(settings)
+            await deps.llm.load()
+            log.info("LLM cargado: %s", deps.llm.name)
+        except Exception:
+            log.exception("Error cargando LLM — /v1/chat retornará 503")
 
     yield
 

@@ -37,10 +37,16 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 def detect_doc_type(rel_path: str) -> str:
     """Infiere ``doc_type_category`` desde la ruta relativa."""
     p = rel_path.lower()
-    if "comunicado" in p:
-        return "COMUNICADO"
-    if "minuta" in p:
-        return "MINUTA"
+    if "comunicados_rpm" in p or "comunicado_rpm" in p or "comunicados rpm" in p:
+        return "COMUNICADO_RPM"
+    if "minutas_ipom" in p or "minuta_ipom" in p or "minutas ipom" in p:
+        return "MINUTA_IPOM"
+    if "minutas_rpm" in p or "minuta_rpm" in p or "minutas rpm" in p:
+        return "MINUTA_RPM"
+    if "ipom" in p:
+        return "IPOM"
+    if "ief" in p:
+        return "IEF"
     if "/fed/" in p or p.startswith("fed/") or "reunion_fed" in p:
         return "FED_STATEMENT"
     if "monitor_pm" in p or "monitor pm" in p:

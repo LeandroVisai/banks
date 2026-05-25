@@ -104,7 +104,7 @@ def _run_generation_eval() -> tuple[dict, list[GenerationEval]]:
         synthetic_answer = " ".join(keywords)
         synthetic_chunks = [
             {"text": synthetic_answer, "doc_type_category": dt}
-            for dt in case.get("must_cite_doc_types", ["COMUNICADO"])
+            for dt in case.get("must_cite_doc_types", ["COMUNICADO_RPM"])
         ]
         r = evaluate_generation(
             query=case.get("query", ""),

@@ -44,12 +44,12 @@ _CHAT_FORMAT_BY_FAMILY = {
 
 
 def _detect_chat_format(model_path: str) -> str:
-    """Infiere el chat format desde el nombre del archivo GGUF."""
-    p = model_path.lower()
-    if "qwen" in p:
-        return "chatml"
+    """Infiere el chat format desde el nombre del archivo GGUF (solo basename)."""
+    p = Path(model_path).name.lower()
     if "gemma" in p:
         return "gemma"
+    if "qwen" in p:
+        return "chatml"
     return "chatml"
 
 
@@ -61,6 +61,95 @@ def _parse_args(raw: str | dict) -> dict:
         return json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return {}
+
+
+def _format_tools_as_text(tools: list[dict]) -> str:
+    """Renderiza los schemas de tools como texto para modelos sin tool calling nativo.
+
+    Gemma no recibe bien los schemas vía la API; se inyectan en el prompt como
+    texto, con el formato <tool_call> exacto que ``parse_tool_calls`` reconoce.
+    """
+    lines = [
+        "\n\n## Herramientas disponibles",
+        "",
+        "Para usar una herramienta, responde EXACTAMENTE en este formato "
+        "(JSON dentro de etiquetas <tool_call>):",
+        "",
+        '<tool_call>',
+        '{"name": "nombre_exacto", "arguments": {"arg": "valor"}}',
+        '</tool_call>',
+        "",
+        "Herramientas (usa el nombre EXACTO):",
+    ]
+    for schema in tools:
+        fn = schema["function"]
+        props = fn.get("parameters", {}).get("properties", {})
+        required = fn.get("parameters", {}).get("required", [])
+        arg_parts = []
+        for arg_name, arg_spec in props.items():
+            mark = "" if arg_name in required else " (opcional)"
+            arg_parts.append(f'{arg_name}{mark}')
+        args_str = ", ".join(arg_parts) if arg_parts else "sin argumentos"
+        lines.append(f'- `{fn["name"]}` — args: {args_str}. {fn["description"]}')
+    lines.append("")
+    lines.append(
+        "NUNCA respondas una pregunta sustantiva sin llamar primero a una "
+        "herramienta. Cuando ya tengas la información, responde en texto SIN "
+        "etiquetas <tool_call>."
+    )
+    return "\n".join(lines)
+
+
+def _flatten_for_gemma(messages: list[dict], tools: list[dict] | None) -> list[dict]:
+    """Aplana mensajes estilo OpenAI a la alternancia user/model de Gemma.
+
+    Gemma no soporta los roles ``system`` ni ``tool``, ni ``assistant`` con
+    ``tool_calls`` estructurados. Esta función:
+      - fusiona los ``system`` (más las definiciones de tools como texto) en
+        el primer mensaje ``user``;
+      - renderiza los ``tool_calls`` del assistant como texto <tool_call>;
+      - convierte los resultados de tools (rol ``tool``) en texto marcado,
+        anexado al turno ``user`` para mantener la alternancia.
+    """
+    system_parts = [
+        m["content"] for m in messages
+        if m.get("role") == "system" and m.get("content")
+    ]
+    prefix = "\n\n".join(system_parts)
+    if tools:
+        prefix += _format_tools_as_text(tools)
+
+    out: list[dict] = []
+    for m in messages:
+        role = m.get("role")
+        if role == "system":
+            continue
+        if role == "user":
+            content = m.get("content", "") or ""
+            if prefix:
+                content = prefix + "\n\n---\n\n" + content
+                prefix = ""
+            out.append({"role": "user", "content": content})
+        elif role == "assistant":
+            content = m.get("content", "") or ""
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function", {})
+                args = fn.get("arguments", "{}")
+                content += (
+                    f'\n<tool_call>\n{{"name": "{fn.get("name")}", '
+                    f'"arguments": {args}}}\n</tool_call>'
+                )
+            out.append({"role": "assistant", "content": content})
+        elif role == "tool":
+            tool_msg = f'[RESULTADO DE {m.get("name", "herramienta")}]\n{m.get("content", "")}'
+            if out and out[-1]["role"] == "user":
+                out[-1]["content"] += "\n\n" + tool_msg
+            else:
+                out.append({"role": "user", "content": tool_msg})
+
+    if prefix:  # no había ningún user; mete el contexto como primer turno
+        out.insert(0, {"role": "user", "content": prefix})
+    return out
 
 
 class LlamaCppEngine:
@@ -120,6 +209,24 @@ class LlamaCppEngine:
         await loop.run_in_executor(self._executor, self._sync_load)
 
     def _sync_load(self) -> None:
+        # Windows: registra los directorios de DLLs de torch y llama_cpp antes
+        # de importar, o el loader de Windows no los encuentra.
+        import sys
+        if sys.platform == "win32":
+            import importlib.util
+            import os
+            try:
+                import torch
+                os.add_dll_directory(os.path.join(os.path.dirname(torch.__file__), "lib"))
+            except Exception:
+                pass
+            try:
+                spec = importlib.util.find_spec("llama_cpp")
+                if spec and spec.origin:
+                    os.add_dll_directory(os.path.dirname(spec.origin))
+            except Exception:
+                pass
+
         from llama_cpp import Llama  # importación lazy para tests sin el binario
 
         path = Path(self.model_path)
@@ -191,15 +298,25 @@ class LlamaCppEngine:
         top_p: float | None,
         max_tokens: int | None,
     ) -> GenerationResult:
+        # Gemma no soporta roles system/tool ni tool calling nativo confiable:
+        # se aplana la conversación y las tools se inyectan como texto, dejando
+        # que parse_tool_calls extraiga las <tool_call> de la respuesta.
+        if self._chat_format == "gemma":
+            effective_messages = _flatten_for_gemma(messages, tools)
+            effective_tools = None
+        else:
+            effective_messages = messages
+            effective_tools = tools
+
         kwargs: dict[str, Any] = {
-            "messages": messages,
+            "messages": effective_messages,
             "temperature": temperature if temperature is not None else self._temperature,
             "top_p": top_p if top_p is not None else self._top_p,
             "max_tokens": max_tokens if max_tokens is not None else self._max_tokens,
         }
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
+        if effective_tools:
+            kwargs["tools"] = effective_tools
+            kwargs["tool_choice"] = "required"
 
         response = self._model.create_chat_completion(**kwargs)
         choice = response["choices"][0]

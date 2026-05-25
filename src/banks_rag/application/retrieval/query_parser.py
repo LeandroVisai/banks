@@ -78,8 +78,11 @@ FILENAME_DATE_RE = re.compile(
 # Hints para tipo de documento. Más específicos que detect_doc_type del paso 0
 # (que opera sobre filepath); estos detectan menciones explícitas en la query.
 DOC_TYPE_HINTS: dict[str, list[str]] = {
-    "COMUNICADO": ["comunicado", "anuncio de politica"],
-    "MINUTA": ["minuta", "reunion de politica", "consejeros"],
+    "COMUNICADO_RPM": ["comunicado", "anuncio de politica", "rpm"],
+    "MINUTA_RPM": ["minuta rpm", "minuta del rpm", "minuta reunion politica"],
+    "MINUTA_IPOM": ["minuta ipom", "minuta del ipom"],
+    "IPOM": ["ipom", "informe de politica monetaria"],
+    "IEF": ["ief", "informe de estabilidad financiera"],
     "FED_STATEMENT": ["fed", "federal reserve", "fomc"],
     "REPORTE_RESEARCH": ["research", "jpmorgan", "jpm", "reporte"],
     "MONITOR_PM": ["monitor pm", "monitor de mercado", "monitor financiero"],

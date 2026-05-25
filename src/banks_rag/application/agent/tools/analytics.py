@@ -472,7 +472,7 @@ _SNAPSHOT_SCHEMA = {
 
 
 async def _latest_indicator(
-    clave: str, nombre: str, query_id: str, column: str,
+    state: AgentState, clave: str, nombre: str, query_id: str, column: str,
 ) -> dict[str, Any]:
     """Último valor disponible de un indicador (ventana corta de 30 días)."""
     fetched, err = await _fetch_rows(
@@ -485,6 +485,7 @@ async def _latest_indicator(
     if col_err or not series:
         return {"clave": clave, "nombre": nombre, "valor": None,
                 "nota": "sin datos recientes"}
+    _register_series(state, entry, column, series)
     fecha, valor = series[-1]
     return {
         "clave": clave,
@@ -498,7 +499,7 @@ async def _latest_indicator(
 @register("get_market_snapshot", _SNAPSHOT_SCHEMA)
 async def get_market_snapshot(state: AgentState) -> dict[str, Any]:
     indicadores = await asyncio.gather(
-        *(_latest_indicator(*ind) for ind in _SNAPSHOT_INDICATORS)
+        *(_latest_indicator(state, *ind) for ind in _SNAPSHOT_INDICATORS)
     )
     indicadores = list(indicadores)
 

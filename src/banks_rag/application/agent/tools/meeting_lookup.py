@@ -222,7 +222,7 @@ async def get_recent_policy_decisions(
     max_chunks_per_doc = max(1, min(int(max_chunks_per_doc), 8))
     repo = _repo()
 
-    docs = await asyncio.to_thread(repo.list_documents, doc_type="COMUNICADO", limit=50)
+    docs = await asyncio.to_thread(repo.list_documents, doc_type="COMUNICADO_RPM", limit=50)
     if not docs:
         return {
             "decisions": [],

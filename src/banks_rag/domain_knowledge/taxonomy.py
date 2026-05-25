@@ -610,11 +610,12 @@ MONITOR_PM_SECTION_MAP: dict[str, str] = {
 # Prefijo temporal por tipo de documento (inyectado en embed_text por 02_vectorize.py)
 TEMPORAL_SOURCE_PREFIXES: dict[str, str] = {
     "MONITOR_PM":         "[DAILY]",
-    "COMUNICADO":         "[PERIOD_MONTHLY]",
+    "COMUNICADO_RPM":     "[PERIOD_MONTHLY]",
+    "MINUTA_RPM":         "[PERIOD_MONTHLY]",
     "REPORTE_RESEARCH":   "[PERIOD_MONTHLY]",
     "IPOM":               "[PERIOD_QUARTERLY]",
+    "MINUTA_IPOM":        "[PERIOD_QUARTERLY]",
     "IEF":                "[PERIOD_QUARTERLY]",
-    "MINUTAS":            "[PERIOD_MONTHLY]",
 }
 DEFAULT_TEMPORAL_PREFIX = "[PERIOD_MONTHLY]"
 

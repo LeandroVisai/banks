@@ -434,12 +434,33 @@ def _print_stats(stats: dict) -> None:
 
 
 @app.command("full")
-def cmd_full() -> None:
+def cmd_full(
+    data_root: Path = typer.Option(
+        paths.DATA_RAW_DIR, "--data-root", "-d",
+        help="Directorio raíz con PDFs y Excel.",
+    ),
+    output_dir: Path = typer.Option(
+        paths.LOGS_DIR, "--output-dir",
+        help="Directorio de trabajo para JSONs intermedios.",
+    ),
+    batch_size: int = typer.Option(
+        4, "--batch-size",
+        help="Batch size para vectorize.",
+    ),
+    table_prefix: str = typer.Option(
+        "", "--table-prefix", envvar="RAG_TABLE_PREFIX",
+    ),
+) -> None:
     """Corre el pipeline completo: extract → enrich → vectorize → persist (load)."""
-    cmd_extract()
-    cmd_enrich()
-    cmd_vectorize()
-    cmd_persist("load")
+    cmd_extract(
+        data_root=data_root,
+        images_dir=paths.IMAGES_DIR,
+        output_dir=output_dir,
+        quiet=False,
+    )
+    cmd_enrich(input_dir=output_dir, output_dir=output_dir)
+    cmd_vectorize(input_dir=output_dir, output_dir=output_dir, batch_size=batch_size)
+    cmd_persist(mode="load", input_dir=output_dir, table_prefix=table_prefix)
 
 
 if __name__ == "__main__":
