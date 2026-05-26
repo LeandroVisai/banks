@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -252,15 +253,93 @@ st.session_state.setdefault("api_url", "http://localhost:8080")
 st.session_state.setdefault("api_status", None)
 st.session_state.setdefault("doc_filter", [])
 
-# ── KPI data (mock — reales vía SQL catalog cuando el servidor esté up) ────────
+# ── KPI data — leídos desde parquets reales ──────────────────────────────────
 
-KPIS = [
-    ("TPM",     "5.50%",  "−25 pb", "down"),
-    ("USD/CLP", "942.3",  "+1.2%",  "up"),
-    ("IPC 12m", "4.2%",   "+0.1pp", "up"),
-    ("Cobre",   "4.12",   "−0.8%",  "down"),
-    ("IPSA",    "7,284",  "+0.3%",  "up"),
-]
+_PARQUET_BASE = Path(__file__).parent.parent.parent / "data_pipeline" / "parquet"
+
+
+@st.cache_data(ttl=300)
+def _load_kpis() -> list[tuple[str, str, str, str]]:
+    import duckdb
+
+    def _query(sql: str) -> list[dict]:
+        with duckdb.connect(":memory:") as con:
+            rel = con.sql(sql)
+            cols = [d[0] for d in rel.description]
+            return [{c: v for c, v in zip(cols, row)} for row in rel.fetchall()]
+
+    kpis: list[tuple[str, str, str, str]] = []
+
+    # TPM — sin parquet disponible
+    kpis.append(("TPM", "—", "—", "neu"))
+
+    # USD/CLP
+    try:
+        p = _PARQUET_BASE / "clp_monto.parquet"
+        rows = _query(f"SELECT Fecha, CLP FROM read_parquet('{p}') ORDER BY Fecha DESC LIMIT 2")
+        if rows:
+            last, prev = rows[0]["CLP"], (rows[1]["CLP"] if len(rows) > 1 else None)
+            val_str = f"{last:,.1f}"
+            if prev:
+                pct = (last - prev) / prev * 100
+                delta_str = f"{pct:+.1f}%"
+                direction = "up" if pct >= 0 else "down"
+            else:
+                delta_str, direction = "—", "neu"
+            kpis.append(("USD/CLP", val_str, delta_str, direction))
+        else:
+            kpis.append(("USD/CLP", "—", "—", "neu"))
+    except Exception:
+        kpis.append(("USD/CLP", "—", "—", "neu"))
+
+    # IPC 12m — expectativas de inflación
+    try:
+        p = _PARQUET_BASE / "expectativas_inflacion.parquet"
+        rows = _query(
+            f"SELECT Fecha, Valor FROM read_parquet('{p}') "
+            f"WHERE Serie = '12M' ORDER BY Fecha DESC LIMIT 2"
+        )
+        if rows:
+            last, prev = rows[0]["Valor"], (rows[1]["Valor"] if len(rows) > 1 else None)
+            val_str = f"{last:.1f}%"
+            if prev is not None:
+                pp = last - prev
+                delta_str = f"{pp:+.1f}pp"
+                direction = "up" if pp >= 0 else "down"
+            else:
+                delta_str, direction = "—", "neu"
+            kpis.append(("IPC 12m", val_str, delta_str, direction))
+        else:
+            kpis.append(("IPC 12m", "—", "—", "neu"))
+    except Exception:
+        kpis.append(("IPC 12m", "—", "—", "neu"))
+
+    # Cobre (USD/lb — parquet almacena USc/lb, dividir por 100)
+    try:
+        p = _PARQUET_BASE / "cobre_dxy.parquet"
+        rows = _query(f"SELECT Fecha, Cobre / 100.0 AS Cobre FROM read_parquet('{p}') ORDER BY Fecha DESC LIMIT 2")
+        if rows:
+            last, prev = rows[0]["Cobre"], (rows[1]["Cobre"] if len(rows) > 1 else None)
+            val_str = f"{last:.3f}"
+            if prev:
+                pct = (last - prev) / prev * 100
+                delta_str = f"{pct:+.1f}%"
+                direction = "up" if pct >= 0 else "down"
+            else:
+                delta_str, direction = "—", "neu"
+            kpis.append(("Cobre", val_str, delta_str, direction))
+        else:
+            kpis.append(("Cobre", "—", "—", "neu"))
+    except Exception:
+        kpis.append(("Cobre", "—", "—", "neu"))
+
+    # IPSA — sin parquet disponible
+    kpis.append(("IPSA", "—", "—", "neu"))
+
+    return kpis
+
+
+KPIS = _load_kpis()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 

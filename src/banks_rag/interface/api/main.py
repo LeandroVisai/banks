@@ -37,7 +37,7 @@ from banks_rag.interface.api.middleware import (
     RateLimitMiddleware,
     RequestIDMiddleware,
 )
-from banks_rag.interface.api.routes import catalog, chat, health, images, search
+from banks_rag.interface.api.routes import catalog, chat, health, images, kpis, search
 from banks_rag.interface.api.routes import metrics as metrics_route
 
 # Importar el paquete de tools para que el registry quede poblado.
@@ -134,6 +134,7 @@ def create_app(*, deps: AppState | None = None) -> FastAPI:
     app.include_router(search.router)
     app.include_router(images.router)
     app.include_router(catalog.router)
+    app.include_router(kpis.router)
 
     # Static frontend: sirve interface2/ en / (same-origin con la API).
     # Montado al final para que las rutas /v1/* y /healthz tengan prioridad.

@@ -47,6 +47,26 @@ votaciones ni nombres. Cita cada afirmación factual con [N], donde N es el \
 `ref` que las herramientas asignaron a cada fragmento. Si tras varias \
 búsquedas no encuentras evidencia, dilo con claridad en vez de improvisar."""
 
+_NO_TRAINING_DATA_RULE = """\
+PROHIBIDO usar conocimiento de entrenamiento para cifras concretas: nunca \
+cites un nivel de tasa, precio, tipo de cambio o porcentaje que no provenga \
+de un resultado de herramienta en esta conversación. Esto incluye valores \
+que "sabes" de tu entrenamiento (p. ej. "la TPM era 5,25%" o "el dólar \
+estaba en 942"). Si una variable no está en el catálogo o en los documentos \
+recuperados, responde: "No tengo ese dato en el catálogo disponible." \
+Para el nivel actual de la TPM, úsa `get_recent_policy_decisions` — \
+la decisión más reciente del Consejo está en los Comunicados del BCCh, \
+no en las series numéricas del catálogo."""
+
+_DATA_CURRENCY_RULE = """\
+FECHA DE LOS DATOS vs. FECHA DE HOY: Los parquets no se actualizan en tiempo \
+real. Cuando una herramienta retorne `last_date_in_data`, usa ESA fecha al \
+citar el dato — nunca digas "hoy" ni "al cierre de hoy" si el último registro \
+es anterior a la fecha actual. Ejemplo correcto: "al 22-may-2026, el BTP 10Y \
+estaba en 5,63%". Ejemplo incorrecto: "hoy el BTP 10Y está en 5,63%". \
+Si el usuario pregunta por el valor "de hoy" y el dato más reciente tiene \
+rezago, indícalo explícitamente: "el último dato disponible es del DD-MM-AAAA"."""
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Orquestador
@@ -132,6 +152,7 @@ Statement del mismo período).
 ## Reglas
 
 - {_CITATION_RULES}
+- {_NO_TRAINING_DATA_RULE}
 - {_INJECTION_DEFENSE}
 
 {_TOOL_CALL_PROTOCOL}"""
@@ -167,8 +188,8 @@ percentil 80 del último año", no una tabla de precios.
 
 ## Reglas
 
-- No inventes cifras: toda cifra viene de las herramientas. Si una serie no \
-existe en el catálogo, dilo.
+- {_NO_TRAINING_DATA_RULE}
+- {_DATA_CURRENCY_RULE}
 - {_INJECTION_DEFENSE}
 
 {_TOOL_CALL_PROTOCOL}"""
@@ -210,6 +231,7 @@ con [N].
 ## Reglas
 
 - {_CITATION_RULES}
+- {_NO_TRAINING_DATA_RULE}
 - {_INJECTION_DEFENSE}
 
 {_TOOL_CALL_PROTOCOL}"""
@@ -244,7 +266,8 @@ siempre con fecha y unidad.
 
 ## Reglas
 
-- No inventes cifras: toda cifra viene de las herramientas.
+- {_NO_TRAINING_DATA_RULE}
+- {_DATA_CURRENCY_RULE}
 - {_INJECTION_DEFENSE}
 
 {_TOOL_CALL_PROTOCOL}"""

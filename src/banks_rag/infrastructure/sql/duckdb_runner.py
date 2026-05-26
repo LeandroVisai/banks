@@ -41,3 +41,28 @@ def serialize_value(val: Any) -> Any:
     if callable(iso):
         return iso()
     return val
+
+
+def last_date_in_rows(rows: list[dict]) -> str | None:
+    """Extrae la fecha más reciente que aparece en los resultados.
+
+    Busca columnas cuyo nombre contenga 'fecha' o 'date' (case-insensitive)
+    y retorna el valor máximo como ISO string. Retorna None si no hay columna
+    de fecha o si todas las filas son None.
+    """
+    if not rows:
+        return None
+    date_cols = [
+        k for k in rows[0]
+        if "fecha" in k.lower() or "date" in k.lower()
+    ]
+    if not date_cols:
+        return None
+    col = date_cols[0]
+    values = [r[col] for r in rows if r.get(col) is not None]
+    if not values:
+        return None
+    try:
+        return max(str(v)[:10] for v in values)
+    except Exception:
+        return None

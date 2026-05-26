@@ -1,0 +1,1729 @@
+# sql_catalog/parquet_catalog.yaml
+# Catálogo de datasets analíticos en data_pipeline/parquet/
+#
+# Cada entrada describe un parquet con su esquema, rango de fechas y contexto
+# de negocio. El agente usa list_parquets para descubrir el dataset correcto
+# y query_parquet para ejecutar DuckDB SQL libre sobre él.
+#
+# Convención de nombres de columna en SQL: usar comillas dobles si el nombre
+# tiene espacios o acentos (ej. "RT Exigible", "Monto transado").
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: "1.0"
+parquet_dir: data_pipeline/parquet   # relativo a la raíz del repo
+
+datasets:
+
+  # ── BALANCE BANCARIO ─────────────────────────────────────────────────────
+
+  - id: act_mn
+    file: act_mn.parquet
+    name: "Activos bancarios en moneda nacional"
+    description: >
+      Balance de activos del sistema bancario chileno en pesos (MN) por banco,
+      tipo (Sistémico / Otros) y categoría (Colocaciones, Inversiones, Otros activos,
+      Reservas bancarias). Útil para analizar la composición de activos CLP
+      por institución y comparar bancos sistémicos vs resto.
+    segment: balance_bancario
+    unit: MM CLP
+    date_range: ["2017-11-17", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Banco, type: VARCHAR, values: [BBVA, BCI, BICE, BTG, "Bank of China", Chile, "China Construction Bank", Consorcio, "Do Brasil", Estado, Falabella, HSBC, Internacional, "Itaú-Corpbanca", "JP Morgan", "Nación Argentina", Ripley, Santander, Scotiabank, Security, Tanner, Tokyo]}
+      - {name: Tipo_banco, type: VARCHAR, values: ["Bancos Sistemicos", "Otros Bancos"]}
+      - {name: Categoria_general, type: VARCHAR, values: [Colocaciones, Inversiones, "Otros activos", "Reservas bancarias"]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: act_mx
+    file: act_mx.parquet
+    name: "Activos bancarios en moneda extranjera"
+    description: >
+      Balance de activos del sistema bancario chileno denominados en moneda
+      extranjera (MX/USD) por banco, tipo y categoría. Permite analizar
+      la exposición en dólares de cada institución y del sistema en su conjunto.
+    segment: balance_bancario
+    unit: MM USD
+    date_range: ["2017-11-17", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Banco, type: VARCHAR, values: [BCI, BICE, BTG, "Bank of China", Chile, "China Construction Bank", Consorcio, "Do Brasil", Estado, Falabella, HSBC, Internacional, "Itaú-Corpbanca", "JP Morgan", "Nación Argentina", Ripley, Santander, Scotiabank, Security, Tanner, Tokyo]}
+      - {name: Tipo_banco, type: VARCHAR, values: ["Bancos Sistemicos", "Otros Bancos"]}
+      - {name: Categoria_general, type: VARCHAR, values: [Colocaciones, Inversiones, "Otros activos", "Reservas bancarias"]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: pas_mn
+    file: pas_mn.parquet
+    name: "Pasivos bancarios en moneda nacional"
+    description: >
+      Balance de pasivos del sistema bancario en pesos (MN) por banco, tipo y
+      categoría (Bonos, Cuentas corrientes, Cuentas de ahorro, Depósitos a plazo,
+      Oblig. con bancos, Otros pasivos, Saldos vista). Refleja la estructura
+      de fondeo en CLP del sistema.
+    segment: balance_bancario
+    unit: MM CLP
+    date_range: ["2017-11-17", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Banco, type: VARCHAR, values: [BBVA, BCI, BICE, BTG, "Bank of China", Chile, "China Construction Bank", Consorcio, "Do Brasil", Estado, Falabella, HSBC, Internacional, "Itaú-Corpbanca", "JP Morgan", "Nación Argentina", Ripley, Santander, Scotiabank, Security, Tanner, Tokyo]}
+      - {name: Tipo_banco, type: VARCHAR, values: ["Bancos Sistemicos", "Otros Bancos"]}
+      - {name: Categoria_general, type: VARCHAR, values: [Bonos, "Cuentas corrientes", "Cuentas de ahorro", "Depósitos a plazo", "Oblig. con bancos", "Otros pasivos", "Saldos vista"]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: pas_mx
+    file: pas_mx.parquet
+    name: "Pasivos bancarios en moneda extranjera"
+    description: >
+      Balance de pasivos del sistema bancario en moneda extranjera (USD) por banco,
+      tipo y categoría. Refleja la estructura de fondeo en dólares: bonos, depósitos
+      a plazo, obligaciones con bancos corresponsales, etc.
+    segment: balance_bancario
+    unit: MM USD
+    date_range: ["2017-11-17", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Banco, type: VARCHAR, values: [BBVA, BCI, BICE, BTG, "Bank of China", Chile, "China Construction Bank", Consorcio, "Do Brasil", Estado, Falabella, HSBC, Internacional, "Itaú-Corpbanca", "JP Morgan", "Nación Argentina", Ripley, Santander, Scotiabank, Security, Tanner, Tokyo]}
+      - {name: Tipo_banco, type: VARCHAR, values: ["Bancos Sistemicos", "Otros Bancos"]}
+      - {name: Categoria_general, type: VARCHAR, values: [Bonos, "Cuentas corrientes", "Cuentas de ahorro", "Depósitos a plazo", "Oblig. con bancos", "Otros pasivos", "Saldos vista"]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: bonos_y_dap
+    file: bonos_y_dap.parquet
+    name: "Stock de bonos bancarios y DAP por banco"
+    description: >
+      Stock de bonos bancarios (BB) y depósitos a plazo (DAP) emitidos por cada
+      banco. Permite ver la composición del fondeo de mercado vs depósitos de
+      clientes por institución. Útil para análisis de tensiones de fondeo.
+    segment: balance_bancario
+    unit: MM CLP
+    date_range: ["2017-11-17", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Banco, type: VARCHAR, values: [BBVA, BCI, BICE, BTG, "Bank of China", Chile, "China Construction Bank", Consorcio, "Do Brasil", Estado, Falabella, HSBC, Internacional, "Itaú-Corpbanca", "JP Morgan", "Nación Argentina", Ripley, Santander, Scotiabank, Security, Tanner, Tokyo]}
+      - {name: "Categoria general", type: VARCHAR, values: [BB, DAP]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: bonos_y_dap_por_categoria
+    file: bonos_y_dap_por_categoria.parquet
+    name: "Bonos bancarios y DAP por categoría (vista alternativa)"
+    description: >
+      Mismo contenido que bonos_y_dap pero organizado para análisis por categoría
+      de instrumento (BB vs DAP). Usar este cuando la pregunta es sobre la
+      distribución total del sistema entre bonos y depósitos.
+    segment: balance_bancario
+    unit: MM CLP
+    date_range: ["2017-11-17", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Banco, type: VARCHAR, values: [BBVA, BCI, BICE, BTG, "Bank of China", Chile, "China Construction Bank", Consorcio, "Do Brasil", Estado, Falabella, HSBC, Internacional, "Itaú-Corpbanca", "JP Morgan", "Nación Argentina", Ripley, Santander, Scotiabank, Security, Tanner, Tokyo]}
+      - {name: "Categoria general", type: VARCHAR, values: [BB, DAP]}
+      - {name: Monto, type: DOUBLE}
+
+  # ── RENTA FIJA CHILE ──────────────────────────────────────────────────────
+
+  - id: btp_curva
+    file: btp_curva.parquet
+    name: "Curva BTP completa por tenor"
+    description: >
+      Tasas de rendimiento de los Bonos del Banco Central de Chile en pesos (BTP)
+      para todos los plazos: 1Y, 2Y, 5Y, 7Y, 10Y, 15Y, 20Y, 25Y, 30Y.
+      Curva soberana nominal en CLP. Columnas Variable y Tenor contienen el plazo.
+    segment: renta_fija_chile
+    unit: "% anual"
+    date_range: ["2020-01-29", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Variable, type: VARCHAR, values: ["1Y", "2Y", "5Y", "7Y", "10Y", "15Y", "20Y", "25Y", "30Y"]}
+      - {name: Valor, type: DOUBLE}
+      - {name: Tenor, type: VARCHAR, values: ["1Y", "2Y", "5Y", "7Y", "10Y", "15Y", "20Y", "25Y", "30Y"]}
+
+  - id: btp_plazo
+    file: btp_plazo.parquet
+    name: "BTP por plazo seleccionado (2Y, 5Y, 10Y, 20Y)"
+    description: >
+      Tasas BTP en los plazos de referencia más usados: 2Y, 5Y, 10Y y 20Y.
+      Versión compacta de la curva BTP, conveniente para análisis de pendiente
+      y comparación histórica en plazos estándar.
+    segment: renta_fija_chile
+    unit: "% anual"
+    date_range: ["2020-01-29", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["2Y", "5Y", "10Y", "20Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: btu_curva
+    file: btu_curva.parquet
+    name: "Curva BTU completa por tenor"
+    description: >
+      Tasas reales de los Bonos del Banco Central en Unidades de Fomento (BTU)
+      para plazos 2Y, 5Y, 7Y, 10Y, 15Y, 20Y, 25Y, 30Y. Curva soberana real.
+      La diferencia BTP-BTU aproxima el break-even de inflación (BEI).
+    segment: renta_fija_chile
+    unit: "% anual real"
+    date_range: ["2020-01-29", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Variable, type: VARCHAR, values: ["2Y", "5Y", "7Y", "10Y", "15Y", "20Y", "25Y", "30Y"]}
+      - {name: Valor, type: DOUBLE}
+      - {name: Tenor, type: VARCHAR, values: ["2Y", "5Y", "7Y", "10Y", "15Y", "20Y", "25Y", "30Y"]}
+
+  - id: btu_plazo
+    file: btu_plazo.parquet
+    name: "BTU por plazo seleccionado (2Y, 5Y, 10Y, 20Y)"
+    description: >
+      Tasas BTU en los plazos de referencia 2Y, 5Y, 10Y y 20Y.
+      Versión compacta de la curva real BTU para análisis de pendiente
+      y comparaciones históricas de tasas reales en Chile.
+    segment: renta_fija_chile
+    unit: "% anual real"
+    date_range: ["2020-01-29", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["2Y", "5Y", "10Y", "20Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: bei_btp_btu_plazo
+    file: bei_btp_btu_plazo.parquet
+    name: "Break-even de inflación BTP-BTU (2Y, 5Y, 10Y, 20Y)"
+    description: >
+      Break-even de inflación (BEI) implícito calculado como diferencia entre
+      BTP (nominal) y BTU (real) en plazos 2Y, 5Y, 10Y y 20Y. Refleja las
+      expectativas de inflación de largo plazo incorporadas en los precios de mercado.
+    segment: renta_fija_chile
+    unit: "% anual (pb / 100)"
+    date_range: ["2020-01-29", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["2Y", "5Y", "10Y", "20Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: pendiente_btp_btu
+    file: pendiente_btp_btu.parquet
+    name: "Pendiente de curva BTP y BTU (10Y-2Y, 10Y-5Y)"
+    description: >
+      Pendiente (slope) de la curva nominal BTP y real BTU en los tramos
+      10Y-2Y y 10Y-5Y. Positivo = curva empinada, negativo = curva invertida.
+      Indicador clave de expectativas de ciclo monetario.
+    segment: renta_fija_chile
+    unit: "puntos base"
+    date_range: ["2021-03-26", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["BTP_10-2", "BTP_10-5", "BTU_10-2", "BTU_10-5"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spc_hist
+    file: spc_hist.parquet
+    name: "Swap Promedio Cámara CLP histórico por tenor"
+    description: >
+      Tasas del Swap Promedio Cámara (SPC) en pesos chilenos por tenor:
+      3M, 6M, 9M, 12M, 18M, 2Y, 5Y, 10Y. El SPC es la tasa swap CLP referenciada
+      a la TPM overnight. Refleja las expectativas del mercado sobre la TPM.
+    segment: renta_fija_chile
+    unit: "% anual"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "18M", "2Y", "5Y", "10Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spc_curve
+    file: spc_curve.parquet
+    name: "Curva SPC completa (Variable + Tenor)"
+    description: >
+      Curva SPC con columnas Variable y Tenor (mismos datos que spc_hist en
+      formato alternativo con columna extra). Usar para análisis de curva
+      completa en formato largo con ambas columnas disponibles.
+    segment: renta_fija_chile
+    unit: "% anual"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Variable, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "18M", "2Y", "5Y", "10Y"]}
+      - {name: Valor, type: DOUBLE}
+      - {name: Tenor, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "18M", "2Y", "5Y", "10Y"]}
+
+  - id: spc_plazo
+    file: spc_plazo.parquet
+    name: "SPC por plazo (formato Variable/Tenor)"
+    description: >
+      SPC CLP por plazo en formato con Variable y Tenor. Equivalente a spc_curve.
+      Útil cuando la lógica de query requiere filtrar por Variable y Tenor por separado.
+    segment: renta_fija_chile
+    unit: "% anual"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Variable, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "18M", "2Y", "5Y", "10Y"]}
+      - {name: Valor, type: DOUBLE}
+      - {name: Tenor, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "18M", "2Y", "5Y", "10Y"]}
+
+  - id: spc_ois_var
+    file: spc_ois_var.parquet
+    name: "SPC y OIS CLP en paralelo por tenor"
+    description: >
+      Tasas SPC y OIS en CLP juntas por tenor (3M-10Y). Permite comparar
+      los dos benchmarks de tasas overnight en Chile y calcular el spread
+      SPC-OIS como indicador de tensión en el mercado interbancario CLP.
+    segment: renta_fija_chile
+    unit: "% anual"
+    date_range: ["2019-01-01", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: [OIS, SPC]}
+      - {name: Tenor, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "18M", "2Y", "5Y", "10Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: ois_hist
+    file: ois_hist.parquet
+    name: "OIS CLP histórico por tenor"
+    description: >
+      Tasas del Overnight Index Swap (OIS) en pesos chilenos por tenor
+      3M, 6M, 9M, 12M, 18M, 2Y, 5Y, 10Y. Refleja las expectativas puras
+      de la TPM sin prima de riesgo de crédito. Histórico desde 2019.
+    segment: renta_fija_chile
+    unit: "% anual"
+    date_range: ["2019-01-01", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "18M", "2Y", "5Y", "10Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: ois_plazo
+    file: ois_plazo.parquet
+    name: "OIS CLP por plazo (formato Variable/Tenor)"
+    description: >
+      OIS CLP con columnas Variable y Tenor. Mismo contenido que ois_hist
+      en formato alternativo. Usar cuando la query necesita filtrar
+      por Variable y Tenor simultáneamente.
+    segment: renta_fija_chile
+    unit: "% anual"
+    date_range: ["2019-01-01", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Variable, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "18M", "2Y", "5Y", "10Y"]}
+      - {name: Valor, type: DOUBLE}
+      - {name: Tenor, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "18M", "2Y", "5Y", "10Y"]}
+
+  - id: ci_spc
+    file: ci_spc.parquet
+    name: "Curva implícita de TPM en SPC (2Y, 5Y, 10Y)"
+    description: >
+      Tasa de política monetaria implícita derivada de la curva SPC en plazos
+      2Y, 5Y y 10Y. Mide la TPM forward promedio para cada horizonte según
+      el mercado de swaps. Indicador de expectativas monetarias de largo plazo.
+    segment: renta_fija_chile
+    unit: "% anual"
+    date_range: ["2022-01-03", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["2Y", "5Y", "10Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spread_btp_spc
+    file: spread_btp_spc.parquet
+    name: "Spread BTP vs SPC en plazos 5Y y 10Y"
+    description: >
+      Diferencial entre la tasa del bono soberano BTP y el swap SPC en los
+      plazos de 5Y y 10Y. El spread positivo refleja prima de riesgo soberano
+      y/o liquidez. Indicador de valoración relativa de bonos BCCh vs swaps.
+    segment: renta_fija_chile
+    unit: "puntos base"
+    date_range: ["2020-11-24", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["5Y", "10Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spread_btp_ust
+    file: spread_btp_ust.parquet
+    name: "Spread BTP vs US Treasury en plazos 5Y y 10Y"
+    description: >
+      Diferencial de tasas entre bonos soberanos chilenos (BTP) y US Treasuries
+      en plazos 5Y y 10Y. Medida de riesgo-país implícito en tasas nominales.
+      Útil para análisis de convergencia/divergencia con tasas externas.
+    segment: renta_fija_chile
+    unit: "puntos base"
+    date_range: ["2020-11-24", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["5Y", "10Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spread_swap_ois
+    file: spread_swap_ois.parquet
+    name: "Spread SPC vs OIS CLP por tenor (análogo Libor-OIS)"
+    description: >
+      Spread entre el Swap Promedio Cámara (SPC) y el OIS en CLP por tenor
+      (3M-10Y). Equivalente local al spread Libor-OIS internacional. Un spread
+      elevado indica tensión o desconfianza en el sistema interbancario chileno.
+    segment: renta_fija_chile
+    unit: "puntos base"
+    date_range: ["2006-05-03", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "2Y", "5Y", "10Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: monto_btpbtu
+    file: monto_btpbtu.parquet
+    name: "Monto transado de BTP y BTU en mercado secundario"
+    description: >
+      Monto diario transado de Bonos del BCCh en pesos (BTP) y en UF (BTU)
+      en el mercado secundario. Indicador de liquidez y actividad del mercado
+      de renta fija soberana chilena.
+    segment: renta_fija_chile
+    unit: MM CLP
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: BTP, type: DOUBLE}
+      - {name: BTU, type: DOUBLE}
+
+  - id: monto_bc
+    file: monto_bc.parquet
+    name: "Monto transado de bonos BCCh (BTP+BTU agregado)"
+    description: >
+      Monto diario total transado de todos los bonos del Banco Central de Chile
+      (BTP y BTU combinados) en el mercado secundario. Serie agregada de
+      actividad en el mercado de deuda soberana.
+    segment: renta_fija_chile
+    unit: MM USD
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Monto_USD, type: DOUBLE}
+
+  - id: monto_bb
+    file: monto_bb.parquet
+    name: "Monto transado de bonos bancarios (BB)"
+    description: >
+      Monto diario transado de Bonos Bancarios (BB) en el mercado secundario.
+      Indicador de liquidez del mercado de deuda privada bancaria chilena.
+      Complementa los datos de monto de bonos soberanos (BTP/BTU).
+    segment: renta_fija_chile
+    unit: MM USD
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Monto_USD, type: DOUBLE}
+
+  - id: vol_btpbtu
+    file: vol_btpbtu.parquet
+    name: "Volatilidad de precios BTP y BTU"
+    description: >
+      Volatilidad diaria de precios de los bonos BCCh nominales (BTP) y reales
+      (BTU). Medida de riesgo de mercado en renta fija soberana chilena.
+      Útil para analizar períodos de stress en el mercado de bonos.
+    segment: renta_fija_chile
+    unit: "% diario"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: BTP, type: DOUBLE}
+      - {name: BTU, type: DOUBLE}
+
+  - id: volatilidad_bb
+    file: volatilidad_bb.parquet
+    name: "Volatilidad de precios de bonos bancarios (BB)"
+    description: >
+      Volatilidad diaria de precios de los Bonos Bancarios (BB) en el mercado
+      secundario. Complementa la volatilidad de bonos soberanos para análisis
+      de riesgo comparado entre deuda pública y privada bancaria.
+    segment: renta_fija_chile
+    unit: "% diario"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: BB, type: DOUBLE}
+
+  # ── EXPECTATIVAS DE TASAS E INFLACIÓN ────────────────────────────────────
+
+  - id: expectativas_inflacion
+    file: expectativas_inflacion.parquet
+    name: "Expectativas de inflación implícitas en mercado"
+    description: >
+      Expectativas de inflación derivadas del mercado para tres horizontes:
+      12M (próximos 12 meses), 1en1 (un año en un año, forward) y dic26
+      (expectativa para diciembre 2026). Reflejan las proyecciones del mercado
+      sobre la inflación chilena en distintos horizontes temporales.
+    segment: expectativas
+    unit: "% anual"
+    date_range: ["2022-01-03", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["12M", "1en1", "dic26"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: inflacion_wti
+    file: inflacion_wti.parquet
+    name: "Expectativas de inflación y precio del petróleo WTI"
+    description: >
+      Panel que combina expectativas de inflación de mercado (12M, dic26, 1en1)
+      con el precio del petróleo WTI (USD/barril). Permite analizar la relación
+      entre el precio del crudo y las expectativas inflacionarias en Chile.
+    segment: expectativas
+    unit: "% anual y USD/bbl"
+    date_range: ["2022-01-03", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: "12M", type: DOUBLE}
+      - {name: dic26, type: DOUBLE}
+      - {name: "1en1", type: DOUBLE}
+      - {name: Petroleo, type: DOUBLE}
+
+  - id: mipr_cl_curve
+    file: mipr_cl_curve.parquet
+    name: "Curva MIPR Chile por tenor (3M-2Y)"
+    description: >
+      Curva MIPR (tasa de swap interbancaria promedio implícita en Chile) por tenor:
+      3M, 6M, 9M, 12M y 2Y. Refleja las expectativas del mercado sobre la TPM
+      del BCCh en distintos horizontes. Indicador clave de política monetaria.
+    segment: expectativas
+    unit: "% anual"
+    date_range: ["2020-01-02", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "2Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: mipr_cl_plazo
+    file: mipr_cl_plazo.parquet
+    name: "MIPR Chile por plazo (Variable + Tenor)"
+    description: >
+      MIPR Chile con columnas Variable y Tenor para análisis más flexible.
+      Mismo contenido que mipr_cl_curve en formato con columna extra.
+      Usar cuando la query necesita filtrar por Variable y Tenor.
+    segment: expectativas
+    unit: "% anual"
+    date_range: ["2020-01-02", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Variable, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "2Y"]}
+      - {name: Valor, type: DOUBLE}
+      - {name: Tenor, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "2Y"]}
+
+  - id: mipr_us_plazo
+    file: mipr_us_plazo.parquet
+    name: "MIPR EEUU por plazo (OIS-SOFR equivalente)"
+    description: >
+      MIPR EEUU —swap overnight referenciado a SOFR— por tenor 3M, 6M, 9M,
+      12M y 2Y. Equivalente americano del MIPR Chile; refleja las expectativas
+      del mercado sobre la tasa Fed Funds. Permite comparaciones CL vs US.
+    segment: expectativas
+    unit: "% anual"
+    date_range: ["2020-01-02", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Variable, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "2Y"]}
+      - {name: Valor, type: DOUBLE}
+      - {name: Tenor, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "2Y"]}
+
+  - id: mipr_var
+    file: mipr_var.parquet
+    name: "MIPR Chile y EEUU en paralelo por tenor"
+    description: >
+      MIPR de Chile (CL) y EEUU (US) en el mismo dataset por tenor.
+      Permite comparar directamente las expectativas de política monetaria
+      en ambos países y calcular el diferencial implícito CL-US.
+    segment: expectativas
+    unit: "% anual"
+    date_range: ["2020-01-02", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: [CL, US]}
+      - {name: Tenor, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "2Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: mipr_spread_hist
+    file: mipr_spread_hist.parquet
+    name: "Spread MIPR CL-US histórico por tenor"
+    description: >
+      Spread histórico entre MIPR Chile y MIPR EEUU por tenor (3M-2Y).
+      Mide el diferencial implícito de expectativas de tasas entre Chile y EEUU.
+      Útil para analizar la convergencia/divergencia de política monetaria.
+    segment: expectativas
+    unit: "puntos base"
+    date_range: ["2020-01-02", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "2Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spread_tpm_fed_imp
+    file: spread_tpm_fed_imp.parquet
+    name: "Spread implícito TPM Chile vs Fed Funds por plazo"
+    description: >
+      Spread entre la TPM implícita en Chile y la tasa Fed Funds implícita en EEUU
+      por plazo (3M, 6M, 9M, 12M, 2Y). Serie histórica desde 2012. Mide el
+      diferencial de política monetaria esperado entre ambos países.
+    segment: expectativas
+    unit: "puntos base"
+    date_range: ["2012-07-06", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "2Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spread_cl_us_curve
+    file: spread_cl_us_curve.parquet
+    name: "Spread curva CL-US por tenor"
+    description: >
+      Spread entre tasas swap CL (MIPR/SPC) y US (OIS-SOFR) por tenor (3M-2Y).
+      Mide la prima de riesgo/diferencial de tasas entre Chile y EEUU
+      en distintos horizontes de la curva de swaps.
+    segment: expectativas
+    unit: "puntos base"
+    date_range: ["2020-01-02", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["3M", "6M", "9M", "12M", "2Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  # ── MERCADO CAMBIARIO ─────────────────────────────────────────────────────
+
+  - id: clp_monto
+    file: clp_monto.parquet
+    name: "Tipo de cambio CLP y monto transado en spot"
+    description: >
+      Tipo de cambio USD/CLP spot y monto transado diario en el mercado
+      interbancario. Combina el nivel del tipo de cambio con la profundidad
+      del mercado spot en la misma serie temporal.
+    segment: mercado_cambiario
+    unit: "CLP y MM USD"
+    date_range: ["2022-01-05", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: CLP, type: DOUBLE}
+      - {name: "Monto transado", type: DOUBLE}
+
+  - id: cobre_dxy
+    file: cobre_dxy.parquet
+    name: "Precio del cobre y DXY (índice dólar)"
+    description: >
+      Serie diaria del precio del cobre y el DXY (índice del dólar americano
+      frente a canasta de monedas). IMPORTANTE: la columna Cobre está en
+      US centavos por libra (USc/lb); para obtener USD/lb divide por 100.
+      Ejemplo: Cobre=624.9 USc/lb = 6.249 USD/lb. Refleja dos determinantes
+      clave del tipo de cambio CLP.
+    segment: mercado_cambiario
+    unit: "USc/lb (Cobre) e índice (DXY)"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Cobre, type: DOUBLE, note: "USc/lb — dividir por 100 para USD/lb"}
+      - {name: DXY, type: DOUBLE}
+
+  - id: petroleo_tcn
+    file: petroleo_tcn.parquet
+    name: "Precio del petróleo WTI y TCN USD/CLP"
+    description: >
+      Precio del petróleo WTI (USD/barril) y Tipo de Cambio Nominal (TCN)
+      USD/CLP en el mismo panel. Permite analizar el efecto del precio del
+      crudo sobre el tipo de cambio chileno.
+    segment: mercado_cambiario
+    unit: "USD/bbl y CLP"
+    date_range: ["2022-01-03", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: TCN, type: DOUBLE}
+      - {name: Petroleo, type: DOUBLE}
+
+  - id: bid_ask
+    file: bid_ask.parquet
+    name: "Spread bid-ask promedio en mercado spot USD/CLP"
+    description: >
+      Spread promedio de puntas bid-ask en el mercado spot USD/CLP.
+      Indicador de microestructura y liquidez del mercado cambiario chileno.
+      Serie larga desde 2013; un spread mayor indica menor liquidez.
+    segment: mercado_cambiario
+    unit: "%"
+    date_range: ["2013-01-11", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Promedio_puntas, type: DOUBLE}
+
+  - id: volatilidad_precio
+    file: volatilidad_precio.parquet
+    name: "Volatilidad diaria en mercado spot cambiario"
+    description: >
+      Volatilidad diaria de precios en el mercado spot (USD/CLP).
+      Medida de riesgo de mercado cambiario en Chile desde 2021.
+      Complementa el spread bid-ask como indicador de microestructura.
+    segment: mercado_cambiario
+    unit: "% diario"
+    date_range: ["2021-01-04", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Volatilidad_diaria, type: DOUBLE}
+
+  - id: forward_points
+    file: forward_points.parquet
+    name: "Forward points USD/CLP por plazo (1M-12M)"
+    description: >
+      Puntos forward del tipo de cambio USD/CLP en plazos 1M, 3M, 6M y 12M.
+      Los forward points reflejan el diferencial de tasas entre CLP y USD.
+      Útil para analizar expectativas de corto plazo y cobertura cambiaria.
+    segment: mercado_cambiario
+    unit: "CLP (puntos forward)"
+    date_range: ["2025-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["1M", "3M", "6M", "12M"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: flujo_cambiario
+    file: flujo_cambiario.parquet
+    name: "Flujo cambiario diario por sector (spot + forward)"
+    description: >
+      Flujo cambiario neto (compras - ventas) en spot y forward por sector:
+      AFP, BCCh, Bancos, CB (corredores de bolsa), CS (compañías de seguro),
+      FFMM, Mineras, NR (no residentes), TGR y Otros. Fecha en formato VARCHAR
+      (YYYY-MM-DD). Clave para entender presiones cambiarias por actor.
+    segment: mercado_cambiario
+    unit: MM USD
+    date_range: ["2024-01-02", "2026-05-19"]
+    columns:
+      - {name: Fecha, type: VARCHAR}
+      - {name: Grupo_Sector, type: VARCHAR, values: [AFP, BCCh, Bancos, CB, CS, "Emp_financiera", "Emp_real", FFMM, Mineras, NR, Otros, TGR]}
+      - {name: Spot, type: DOUBLE}
+      - {name: Forward, type: DOUBLE}
+
+  - id: flujo_spot_csv
+    file: flujo_spot_csv.parquet
+    name: "Flujo spot de Compañías de Seguro (CSV)"
+    description: >
+      Flujo spot diario de Compañías de Seguro de Vida (CSV) en el mercado
+      cambiario, desagregado entre Afecto y No Afecto a la norma cambiaria.
+      Datos desde 2025; útil para analizar flujos de gestión de activos externos.
+    segment: mercado_cambiario
+    unit: MM USD
+    date_range: ["2025-01-02", "2026-05-18"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: "No Afecto", type: DOUBLE}
+      - {name: Afecto, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+
+  - id: flujo_spot_nr
+    file: flujo_spot_nr.parquet
+    name: "Flujo spot de No Residentes (NR)"
+    description: >
+      Flujo spot diario de No Residentes (NR/inversores extranjeros) en el
+      mercado cambiario chileno, desagregado entre Afecto y No Afecto.
+      Desde 2025; indicador de presiones cambiarias de flujos externos.
+    segment: mercado_cambiario
+    unit: MM USD
+    date_range: ["2025-01-02", "2026-05-18"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: "No Afecto", type: DOUBLE}
+      - {name: Afecto, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+
+  - id: fixing_banca_sector
+    file: fixing_banca_sector.parquet
+    name: "Fixing cambiario del día por banco y sector contraparte"
+    description: >
+      Snapshot del fixing cambiario del día actual desagregado por banco
+      informante (BCI, Santander, Estado…) y sector contraparte (AFP, Bancos,
+      CB, CS, FFMM, NR, Emp_real, Otros). Monto neto en MM USD.
+    segment: mercado_cambiario
+    unit: MM USD (snapshot diario)
+    date_range: null
+    columns:
+      - {name: NombreInformanteNorm, type: VARCHAR, values: [BCI, BICE, BTG, Chile, Consorcio, Estado, Falabella, HSBC, Internacional, "Itaú-Corpbanca", "JP Morgan", Santander, Scotiabank, Total]}
+      - {name: AFP, type: DOUBLE}
+      - {name: Bancos, type: BIGINT}
+      - {name: CB, type: DOUBLE}
+      - {name: CS, type: DOUBLE}
+      - {name: FFMM, type: DOUBLE}
+      - {name: NR, type: DOUBLE}
+      - {name: Emp_real, type: DOUBLE}
+      - {name: Otros, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+
+  - id: fixing_por_fecha
+    file: fixing_por_fecha.parquet
+    name: "Fixing cambiario por temporalidad (Hoy, Ayer, 1w, 2w, 1m)"
+    description: >
+      Snapshot del fixing cambiario acumulado por temporalidad (Hoy, Ayer,
+      última semana, últimas 2 semanas, último mes) desagregado por sector.
+      Útil para analizar flujos cambiarios recientes del mercado.
+    segment: mercado_cambiario
+    unit: MM USD (snapshot)
+    date_range: null
+    columns:
+      - {name: Temporalidad, type: VARCHAR, values: [Hoy, Ayer, "1w", "2w", "1m"]}
+      - {name: AFP, type: DOUBLE}
+      - {name: Bancos, type: DOUBLE}
+      - {name: CB, type: DOUBLE}
+      - {name: CS, type: DOUBLE}
+      - {name: Emp_real, type: DOUBLE}
+      - {name: FFMM, type: DOUBLE}
+      - {name: NR, type: DOUBLE}
+      - {name: Otros, type: DOUBLE}
+      - {name: Emp_financiera, type: DOUBLE}
+      - {name: BCCh, type: BIGINT}
+      - {name: Neto, type: DOUBLE}
+
+  - id: cambiario_afp
+    file: cambiario_afp.parquet
+    name: "Flujo cambiario semanal de AFP por administradora"
+    description: >
+      Flujo cambiario semanal de cada AFP (Capital, Cuprum, Habitat, Modelo,
+      Planvital, Provida, Uno) en spot y forward. Snapshot de la semana más
+      reciente según el _title_override. Útil para ver quién compra/vende.
+    segment: mercado_cambiario
+    unit: MM USD (semanal)
+    date_range: null
+    columns:
+      - {name: Sector_contraparte, type: VARCHAR, values: [Capital, Cuprum, Habitat, Modelo, Planvital, Provida, Uno]}
+      - {name: Spot, type: DOUBLE}
+      - {name: Forward, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+      - {name: _title_override, type: VARCHAR}
+
+  - id: var_moneda_1w
+    file: var_moneda_1w.parquet
+    name: "Variación semanal de monedas LATAM y comparables"
+    description: >
+      Nivel spot semanal de 11 monedas: CLP, DXY, MXN, BRL, COP, PEN
+      (LATAM), KRW, CZK, PLN, AUD, NZD (comparables/commodities). Permite
+      calcular variaciones semanales y comparar el CLP con su grupo de pares.
+    segment: mercado_cambiario
+    unit: "nivel spot"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: CLP, type: DOUBLE}
+      - {name: DXY, type: DOUBLE}
+      - {name: MXN, type: DOUBLE}
+      - {name: BRL, type: DOUBLE}
+      - {name: COP, type: DOUBLE}
+      - {name: PEN, type: DOUBLE}
+      - {name: KRW, type: DOUBLE}
+      - {name: CZK, type: DOUBLE}
+      - {name: PLN, type: DOUBLE}
+      - {name: AUD, type: DOUBLE}
+      - {name: NZD, type: DOUBLE}
+
+  - id: var_moneda_ytd
+    file: var_moneda_ytd.parquet
+    name: "Variación YTD de monedas LATAM y comparables"
+    description: >
+      Mismas 11 monedas que var_moneda_1w pero en nivel diario para calcular
+      variación year-to-date (YTD). Permite comparar el desempeño anual del CLP
+      frente a pesos latinoamericanos y monedas de países exportadores de commodities.
+    segment: mercado_cambiario
+    unit: "nivel spot"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: CLP, type: DOUBLE}
+      - {name: DXY, type: DOUBLE}
+      - {name: MXN, type: DOUBLE}
+      - {name: BRL, type: DOUBLE}
+      - {name: COP, type: DOUBLE}
+      - {name: PEN, type: DOUBLE}
+      - {name: KRW, type: DOUBLE}
+      - {name: CZK, type: DOUBLE}
+      - {name: PLN, type: DOUBLE}
+      - {name: AUD, type: DOUBLE}
+      - {name: NZD, type: DOUBLE}
+
+  # ── POSICIONES CAMBIARIAS POR SECTOR ──────────────────────────────────────
+
+  - id: posicion_csv_cambiario
+    file: posicion_csv_cambiario.parquet
+    name: "Posición cambiaria de CSV por plazo"
+    description: >
+      Posición cambiaria neta de Compañías de Seguro de Vida (CSV) desagregada
+      en tramos de plazo: 1-90 días, 91-360 días y mayor a 360 días.
+      Serie desde 2014; mide la exposición neta en USD de las aseguradoras.
+    segment: posiciones_cambiarias
+    unit: MM USD
+    date_range: ["2014-01-02", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: "1 a 90 dias", type: DOUBLE}
+      - {name: "91 a 360 dias", type: DOUBLE}
+      - {name: "Mayor a 360 dias", type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+
+  - id: posicion_nr_derivados
+    file: posicion_nr_derivados.parquet
+    name: "Posición de No Residentes en derivados cambiarios por plazo"
+    description: >
+      Posición de No Residentes (NR/extranjeros) en derivados cambiarios (forwards
+      y opciones) desagregada por plazo: 1-90 días, 91-360 días, >360 días.
+      Desde 2014; indicador de cobertura/especulación de inversores externos.
+    segment: posiciones_cambiarias
+    unit: MM USD
+    date_range: ["2014-01-02", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Plazo, type: VARCHAR, values: ["1 a 90 dias", "91 a 360 dias", "Mayor a 360 dias"]}
+      - {name: Valor, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+
+  - id: posicion_spot_derivados
+    file: posicion_spot_derivados.parquet
+    name: "Posición spot de TGR en mercado cambiario"
+    description: >
+      Posición spot de la Tesorería General de la República (TGR) en el mercado
+      cambiario. Solo TGR como Agente, Mercado=Spot. Mide las compras/ventas
+      de divisas del Fisco chileno en el mercado cambiario.
+    segment: posiciones_cambiarias
+    unit: MM CLP
+    date_range: ["2014-10-01", "2026-05-18"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Agente, type: VARCHAR, values: [TGR]}
+      - {name: Mercado, type: VARCHAR, values: [Spot]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: posicion_spot_derivados_agen
+    file: posicion_spot_derivados_agen.parquet
+    name: "Posición spot y derivados cambiarios por agente"
+    description: >
+      Posición en spot y derivados cambiarios por agente (AFP, BCCh, CB, CS,
+      Empresas, FFMM, NR, TGR, Otros) y mercado (Spot / Derivados).
+      Desde 2014; visión completa de posiciones cambiarias por sector institucional.
+    segment: posiciones_cambiarias
+    unit: MM CLP
+    date_range: ["2014-10-01", "2026-05-18"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Agente, type: VARCHAR, values: [AFP, BCCh, CB, CS, Empresas, FFMM, NR, Otros, TGR]}
+      - {name: Mercado, type: VARCHAR, values: [Derivados, Spot]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: spot_derivados_afp
+    file: spot_derivados_afp.parquet
+    name: "Posición semanal AFP en spot y derivados cambiarios"
+    description: >
+      Posición semanal agregada de AFP en el mercado spot y en derivados
+      cambiarios (forward/opciones), más la posición neta. Datos recientes
+      (desde nov 2025); muestra la estrategia cambiaria global de las AFP.
+    segment: posiciones_cambiarias
+    unit: MM USD
+    date_range: ["2025-11-19", "2026-05-18"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Derivados, type: DOUBLE}
+      - {name: Spot, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+
+  - id: flujos_spot_ffmm
+    file: flujos_spot_ffmm.parquet
+    name: "Flujo spot semanal de fondos mutuos en mercado cambiario"
+    description: >
+      Flujo neto semanal de fondos mutuos (FFMM) en el mercado spot cambiario.
+      Desde dic 2022; indica si los FFMM son compradores o vendedores netos
+      de divisas en la semana, importante para flujos de corto plazo.
+    segment: posiciones_cambiarias
+    unit: MM USD
+    date_range: ["2022-12-30", "2026-05-18"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Spot, type: DOUBLE}
+
+  # ── SPREADS DE CRÉDITO Y TASAS USD ────────────────────────────────────────
+
+  - id: spreads_dap
+    file: spreads_dap.parquet
+    name: "Spread DAP USD vs SOFR por tenor (1M-12M)"
+    description: >
+      Spread entre Depósitos a Plazo bancarios en dólares (DAP USD) y la tasa
+      SOFR, para plazos 1M, 3M, 6M y 12M. Mide el costo adicional de captación
+      en USD del sistema bancario chileno respecto a la referencia global.
+    segment: spreads_credito
+    unit: "puntos base"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["1M", "3M", "6M", "12M"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spreads_prime
+    file: spreads_prime.parquet
+    name: "Spread Prime USD vs SOFR por tenor (1M-12M)"
+    description: >
+      Spread entre tasas Prime en dólares y SOFR por plazos 1M, 3M, 6M y 12M.
+      Refleja el costo adicional de fondeo prime en dólares para bancos chilenos
+      respecto a la tasa libre de riesgo internacional.
+    segment: spreads_credito
+    unit: "puntos base"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["1M", "3M", "6M", "12M"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spreads_tado
+    file: spreads_tado.parquet
+    name: "Spread TADO vs SOFR por tenor (1M-12M)"
+    description: >
+      Spread entre la Tasa de Depósitos Offshore (TADO) y SOFR por plazos
+      1M, 3M, 6M y 12M. La TADO mide el fondeo offshore de bancos chilenos;
+      su spread sobre SOFR refleja el riesgo país para fondeo externo.
+    segment: spreads_credito
+    unit: "puntos base"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["1M", "3M", "6M", "12M"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spreads_sos
+    file: spreads_sos.parquet
+    name: "Spread SoS (Spread over SOFR) por tenor (1M-12M)"
+    description: >
+      Spread over SOFR (SoS) de instrumentos de fondeo bancario por plazos
+      1M, 3M, 6M y 12M. Indicador sintético del costo de fondeo en USD
+      del sistema bancario chileno sobre la tasa libre de riesgo.
+    segment: spreads_credito
+    unit: "puntos base"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["1M", "3M", "6M", "12M"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spreads_1m
+    file: spreads_1m.parquet
+    name: "Spreads DAP, Prime, TADO y SoS a 1 mes"
+    description: >
+      Panel comparativo de spreads sobre SOFR a 1 mes: DAP-SOFR, Prime-SOFR,
+      SoS y TADO-SOFR. Permite comparar en un solo dataset cómo cada instrumento
+      de captación USD cotiza respecto a la tasa de referencia en el plazo más corto.
+    segment: spreads_credito
+    unit: "puntos base"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["DAP-SOFR", "Prime-SOFR", SoS, "TADO-SOFR"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spreads_3m
+    file: spreads_3m.parquet
+    name: "Spreads DAP, Prime, TADO y SoS a 3 meses"
+    description: >
+      Panel comparativo de spreads sobre SOFR a 3 meses: DAP-SOFR, Prime-SOFR,
+      SoS y TADO-SOFR. Visión completa del mercado de captación USD en el plazo
+      de referencia de 3 meses.
+    segment: spreads_credito
+    unit: "puntos base"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["DAP-SOFR", "Prime-SOFR", SoS, "TADO-SOFR"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spreads_6m
+    file: spreads_6m.parquet
+    name: "Spreads DAP, Prime, TADO y SoS a 6 meses"
+    description: >
+      Panel comparativo de spreads sobre SOFR a 6 meses: DAP-SOFR, Prime-SOFR,
+      SoS y TADO-SOFR. Permite evaluar el costo marginal de fondeo en USD
+      a mediano plazo (6M).
+    segment: spreads_credito
+    unit: "puntos base"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["DAP-SOFR", "Prime-SOFR", SoS, "TADO-SOFR"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spreads_12m
+    file: spreads_12m.parquet
+    name: "Spreads DAP, Prime, TADO y SoS a 12 meses"
+    description: >
+      Panel comparativo de spreads sobre SOFR a 12 meses. El plazo de 12M es
+      relevante para fondeo de mediano plazo y emisiones de bonos. Permite
+      evaluar la curva de costos de captación en USD del sistema.
+    segment: spreads_credito
+    unit: "puntos base"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["DAP-SOFR", "Prime-SOFR", SoS, "TADO-SOFR"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spread_dap_swap
+    file: spread_dap_swap.parquet
+    name: "Spread DAP CLP vs swap SPC en plazos 3M, 6M, 12M"
+    description: >
+      Spread entre Depósitos a Plazo en pesos (DAP CLP) y el Swap Promedio
+      Cámara (SPC) en los plazos 3M, 6M y 12M. Mide la tensión en el
+      mercado de captación bancaria en pesos versus el benchmark de swaps.
+    segment: spreads_credito
+    unit: "puntos base"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["3M", "6M", "12M"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: spread_dap_prime_uf_swap
+    file: spread_dap_prime_uf_swap.parquet
+    name: "Spread DAP-UF y Prime-UF vs SPC"
+    description: >
+      Spread entre DAP en UF y SPC (DAP-SPC), y entre tasa Prime en UF y SPC
+      (Prime-SPC). Mide el diferencial de captación en UF respecto al benchmark
+      de swaps, indicador del mercado de deuda indexada a inflación.
+    segment: spreads_credito
+    unit: "puntos base"
+    date_range: ["2019-01-02", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: ["DAP-SPC", "Prime-SPC"]}
+      - {name: Valor, type: DOUBLE}
+
+  # ── LIQUIDEZ BANCARIA ─────────────────────────────────────────────────────
+
+  - id: lcr
+    file: lcr.parquet
+    name: "LCR en moneda nacional (Sistémico y No Sistémico)"
+    description: >
+      Liquidity Coverage Ratio (LCR) en moneda nacional (MN/CLP) del sistema
+      bancario chileno, por categoría sistémica. El LCR mide la capacidad de los
+      bancos de resistir un escenario de estrés de liquidez de 30 días (mínimo 1.0).
+    segment: liquidez_bancaria
+    unit: "ratio"
+    date_range: ["2019-04-04", "2026-05-12"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Categoria, type: VARCHAR, values: ["Sistémico", "No Sistémico"]}
+      - {name: LCR, type: DOUBLE}
+
+  - id: nsfr
+    file: nsfr.parquet
+    name: "NSFR del sistema bancario (Sistémico y No Sistémico)"
+    description: >
+      Net Stable Funding Ratio (NSFR) del sistema bancario chileno por categoría
+      sistémica. El NSFR mide si el fondeo estable disponible cubre las necesidades
+      de financiamiento estable en un horizonte de 1 año (mínimo 1.0).
+    segment: liquidez_bancaria
+    unit: "ratio"
+    date_range: ["2019-04-04", "2026-05-12"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Categoria, type: VARCHAR, values: ["Sistémico", "No Sistémico"]}
+      - {name: NSFR, type: DOUBLE}
+
+  - id: ratio_liquidez_obligaciones
+    file: ratio_liquidez_obligaciones.parquet
+    name: "LCR en moneda extranjera sobre obligaciones"
+    description: >
+      Ratio de activos líquidos en moneda extranjera sobre obligaciones totales
+      del sistema bancario (LCR_MX) por categoría sistémica. Desde abril 2025;
+      complementa el LCR en CLP para evaluar liquidez en USD.
+    segment: liquidez_bancaria
+    unit: "ratio"
+    date_range: ["2025-04-03", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Categoria, type: VARCHAR, values: ["Sistémico", "No Sistémico"]}
+      - {name: LCR_MX, type: DOUBLE}
+
+  - id: liquidez_mx_ihh
+    file: liquidez_mx_ihh.parquet
+    name: "Liquidez en moneda extranjera con IHH de concentración"
+    description: >
+      Monto total de liquidez en moneda extranjera e IHH (Índice Herfindahl-
+      Hirschman de concentración) por categoría sistémica. El IHH mide cuán
+      concentrada está la tenencia de activos líquidos en USD entre bancos.
+    segment: liquidez_bancaria
+    unit: "MM USD y ratio IHH"
+    date_range: ["2022-04-28", "2026-05-20"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Categoria, type: VARCHAR, values: ["Sistémico", "No Sistémico"]}
+      - {name: Total, type: DOUBLE}
+      - {name: IHH, type: DOUBLE}
+
+  - id: caja_bancos
+    file: caja_bancos.parquet
+    name: "Saldo de caja por banco"
+    description: >
+      Saldo diario de caja (efectivo en bóvedas y sucursales) por banco individual.
+      Desde 2019; componente de los activos líquidos de alta calidad (HQLA)
+      para el cálculo del LCR. Datos granulares por institución.
+    segment: liquidez_bancaria
+    unit: MM CLP
+    date_range: ["2019-01-02", "2026-05-19"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Banco, type: VARCHAR, values: [BCI, BICE, BTG, "Bank of China", Chile, "China Construction Bank", Consorcio, "Do Brasil", Estado, Falabella, HSBC, Internacional, "Itaú-Corpbanca", "JP Morgan", Ripley, Santander, Scotiabank, Security, Tanner, Tokyo]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: caja_y_circulante
+    file: caja_y_circulante.parquet
+    name: "Caja total del sistema y circulante monetario"
+    description: >
+      Caja total del sistema bancario (bóvedas + sucursales) y circulante
+      monetario (billetes y monedas en poder del público). Desde 2019;
+      indicador macroeconómico de liquidez monetaria de la economía.
+    segment: liquidez_bancaria
+    unit: MM CLP
+    date_range: ["2019-01-02", "2026-05-19"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Circulante, type: DOUBLE}
+      - {name: Caja, type: DOUBLE}
+
+  - id: operaciones_liquidez
+    file: operaciones_liquidez.parquet
+    name: "Operaciones de liquidez del BCCh con bancos"
+    description: >
+      Operaciones de administración de liquidez del Banco Central de Chile (BCCh)
+      con cada institución bancaria: CC (cuenta corriente en BCCh), FPD (facilidad
+      permanente de depósito), FPL (facilidad permanente de liquidez), Int_cap,
+      Int_col, RT$ (reservas técnicas en USD). Serie larga desde 2010.
+    segment: liquidez_bancaria
+    unit: MM CLP
+    date_range: ["2010-09-01", "2026-05-19"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Institucion, type: VARCHAR, values: [BBVA, BCI, BICE, BTG, "Bank of China", Chile, "China Construction Bank", Consorcio, "DNB Nor Bank", Deutsche, "Do Brasil", Estado, Falabella, HSBC, Internacional, Itaú, "Itaú-Corpbanca", "JP Morgan", "Nación Argentina", Paris, Penta, Rabobank, Ripley, "Royal bank of Scotland", Santander, Scotiabank, "Scotiabank Sudamericano", Security, Tanner, Tokyo]}
+      - {name: Serie, type: VARCHAR, values: [CC, FPD, FPL, Int_cap, Int_col, "RT$"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: rt_constitucion
+    file: rt_constitucion.parquet
+    name: "Constitución de reservas técnicas por banco e instrumento"
+    description: >
+      Constitución diaria de reservas técnicas (RT) por banco e instrumento
+      elegible: BCCh (depósitos en BCCh), CC (caja), Caja, DL, Dep. ON CLP/USD,
+      MdH (Ministerio de Hacienda), PDBC. Desde 2019; base del LCR en Chile.
+    segment: liquidez_bancaria
+    unit: MM CLP
+    date_range: ["2019-01-02", "2026-05-19"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Institucion, type: VARCHAR, values: [BCI, BICE, BTG, Chile, Estado, Falabella, HSBC, "JP Morgan", Santander]}
+      - {name: Instrumento, type: VARCHAR, values: [BCCh, CC, Caja, DL, "Dep. ON CLP", "Dep. ON Otras monedas", "Dep. ON USD", MdH, PDBC]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: rt_exigible
+    file: rt_exigible.parquet
+    name: "Reservas técnicas exigibles por banco"
+    description: >
+      Monto mínimo de reservas técnicas exigido por normativa (RT Exigible)
+      para cada banco del sistema. Desde 2019; el ratio RT constituida /
+      RT exigible indica el grado de cumplimiento de encaje regulatorio.
+    segment: liquidez_bancaria
+    unit: MM CLP
+    date_range: ["2019-01-02", "2026-05-19"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Banco, type: VARCHAR, values: [BCI, BICE, BTG, Chile, Estado, Falabella, HSBC, "JP Morgan", Santander]}
+      - {name: "RT Exigible", type: DOUBLE}
+
+  - id: tib_monto_transado
+    file: tib_monto_transado.parquet
+    name: "Tasa Interbancaria (TIB) y monto transado"
+    description: >
+      Tasa Interbancaria overnight (TIB) expresada como spread sobre la TPM,
+      y monto transado en el mercado interbancario de Chile. Desde 2015.
+      El spread TIB-TPM mide tensiones de liquidez overnight entre bancos.
+    segment: liquidez_bancaria
+    unit: "MM CLP y pb"
+    date_range: ["2015-01-02", "2026-05-19"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Monto, type: BIGINT}
+      - {name: "Spread TIB-TPM", type: DOUBLE}
+
+  # ── FONDOS DE PENSIONES AFP ──────────────────────────────────────────────
+
+  - id: allocation
+    file: allocation.parquet
+    name: "Composición de cartera AFP por instrumento y fondo"
+    description: >
+      Composición mensual de cartera de AFP por tipo de instrumento de renta fija
+      local (BB, BCP, BCU, BE, BTP, BTU, BU, DPC, DPL, PDBC, Otro_RF) y tipo
+      de fondo (Tipo 2, 3, 6). Desde 2019; detalla cómo invierten las AFP
+      en renta fija local chilena por fondo.
+    segment: fondos_pension
+    unit: MM USD
+    date_range: ["2019-01-31", "2026-04-30"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tipo_instrumento, type: VARCHAR, values: [BB, BCP, BCU, BE, BTP, BTU, BU, DPC, DPL, Otro_RF, PDBC]}
+      - {name: Tipo_fondo, type: VARCHAR, values: ["Tipo 2", "Tipo 3", "Tipo 6"]}
+      - {name: Monto_USD, type: DOUBLE}
+
+  - id: allocation_int_nac
+    file: allocation_int_nac.parquet
+    name: "AUM de AFP: proporción Nacional vs Internacional"
+    description: >
+      AUM total de AFP y su desagregación entre inversiones nacionales y en
+      el exterior (Internacional), expresadas como proporción del total.
+      Serie larga desde 2008; refleja la evolución de la internacionalización
+      de los fondos de pensiones chilenos.
+    segment: fondos_pension
+    unit: "MM USD y ratio"
+    date_range: ["2008-09-30", "2026-04-30"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: AUM, type: DOUBLE}
+      - {name: Nacional, type: DOUBLE}
+      - {name: Extranjero, type: DOUBLE}
+
+  - id: attribution
+    file: attribution.parquet
+    name: "Atribución de retorno de fondos AFP por clase de activo"
+    description: >
+      Atribución de retorno de los fondos AFP (A, B, C, D, E) por clase de activo:
+      Dolares, RFI (renta fija internacional), RFN (renta fija nacional), RVI,
+      RVN, Residuo, Swap_CLP, Swap_USD. Snapshot del período más reciente.
+      Muestra qué activos generaron o restaron retorno a cada fondo.
+    segment: fondos_pension
+    unit: "ratio (retorno)"
+    date_range: null
+    columns:
+      - {name: fondo, type: VARCHAR, values: [A, B, C, D, E]}
+      - {name: Clase, type: VARCHAR, values: [Dolares, RFI, RFN, RVI, RVN, Residuo, Swap_CLP, Swap_USD]}
+      - {name: Valor, type: DOUBLE}
+      - {name: Retorno, type: DOUBLE}
+
+  - id: stock_fondo_afp
+    file: stock_fondo_afp.parquet
+    name: "AUM total de AFP por fondo (A, B, C, D, E)"
+    description: >
+      AUM mensual de AFP por fondo individual (A=más riesgoso, E=más conservador).
+      Serie larga desde 2010; permite analizar evolución de tamaño, flujos netos
+      y composición relativa del sistema de pensiones chileno.
+    segment: fondos_pension
+    unit: MM USD
+    date_range: ["2010-01-29", "2026-04-30"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: fondo, type: VARCHAR, values: [A, B, C, D, E]}
+      - {name: mmus, type: DOUBLE}
+
+  - id: flujos_ffmm
+    file: flujos_ffmm.parquet
+    name: "Flujos netos semanales de fondos mutuos (FFMM) por tipo"
+    description: >
+      Flujos netos semanales (suscripciones - rescates) de fondos mutuos (FFMM)
+      por tipo de fondo (Tipo 1-8, clasificación CMF). Desde 2019; indicador
+      de apetito inversor retail e institucional en distintas categorías de FFMM.
+    segment: fondos_pension
+    unit: MM USD
+    date_range: ["2019-01-06", "2026-05-24"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: tipo_fondo, type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 4", "Tipo 5", "Tipo 6", "Tipo 7", "Tipo 8"]}
+      - {name: flujos_usd, type: DOUBLE}
+
+  - id: flujos_acum_ffmm
+    file: flujos_acum_ffmm.parquet
+    name: "Flujo acumulado YTD de fondos mutuos por tipo"
+    description: >
+      Flujo acumulado year-to-date (YTD) de fondos mutuos por tipo de fondo
+      (Tipos 1-8). Complementa flujos_ffmm con la perspectiva acumulada;
+      útil para ver qué tipos de FFMM han tenido entradas/salidas netas en el año.
+    segment: fondos_pension
+    unit: MM USD
+    date_range: ["2019-01-01", "2026-05-19"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: tipo_fondo, type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 4", "Tipo 5", "Tipo 6", "Tipo 7", "Tipo 8"]}
+      - {name: Flujo_acumulado_USD, type: DOUBLE}
+
+  - id: movimientos_fondos
+    file: movimientos_fondos.parquet
+    name: "Movimientos recientes de fondos AFP (últimas semanas)"
+    description: >
+      Flujos recientes de los fondos AFP (A, B, C, D, E) en las últimas semanas.
+      Ventana corta (desde abr 2026); datos de alta frecuencia sobre
+      traspasos y flujos netos en el sistema de pensiones.
+    segment: fondos_pension
+    unit: MM USD
+    date_range: ["2026-04-20", "2026-05-18"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: fondo, type: VARCHAR, values: [A, B, C, D, E]}
+      - {name: flujos_usd, type: DOUBLE}
+
+  - id: duracion_ffmm
+    file: duracion_ffmm.parquet
+    name: "Duración de cartera de fondos mutuos por tipo"
+    description: >
+      Duración promedio mensual de la cartera de fondos mutuos por tipo (Tipos 1,
+      2, 3, 6). Mide el riesgo de tasa de interés de los FFMM; una mayor
+      duración implica mayor sensibilidad a cambios en tasas.
+    segment: fondos_pension
+    unit: "años"
+    date_range: ["2019-01-01", "2026-04-01"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: tipo_fondo, type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6"]}
+      - {name: Duracion, type: DOUBLE}
+
+  - id: dv01_ffmm
+    file: dv01_ffmm.parquet
+    name: "DV01 de fondos mutuos AFP por tipo"
+    description: >
+      DV01 (sensibilidad a 1 punto base de tasa) de los fondos mutuos AFP
+      por tipo de fondo (Tipos 1, 2, 3, 6). Mensual desde 2019;
+      mide el impacto monetario en USD de un movimiento de 1pb en tasas.
+    segment: fondos_pension
+    unit: "MM CLP por bp"
+    date_range: ["2019-01-31", "2026-04-30"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Fondo, type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6"]}
+      - {name: Valor, type: DOUBLE}
+
+  - id: dv01_spc_afp
+    file: dv01_spc_afp.parquet
+    name: "DV01 de portafolio de swaps SPC de AFP por moneda"
+    description: >
+      DV01 diario del portafolio de swaps SPC de AFP desagregado por moneda
+      (CLP, UF, USD). Desde 2020; mide la sensibilidad a tasas del libro
+      de swaps de AFP, útil para analizar su posición en derivados de tasa.
+    segment: fondos_pension
+    unit: "MM USD por bp"
+    date_range: ["2020-01-31", "2026-05-20"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: moneda, type: VARCHAR, values: [CLP, UF, "US$"]}
+      - {name: dv01, type: DOUBLE}
+
+  - id: mtm_afp
+    file: mtm_afp.parquet
+    name: "Mark-to-market del portafolio de swaps SPC de AFP por fondo"
+    description: >
+      Mark-to-market (MTM) mensual del portafolio de swaps SPC de AFP por fondo
+      (A, B, C, D, E). Desde 2020; refleja la ganancia/pérdida no realizada
+      en derivados de tasa. Un MTM negativo indica posición perdedora en swaps.
+    segment: fondos_pension
+    unit: MM USD
+    date_range: ["2020-01-31", "2026-05-20"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: fondo, type: VARCHAR, values: [A, B, C, D, E]}
+      - {name: mtm, type: DOUBLE}
+
+  - id: dcv_composicion_ffmm
+    file: dcv_composicion_ffmm.parquet
+    name: "Composición actual del portafolio FFMM en DCV"
+    description: >
+      Snapshot de la composición del portafolio de fondos mutuos registrado en
+      el DCV (Depósito Central de Valores) por tipo de instrumento: BB, BE,
+      BTP, BTU, DAP, PDBC. Muestra en qué instrumentos de renta fija están
+      invertidos los FFMM en el momento actual.
+    segment: fondos_pension
+    unit: MM USD (snapshot)
+    date_range: null
+    columns:
+      - {name: Tipo_Instrumento, type: VARCHAR, values: [BB, BE, BTP, BTU, DAP, PDBC]}
+      - {name: mmusd, type: DOUBLE}
+
+  - id: dap_pdbc_ffmm
+    file: dap_pdbc_ffmm.parquet
+    name: "Stock diario de DAP y PDBC en fondos mutuos"
+    description: >
+      Stock diario de Depósitos a Plazo (DAP) y PDBC en fondos monetarios (FFMM).
+      Desde ene 2024; permite ver cómo los FFMM rotan entre DAP y PDBC según
+      el nivel de tasas y las decisiones de política monetaria del BCCh.
+    segment: fondos_pension
+    unit: MM USD
+    date_range: ["2024-01-02", "2026-05-19"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: instrumento_largo, type: VARCHAR, values: [DAP, PDBC]}
+      - {name: mmus, type: DOUBLE}
+
+  - id: duracion_rfl_csv
+    file: duracion_rfl_csv.parquet
+    name: "Duración de cartera de renta fija local de CSV"
+    description: >
+      Duración promedio de la cartera de renta fija local (RFL) de Compañías
+      de Seguro de Vida (CSV). Desde ene 2024; alta duración esperada dado
+      que las CSV calzan sus pasivos de largo plazo con activos de larga vida.
+    segment: fondos_pension
+    unit: "años"
+    date_range: ["2024-01-02", "2026-05-19"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: Duracion_Cartera, type: DOUBLE}
+
+  # ── POSICIONES EN RENTA FIJA LOCAL ───────────────────────────────────────
+
+  - id: posicion_cvs_instrumento
+    file: posicion_cvs_instrumento.parquet
+    name: "Posición de CSV en renta fija local por instrumento"
+    description: >
+      Posición de Compañías de Seguro de Vida (CSV) en renta fija local por
+      instrumento: BB, BCA, BCP, BCU, BE, BH, BMINVU, BR, BTP, BTU, BU,
+      DAP, EC, LH, PDBC, PRC, TITSEC. Desde oct 2021; refleja el portafolio
+      de RFL de las aseguradoras como compradores estructurales de largo plazo.
+    segment: posiciones_rfl
+    unit: MM USD
+    date_range: ["2021-10-28", "2026-05-19"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: ID, type: VARCHAR, values: [BB, BCA, BCP, BCU, BE, BH, BMINVU, BR, BTP, BTU, BU, DAP, EC, LH, PDBC, PRC, TITSEC]}
+      - {name: mmusd, type: DOUBLE}
+
+  - id: posicion_cvs_plazo
+    file: posicion_cvs_plazo.parquet
+    name: "Posición de CSV en renta fija local por bucket de plazo"
+    description: >
+      Posición de CSV en renta fija local desagregada por bucket de plazo:
+      Menor a 2Y, Entre 3 y 5Y, Entre 6 y 9Y, Mayor a 10Y.
+      Desde oct 2021; refleja el perfil de duración del portafolio de RFL
+      de las aseguradoras.
+    segment: posiciones_rfl
+    unit: MM USD
+    date_range: ["2021-10-28", "2026-05-19"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: Bucket, type: VARCHAR, values: ["Menor a 2Y", "Entre 3 y 5Y", "Entre 6 y 9Y", "Mayor a 10Y"]}
+      - {name: mmusd, type: DOUBLE}
+
+  - id: posicion_rfl_afp
+    file: posicion_rfl_afp.parquet
+    name: "Posición de AFP en renta fija local por plazo e instrumento"
+    description: >
+      Posición de AFP en renta fija local desagregada por bucket de plazo
+      (Menor a 2Y, Entre 3 y 5Y, Entre 6 y 9Y, Mayor a 10Y) e instrumento
+      (BB, BE, BTP, BTU, DAP, PDBC). Snapshot del período más reciente;
+      refleja la demanda estructural de AFP en el mercado de RFL chileno.
+    segment: posiciones_rfl
+    unit: MM USD (snapshot)
+    date_range: null
+    columns:
+      - {name: Bucket, type: VARCHAR, values: ["Menor a 2Y", "Entre 3 y 5Y", "Entre 6 y 9Y", "Mayor a 10Y"]}
+      - {name: Instrumento, type: VARCHAR, values: [BB, BE, BTP, BTU, DAP, PDBC]}
+      - {name: MM_USD, type: DOUBLE}
+
+  - id: posicion_rfl_nr
+    file: posicion_rfl_nr.parquet
+    name: "Posición de No Residentes en renta fija local por plazo"
+    description: >
+      Posición de No Residentes (inversores extranjeros) en renta fija local
+      por bucket de plazo (Menor a 2Y, Entre 3 y 5Y, Entre 6 y 9Y, Mayor a 10Y).
+      Desde dic 2024; muestra en qué tramo de la curva prefieren invertir los NR.
+    segment: posiciones_rfl
+    unit: MM USD
+    date_range: ["2024-12-30", "2026-05-19"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: Bucket, type: VARCHAR, values: ["Menor a 2Y", "Entre 3 y 5Y", "Entre 6 y 9Y", "Mayor a 10Y"]}
+      - {name: mmusd, type: DOUBLE}
+
+  - id: posicion_nr_spc
+    file: posicion_nr_spc.parquet
+    name: "Posición de No Residentes en swaps SPC por plazo"
+    description: >
+      Posición de No Residentes en swaps SPC (Swap Promedio Cámara CLP) por
+      bucket de plazo: 1-90 días, 91-360 días, 1-2Y, Mayor a 2Y.
+      Desde ene 2022; mide la posición de inversores externos en derivados
+      de tasa CLP, indicador de carry trade y cobertura de bonos soberanos.
+    segment: posiciones_rfl
+    unit: MM USD
+    date_range: ["2022-01-03", "2026-05-11"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Plazos_D, type: VARCHAR, values: ["1 a 90 dias", "91 a 360 dias", "Entre 1 y 2Y", "Mayor a 2Y"]}
+      - {name: Monto_USD, type: DOUBLE}
+
+  - id: variacion_dcv_afp
+    file: variacion_dcv_afp.parquet
+    name: "Variación de posición AFP en RFL (DCV) por plazo e instrumento"
+    description: >
+      Variación de la posición de AFP en renta fija local registrada en el DCV,
+      desagregada por bucket de plazo e instrumento (BB, BE, BTP, BTU, DAP, PDBC).
+      Snapshot del período más reciente; mide compras/ventas netas de AFP en RFL.
+    segment: posiciones_rfl
+    unit: MM USD (snapshot)
+    date_range: null
+    columns:
+      - {name: Bucket, type: VARCHAR, values: ["Menor a 2Y", "Entre 3 y 5Y", "Entre 6 y 9Y", "Mayor a 10Y"]}
+      - {name: Instrumento, type: VARCHAR, values: [BB, BE, BTP, BTU, DAP, PDBC]}
+      - {name: MM_USD, type: DOUBLE}
+
+  - id: variacion_rfl_dcv_nr
+    file: variacion_rfl_dcv_nr.parquet
+    name: "Variación de posición NR en RFL (DCV) diaria"
+    description: >
+      Variación diaria de la posición de No Residentes en renta fija local
+      registrada en el DCV. Solo 2026; datos recientes de alta frecuencia
+      sobre flujos de extranjeros en el mercado de bonos chileno.
+    segment: posiciones_rfl
+    unit: MM USD
+    date_range: ["2026-01-02", "2026-05-19"]
+    columns:
+      - {name: fecha, type: TIMESTAMP}
+      - {name: mmusd, type: DOUBLE}
+
+  - id: variacion_seguro
+    file: variacion_seguro.parquet
+    name: "Variación de posición de Compañías de Seguro"
+    description: >
+      Variación mensual de posición de Compañías de Seguro en instrumentos
+      financieros. Datos para 2026-2027; indicador de movimientos de las
+      aseguradoras en el mercado de capitales chileno.
+    segment: posiciones_rfl
+    unit: "número de movimientos"
+    date_range: ["2026-05-01", "2027-07-01"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: "Variación", type: BIGINT}
+
+  # ── PDBC Y STOCK INSTRUMENTOS ─────────────────────────────────────────────
+
+  - id: stock_pdbc_agente
+    file: stock_pdbc_agente.parquet
+    name: "Stock de PDBC por agente y bucket de plazo"
+    description: >
+      Stock de Pagarés Descontables del BCCh (PDBC) por agente (AFP, Bancos,
+      FFMM, Otros) y bucket de plazo (días). Desde 2019; el PDBC es el
+      principal instrumento de esterilización monetaria del BCCh en Chile.
+    segment: instrumentos_bcch
+    unit: MM CLP
+    date_range: ["2019-01-02", "2026-05-19"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Bucket, type: BIGINT}
+      - {name: Serie, type: VARCHAR, values: [AFP, Bancos, FFMM, Otros]}
+      - {name: Stock, type: DOUBLE}
+
+  - id: stock_pdbc_bucket
+    file: stock_pdbc_bucket.parquet
+    name: "Stock de PDBC por sector y bucket (vista alternativa)"
+    description: >
+      Mismo contenido que stock_pdbc_agente con columnas reorganizadas
+      (Serie primero, luego Bucket). Usar cuando se quiere filtrar por
+      sector primero y luego ver la distribución por plazo.
+    segment: instrumentos_bcch
+    unit: MM CLP
+    date_range: ["2019-01-02", "2026-05-19"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Serie, type: VARCHAR, values: [AFP, Bancos, FFMM, Otros]}
+      - {name: Bucket, type: BIGINT}
+      - {name: Stock, type: DOUBLE}
+
+  - id: duracion_pdbc
+    file: duracion_pdbc.parquet
+    name: "Duración promedio del stock de PDBC por sector"
+    description: >
+      Duración promedio (en días) del stock de PDBC por sector tenedor:
+      AFP, Bancos, FFMM, Otros y Total. Desde 2019; refleja cómo cada
+      sector ajusta el plazo promedio de sus tenencias de PDBC.
+    segment: instrumentos_bcch
+    unit: "días"
+    date_range: ["2019-01-02", "2026-05-19"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Sector, type: VARCHAR, values: [AFP, Bancos, FFMM, Otros, Total]}
+      - {name: Duracion, type: DOUBLE}
+
+  - id: stock_por_instrumento
+    file: stock_por_instrumento.parquet
+    name: "Stock de DAP, PDBC y Letras MdH por sector"
+    description: >
+      Stock de los tres principales instrumentos de corto plazo: DAP (Depósitos
+      a Plazo), PDBC y Letras del Ministerio de Hacienda (MdH), desagregado
+      por sector (AFP, Bancos, FFMM, Otros). Serie larga desde 2009.
+    segment: instrumentos_bcch
+    unit: MM CLP
+    date_range: ["2009-07-10", "2026-05-19"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tipo, type: VARCHAR, values: [DAP, "Letras MdH", PDBC]}
+      - {name: Sector, type: VARCHAR, values: [AFP, Bancos, FFMM, Otros]}
+      - {name: Stock, type: DOUBLE}
+
+  - id: stock_por_sector
+    file: stock_por_sector.parquet
+    name: "Stock de instrumentos de corto plazo por sector (vista alternativa)"
+    description: >
+      Mismo dataset que stock_por_instrumento con el mismo contenido.
+      Vista alternativa para análisis donde el sector es la dimensión primaria.
+      Usar cuando la pregunta es sobre la tenencia total de un sector específico.
+    segment: instrumentos_bcch
+    unit: MM CLP
+    date_range: ["2009-07-10", "2026-05-19"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tipo, type: VARCHAR, values: [DAP, "Letras MdH", PDBC]}
+      - {name: Sector, type: VARCHAR, values: [AFP, Bancos, FFMM, Otros]}
+      - {name: Stock, type: DOUBLE}
+
+  - id: inv_por_banco
+    file: inv_por_banco.parquet
+    name: "Inversiones bancarias en instrumentos BCCh y MdH por banco"
+    description: >
+      Stock de inversiones de cada banco en instrumentos del Banco Central (BCCh),
+      Ministerio de Hacienda (MdH), PDBC y Otros. Desde 2019;
+      muestra cómo cada banco diversifica su cartera de inversiones en deuda pública.
+    segment: instrumentos_bcch
+    unit: MM CLP
+    date_range: ["2019-01-02", "2026-05-18"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Banco, type: VARCHAR, values: [BCI, BICE, BTG, "Bank of China", Chile, "China Construction Bank", Consorcio, Estado, Falabella, HSBC, Internacional, "Itaú-Corpbanca", "JP Morgan", Ripley, Santander, Scotiabank, Security, Tanner]}
+      - {name: Instrumentos, type: VARCHAR, values: [BCCh, MdH, Otros, PDBC]}
+      - {name: Stock, type: DOUBLE}
+
+  - id: inv_por_instrumento
+    file: inv_por_instrumento.parquet
+    name: "Inversiones bancarias por instrumento (vista alternativa)"
+    description: >
+      Mismo contenido que inv_por_banco organizado para analizar la demanda
+      total del sistema por instrumento (BCCh, MdH, PDBC, Otros).
+      Usar cuando la pregunta es cuánto tiene el sistema en PDBC o bonos BCCh.
+    segment: instrumentos_bcch
+    unit: MM CLP
+    date_range: ["2019-01-02", "2026-05-18"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Banco, type: VARCHAR, values: [BCI, BICE, BTG, "Bank of China", Chile, "China Construction Bank", Consorcio, Estado, Falabella, HSBC, Internacional, "Itaú-Corpbanca", "JP Morgan", Ripley, Santander, Scotiabank, Security, Tanner]}
+      - {name: Instrumentos, type: VARCHAR, values: [BCCh, MdH, Otros, PDBC]}
+      - {name: Stock, type: DOUBLE}
+
+  - id: dap_flujos_plazo
+    file: dap_flujos_plazo.parquet
+    name: "Flujos de vencimiento de DAP por plazo, sector y moneda"
+    description: >
+      Flujos de vencimiento de DAP (Depósitos a Plazo) por bucket de plazo
+      (14d, 30d, 60d, 90d, 180d, 360d, 540d, 720d, >720d, Vencimiento),
+      sector tenedor (AFP, Bancos, FFMM, Seguros, CB…) y moneda (Pesos, UF, USD).
+      Permite analizar el perfil de vencimientos del mercado de DAP.
+    segment: instrumentos_bcch
+    unit: "MM moneda correspondiente"
+    date_range: ["2017-11-01", "2026-03-01"]
+    columns:
+      - {name: Mes, type: TIMESTAMP}
+      - {name: Bucket, type: VARCHAR, values: ["14", "30", "60", "90", "180", "360", "540", "720", ">720", Vencimiento]}
+      - {name: Sector, type: VARCHAR, values: [AFP, Bancos, "Bolsa de Valores", "Compania de Seguro", "Corredores de Bolsa", "Cuentas de Distribucion", "FF.MM.", Mandantes, Otros]}
+      - {name: Moneda, type: VARCHAR, values: [Pesos, UF, USD]}
+      - {name: Monto, type: DOUBLE}
+
+  # ── TESORERÍA Y OTROS ─────────────────────────────────────────────────────
+
+  - id: inversiones_tgr
+    file: inversiones_tgr.parquet
+    name: "Inversiones de la Tesorería General de la República (TGR)"
+    description: >
+      Inversiones de la TGR por instrumento (Bono BCCh, Certificado Depósito,
+      DAP, FFMM, PDBC, Pacto, Time Deposit, Treasury Bill, Treasury Note)
+      y moneda (CLP, UF, USD). Desde 2019; el TGR es un inversor significativo
+      en el mercado de capitales chileno con diversificación en USD.
+    segment: otros
+    unit: "MM moneda correspondiente"
+    date_range: ["2019-01-04", "2026-05-15"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Instrumento, type: VARCHAR, values: ["Bono BCCh", "Certificado Deposito", DAP, FFMM, PDBC, Pacto, "Time Deposit", "Treasury Bill", "Treasury Note"]}
+      - {name: Moneda, type: VARCHAR, values: [CLP, UF, USD]}
+      - {name: Monto, type: DOUBLE}

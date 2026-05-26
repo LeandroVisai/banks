@@ -10,6 +10,8 @@ Tools registradas:
   - ``list_historical_series`` / ``get_historical_series``: series macro vía DW.
   - ``discover_query``: descubre queries analíticas en el catálogo SQL (Fase 4).
   - ``execute_query``: ejecuta una query del catálogo sobre parquets (Fase 4).
+  - ``list_parquets``: descubre datasets analíticos en el catálogo de parquets.
+  - ``query_parquet``: ejecuta SQL DuckDB libre sobre cualquier parquet del catálogo.
   - ``compute_variation`` / ``compute_spread`` / ``get_series_stats`` /
     ``detect_anomaly`` / ``get_market_snapshot``: analytics sobre el catálogo
     SQL — interpretan los datos en vez de devolverlos crudos (Fase A multi-agente).
@@ -23,7 +25,9 @@ from . import (  # noqa: F401
     document_lookup,
     execute_query,
     historical_series,
+    list_parquets,
     meeting_lookup,
+    query_parquet,
     search_documents,
     search_visuals,
 )

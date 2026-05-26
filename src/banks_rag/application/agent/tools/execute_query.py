@@ -18,6 +18,7 @@ from banks_rag.infrastructure.sql.catalog_loader import (
     render_sql,
 )
 from banks_rag.infrastructure.sql.duckdb_runner import MAX_ROWS as _MAX_ROWS
+from banks_rag.infrastructure.sql.duckdb_runner import last_date_in_rows as _last_date
 from banks_rag.infrastructure.sql.duckdb_runner import run_duckdb as _run_duckdb
 
 from .registry import register
@@ -108,6 +109,7 @@ async def execute_query(
         }
 
     truncated = len(rows) >= _MAX_ROWS
+    last_date = _last_date(rows)
     return {
         "query_id": query_id,
         "name": entry.name,
@@ -117,6 +119,12 @@ async def execute_query(
         "columns": entry.columns,
         "rows": rows,
         "n_rows": len(rows),
+        "last_date_in_data": last_date,
+        "data_currency_warning": (
+            f"El último dato disponible es del {last_date}. "
+            "NO asumas que este dato es de hoy; los datos pueden tener rezago."
+            if last_date else None
+        ),
         "truncated": truncated,
         "truncated_note": (
             f"Resultados truncados a {_MAX_ROWS} filas. "
