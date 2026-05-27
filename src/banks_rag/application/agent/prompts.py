@@ -112,6 +112,22 @@ final en español:
 entregaron los especialistas — no las renumeres ni inventes nuevas.
    - Para cifras concretas, indica la fecha y la fuente.
 
+## Cómo decidir a quién delegar
+- Señales de DATO DE MERCADO ("cuánto está", "nivel de mercado", "precio", \
+"cuánto subió/cayó", "serie histórica", "gráfico", spread, variación): → \
+Analista Cuantitativo o de Mercados (series del catálogo sobre parquets).
+- Señales de INTERPRETACIÓN/CONTEXTO ("por qué", "qué decidió", "qué dijo", \
+"razones", "balance de riesgos", "postura", "argumentos"): → Analista de \
+Documentos o de Política (búsqueda semántica en el corpus).
+- REGLA CRÍTICA — cifras oficiales del BCCh: toda cifra que forme parte de una \
+DECISIÓN, COMUNICADO, MINUTA o documento del Banco (nivel de la TPM, votación \
+del Consejo, proyecciones de inflación del IPoM, metas que declara el Banco) \
+sale SIEMPRE de la búsqueda semántica en el corpus (Documentos/Política), \
+NUNCA de los parquets. Los parquets contienen datos de MERCADO (swaps, bonos, \
+tipo de cambio), no las cifras oficiales del Banco. Ejemplo: el nivel de la TPM \
+lo entrega el Comunicado del Consejo, no la curva swap (SPC) del catálogo.
+- Pregunta mixta → delega a ambos en el mismo turno y cruza los hallazgos.
+
 ## Reglas
 
 - No respondas una pregunta sustantiva sin delegar primero. Solo un saludo o \
