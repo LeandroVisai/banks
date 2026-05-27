@@ -402,6 +402,19 @@ def build_section_patterns() -> dict[str, re.Pattern]:
     return {name: compile_word_pattern(words) for name, words in SECTION_KEYWORDS.items()}
 
 
+# Frase canónica de una decisión de TPM: un verbo de decisión seguido, dentro de
+# la misma oración, de la mención a la tasa de política monetaria. Señal de ALTA
+# precisión: cuando aparece, el chunk ES la decisión aunque el mismo párrafo de
+# apertura mezcle contexto de riesgos (que por frecuencia le ganaría). Solo se
+# usan verbos inequívocos (se excluyen homógrafos como "bajo"/"aumento"). Se
+# evalúa sobre texto YA normalizado (minúsculas, sin tildes).
+DECISION_SENTENCE_PATTERN: re.Pattern = re.compile(
+    r"\b(acordo|decidio|resolvio|aprobo|mantuvo|redujo|recorto|subio)\b"
+    r"[^.]{0,40}?"
+    r"(tasa de inter\w+ de politica monetaria|tasa de politica monetaria|\btpm\b)"
+)
+
+
 # ---------------------------------------------------------------------------
 # Entidades (para filtros opcionales y contexto)
 # ---------------------------------------------------------------------------

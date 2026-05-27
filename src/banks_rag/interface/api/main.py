@@ -19,12 +19,14 @@ Para tests, importa ``create_app`` directamente y usa ``TestClient(create_app())
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from banks_rag import __version__
@@ -46,6 +48,19 @@ import banks_rag.application.agent.tools  # noqa: F401
 log = logging.getLogger(__name__)
 
 
+class UTF8JSONResponse(JSONResponse):
+    """JSONResponse que declara ``charset=utf-8`` en el Content-Type.
+
+    Sin esto Starlette emite ``application/json`` a secas y algunos clientes
+    (p. ej. PowerShell ``Invoke-RestMethod``) decodifican el UTF-8 como Latin-1
+    y aparece mojibake ('Ã³' en vez de 'ó'). Se fija como
+    ``default_response_class`` de la app para que todos los endpoints JSON lo
+    hereden.
+    """
+
+    media_type = "application/json; charset=utf-8"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Carga LLM, embedder y repo al startup; los descarga al shutdown.
@@ -65,10 +80,20 @@ async def lifespan(app: FastAPI):
         from banks_rag.infrastructure.persistence import PostgresRepo
         deps.repo = PostgresRepo(prefix=settings.rag_table_prefix)
 
-    # Embedder con lazy load.
+    # Embedder con lazy load (singleton de proceso compartido con las tools).
     if deps.embedder is None:
         from banks_rag.infrastructure.embeddings import build_default_embedder
         deps.embedder = build_default_embedder()
+
+    # Warmup en producción: fuerza la carga del modelo al startup para que la
+    # PRIMERA búsqueda documental no pague la carga dentro del timeout de 30s
+    # por tool. En mock/tests se omite (no hay modelo real que cargar).
+    if settings.llm_family not in ("mock", "") and deps.embedder is not None:
+        try:
+            await asyncio.to_thread(deps.embedder.encode_text, ["warmup"])
+            log.info("Embedder precargado: %s", deps.embedder.name)
+        except Exception:
+            log.exception("Warmup del embedder falló — se cargará en la 1ª búsqueda")
 
     # LLM: instancia LlamaCppEngine para familias qwen/gemma.
     if deps.llm is None and settings.llm_family not in ("mock", ""):
@@ -106,6 +131,7 @@ def create_app(*, deps: AppState | None = None) -> FastAPI:
             "Endpoints: /v1/chat (agentic), /v1/search (hybrid retrieval)."
         ),
         lifespan=lifespan,
+        default_response_class=UTF8JSONResponse,
     )
 
     app.state.deps = deps if deps is not None else AppState()

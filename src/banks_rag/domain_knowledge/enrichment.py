@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 
 from .taxonomy import (
+    DECISION_SENTENCE_PATTERN,
     ECONOMIC_VARIABLES,
     FORWARD_LOOKING_PATTERN,
     NUMERIC_PATTERNS,
@@ -115,6 +116,13 @@ def detect_section(
         for section in SECTION_PATTERNS:
             if section.lower() in hint_norm:
                 return section, 0.95
+
+    # 1.5 frase canónica de decisión: gana sobre el scoring por frecuencia. El
+    # párrafo de apertura del Comunicado mezcla la decisión con contexto de
+    # riesgos; sin esto, "riesgos"/"incertidumbre" le ganan por conteo a la
+    # decisión y el chunk con la TPM queda mal clasificado como RIESGOS.
+    if DECISION_SENTENCE_PATTERN.search(text_norm):
+        return "DECISION", 0.95
 
     # 2. scoring por patterns
     scores: dict[str, int] = {}

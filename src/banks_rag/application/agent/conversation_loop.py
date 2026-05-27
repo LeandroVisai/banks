@@ -62,8 +62,11 @@ def _with_today(system_prompt: str) -> str:
     fecha_legible = f"{hoy.day} de {meses[hoy.month - 1]} de {hoy.year}"
     encabezado = (
         f"La fecha de hoy es {fecha_legible} ({hoy.isoformat()}). "
-        f"Usa esta fecha para resolver referencias temporales relativas "
-        f"como 'hoy', 'este mes' o 'el último dato'.\n\n"
+        f"Úsala SOLO para resolver referencias relativas del usuario ('hoy', "
+        f"'este mes', 'el último dato'). NUNCA la uses como la fecha de una "
+        f"decisión, comunicado o reunión: esas fechas provienen exclusivamente "
+        f"del campo `date` que entregan las herramientas. No afirmes que algo "
+        f"ocurrió hoy salvo que una herramienta lo respalde con esa fecha.\n\n"
     )
     return encabezado + system_prompt
 

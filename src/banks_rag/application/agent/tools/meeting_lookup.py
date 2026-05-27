@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from typing import TYPE_CHECKING, Any
 
 from banks_rag.infrastructure.persistence import PostgresRepo
@@ -77,6 +78,113 @@ def _format_doc_block(
             "importance": round(float(chunk.get("importance_score") or 0.0), 3),
         })
     return block
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Extracción del nivel vigente de la TPM
+#
+# get_recent_policy_decisions devolvía solo prosa: el LLM tenía que extraer el
+# número del texto y mezclaba/inventaba tasas entre Comunicados. Estos helpers
+# atan un porcentaje al contexto de la TPM y exponen `latest_decision` con el
+# nivel vigente, su acción y la `ref` para citarlo sin ambigüedad.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Contexto que identifica a la TPM (no a la inflación, el cobre, etc.).
+_TPM_CTX = (
+    r"(?:tasa de pol[ií]tica monetaria"
+    r"|tasa de inter[ée]s de pol[ií]tica monetaria"
+    r"|\btpm\b)"
+)
+# Porcentaje en la MISMA oración que la mención a la TPM ([^.\n] no cruza puntos).
+_TPM_RATE_RE = re.compile(
+    _TPM_CTX + r"[^.\n]{0,80}?(\d{1,2}(?:[.,]\d{1,2})?)\s*%",
+    re.IGNORECASE,
+)
+# Variante con el porcentaje antes de la mención ("... en 5,50% la TPM").
+_TPM_RATE_RE_REV = re.compile(
+    r"(\d{1,2}(?:[.,]\d{1,2})?)\s*%[^.\n]{0,40}?" + _TPM_CTX,
+    re.IGNORECASE,
+)
+
+# Acción de política. Stems sin acento para tolerar variantes; evita "sub"
+# desnudo (matchearía "subyacente"). Orden: el primero que matchee gana.
+_ACTION_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("recorte", re.compile(r"recort\w*|reduj\w*|reduc[ií]\w*|disminu\w*|baj[aeoó]\w*", re.IGNORECASE)),
+    ("alza", re.compile(r"aument\w*|increment\w*|sub[ií]\w*|al alza", re.IGNORECASE)),
+    ("mantener", re.compile(r"mant[eu]\w*|sin cambios?", re.IGNORECASE)),
+]
+
+
+def _detect_action(text: str, near: int) -> str | None:
+    """Detecta la acción de política en la ventana alrededor de la tasa (la
+    cláusula de la decisión), para no confundirse con otras oraciones."""
+    window = text[max(0, near - 120): near + 120]
+    for action, pat in _ACTION_PATTERNS:
+        if pat.search(window):
+            return action
+    return None
+
+
+def _normalize_chunk_text(text: str | None) -> str:
+    """Quita el prefijo ``[IMAGE p.N]`` y colapsa saltos de línea/espacios.
+
+    Necesario porque el OCR de los Comunicados-imagen mete saltos de línea que
+    cortarían el match de la tasa (el regex no cruza ``\\n``)."""
+    text = re.sub(r"\[IMAGE p\.\d+\]", " ", text or "")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _find_tpm_rate(text: str) -> tuple[str, str | None] | None:
+    """En un texto YA normalizado, ata un porcentaje al contexto TPM.
+
+    Retorna ``(nivel, accion)`` (p. ej. ``("4,5", "mantener")``) o ``None``."""
+    m = _TPM_RATE_RE.search(text) or _TPM_RATE_RE_REV.search(text)
+    if m is None:
+        return None
+    return m.group(1).strip(), _detect_action(text, m.start())
+
+
+def _extract_policy_rate(
+    doc: dict, chunks: list[dict], state: AgentState,
+) -> dict | None:
+    """Extrae el nivel vigente de la TPM barriendo TODOS los chunks del Comunicado.
+
+    No se fía de la etiqueta ``DECISION`` / ``is_policy_decision``: en la práctica
+    el párrafo de apertura (que trae 'el Consejo acordó ... en X%') a veces queda
+    mal clasificado como RIESGOS, y la etiqueta DECISION se la lleva un chunk
+    ``[IMAGE p.1]`` truncado sin el número. Por eso barre todo el documento,
+    prefiere el match acompañado de un verbo de acción (la decisión, no una
+    proyección) y, entre esos, el de menor ``position_in_doc`` (la decisión va al
+    inicio). Registra el chunk elegido en el ``state`` para poder citarlo.
+
+    Retorna ``{"tpm_level": "4,5%", "action": "mantener", "ref": N}`` o ``None``
+    (degradación elegante si no hay tasa en texto)."""
+    best: tuple[bool, int, str, str | None, dict] | None = None
+    for chunk in chunks:
+        found = _find_tpm_rate(_normalize_chunk_text(chunk.get("text")))
+        if found is None:
+            continue
+        level, action = found
+        pos = int(chunk.get("position_in_doc") or 0)
+        cand = (action is not None, pos, level, action, chunk)
+        # Prioridad: con verbo de acción primero; a igualdad, menor posición.
+        if best is None or (cand[0], -cand[1]) > (best[0], -best[1]):
+            best = cand
+    if best is None:
+        return None
+
+    _, _, level, action, chunk = best
+    chunk_with_meta = {
+        **chunk,
+        "filename": doc["filename"],
+        "doc_type_category": doc.get("doc_type_category"),
+        "document_date": doc.get("document_date"),
+    }
+    return {
+        "tpm_level": f"{level}%",
+        "action": action,
+        "ref": state.add_chunk(chunk_with_meta),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -270,11 +378,34 @@ async def get_recent_policy_decisions(
         }
         for doc, chunks in loaded
     ]
+
+    # Nivel VIGENTE: se extrae del Comunicado más reciente barriendo TODOS sus
+    # chunks (no solo el marcado DECISION, que puede ser una imagen truncada).
+    # Le da al LLM una cifra inequívoca en vez de obligarlo a parsear la prosa.
+    latest_decision: dict | None = None
+    if loaded:
+        top_doc, top_chunks = loaded[0]
+        rate = _extract_policy_rate(top_doc, top_chunks, state)
+        latest_decision = {
+            "filename": top_doc["filename"],
+            "date": str(top_doc.get("document_date") or ""),
+            "tpm_level": rate["tpm_level"] if rate else None,
+            "action": rate["action"] if rate else None,
+            "ref": rate["ref"] if rate else None,
+        }
+
     return {
+        "latest_decision": latest_decision,
         "decisions": decisions,
         "n_decisions": len(decisions),
         "hint": (
-            "Las decisiones vienen del Comunicado más reciente al más antiguo. "
-            "Reconstruye la trayectoria de la política monetaria y cita con [N]."
+            "`latest_decision.tpm_level` es el nivel VIGENTE de la TPM, fijado en "
+            "la reunión de `latest_decision.date` (cítalo con [latest_decision.ref]). "
+            "Para 'la tasa actual' responde EXACTAMENTE ese valor; NO uses otra cifra "
+            "ni combines niveles de Comunicados anteriores. Las `decisions` van del "
+            "más reciente al más antiguo y son la trayectoria histórica. La fecha de "
+            "una decisión es su `date`, NUNCA la fecha de hoy. Si "
+            "`latest_decision.tpm_level` es null, lee el texto del chunk de decisión "
+            "y cita el nivel que encuentres ahí."
         ),
     }

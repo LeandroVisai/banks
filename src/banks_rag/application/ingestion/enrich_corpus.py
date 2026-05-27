@@ -145,7 +145,10 @@ def enrich_chunk(chunk: Chunk, doc: Document, total_chunks_in_doc: int) -> Enric
         temporal_refs=temporal,
         tags=tags,
         importance_score=importance,
-        is_policy_decision="DECISION_POLITICA" in tags,
+        # Un chunk visual es un preview truncado de la página (imagen): no puede
+        # ser la decisión autoritativa, aunque su snippet contenga "acordó...".
+        # La decisión vive en el chunk de texto correspondiente.
+        is_policy_decision=("DECISION_POLITICA" in tags) and not bool(chunk.image_path),
         is_forward_looking=is_fwd,
         chunk_date=chunk.chunk_date,
         image_path=chunk.image_path,

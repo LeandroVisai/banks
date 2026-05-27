@@ -9,6 +9,7 @@ from .embed_text_builder import (
 from .sentence_transformers_embedder import (
     SentenceTransformersEmbedder,
     build_default_embedder,
+    reset_default_embedder,
 )
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "metadata_context_enabled",
     "SentenceTransformersEmbedder",
     "build_default_embedder",
+    "reset_default_embedder",
 ]
