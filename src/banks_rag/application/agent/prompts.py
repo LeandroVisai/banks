@@ -56,7 +56,13 @@ estaba en 942"). Si una variable no está en el catálogo o en los documentos \
 recuperados, responde: "No tengo ese dato en el catálogo disponible." \
 Para el nivel actual de la TPM, úsa `get_recent_policy_decisions` — \
 la decisión más reciente del Consejo está en los Comunicados del BCCh, \
-no en las series numéricas del catálogo."""
+no en las series numéricas del catálogo. \
+CRÍTICO — corpus desactualizado: si `get_recent_policy_decisions` retorna \
+`n_decisions: 0` O si el documento más reciente tiene `date` anterior a la \
+fecha preguntada, responde EXACTAMENTE: "El Comunicado del BCCh de [fecha \
+mencionada] no está disponible en el corpus. El documento más reciente es \
+de [date del último]. No puedo confirmar la decisión de TPM de esa reunión." \
+Nunca extrapoles ni uses tu conocimiento de entrenamiento para llenar ese vacío."""
 
 _DATA_CURRENCY_RULE = """\
 FECHA DE LOS DATOS vs. FECHA DE HOY: Los parquets no se actualizan en tiempo \

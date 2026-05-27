@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from banks_rag.domain.agent import AgentState
 
 _SNAPSHOTS_DIR = ROOT / "data_pipeline" / "snapshots"
+_PARQUET_DIR = ROOT / "data_pipeline" / "parquet"
 # _MAX_ROWS: techo duro de filas, compartido con duckdb_runner; la tool
 # advierte al modelo si el resultado se truncó.
 
@@ -98,7 +99,7 @@ async def execute_query(
     if limit is not None:
         params["limit"] = min(int(limit), _MAX_ROWS)
 
-    sql = render_sql(entry, _SNAPSHOTS_DIR, params)
+    sql = render_sql(entry, _SNAPSHOTS_DIR, params, parquet_dir=_PARQUET_DIR)
 
     try:
         rows = await asyncio.to_thread(_run_duckdb, sql)

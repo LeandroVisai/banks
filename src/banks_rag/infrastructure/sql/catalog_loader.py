@@ -91,11 +91,14 @@ def render_sql(
     entry: CatalogEntry,
     snapshots_dir: Path | str,
     params: dict[str, Any] | None = None,
+    *,
+    parquet_dir: Path | str | None = None,
 ) -> str:
     """Rellena los placeholders {param} del SQL template.
 
     Maneja:
-      - ``{snapshots_dir}`` → ruta absoluta al directorio de parquets.
+      - ``{snapshots_dir}`` → ruta absoluta al directorio snapshots (legacy).
+      - ``{parquet_dir}``   → ruta absoluta al directorio parquet/ (preferido).
       - ``{fecha_inicio}`` / ``{fecha_fin}`` → fechas ISO.
         Defaults relativos como ``"-365d"`` o ``"-90d"`` se resuelven vs hoy.
         El string ``"hoy"`` se resuelve como ``date.today()``.
@@ -103,6 +106,8 @@ def render_sql(
     """
     params = params or {}
     resolved: dict[str, str] = {"snapshots_dir": str(snapshots_dir)}
+    if parquet_dir is not None:
+        resolved["parquet_dir"] = str(parquet_dir)
 
     for spec in entry.params:
         raw = params.get(spec.name, spec.default)

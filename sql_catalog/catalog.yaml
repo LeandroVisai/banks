@@ -2,50 +2,45 @@
 # Catálogo de queries analíticas sobre parquets del DW.
 #
 # Cada entrada = una pregunta analítica que el agente puede responder.
-# Las queries son DuckDB SQL sobre read_parquet('{snapshots_dir}/...').
 #
-# Parámetros de sustitución:
-#   {snapshots_dir}  → ruta absoluta al directorio de parquets (inyectada por catalog_loader)
+# Parámetros de sustitución en SQL:
+#   {parquet_dir}    → ruta absoluta a data_pipeline/parquet/  (fuente primaria)
+#   {snapshots_dir}  → ruta absoluta a data_pipeline/snapshots/ (solo series sin equivalente en parquet/)
 #   {fecha_inicio}   → fecha ISO (YYYY-MM-DD)
 #   {fecha_fin}      → fecha ISO (YYYY-MM-DD)
 #   {limit}          → entero máximo de filas (default 200)
-#
-# Todos los parquets son long format: (date TIMESTAMP, series_id VARCHAR, value DOUBLE, [tenor VARCHAR])
-# Para curvas completas se usa PIVOT de DuckDB.
 # ─────────────────────────────────────────────────────────────────────────────
 
 version: "1.0"
-snapshots_dir: data_pipeline/snapshots   # relativo a la raíz del repo; catalog_loader lo hace absoluto
+snapshots_dir: data_pipeline/snapshots   # solo para series sin equivalente en parquet/
+parquet_dir: data_pipeline/parquet       # fuente primaria — más fresco y más granular
 
 queries:
 
   # ── MERCADO CAMBIARIO ─────────────────────────────────────────────────────
 
   - query_id: usdclp_historico
-    name: "Tipo de cambio USD/CLP histórico"
+    name: "Tipo de cambio USD/CLP histórico (fixing BCCh)"
     description: >
-      Serie diaria del dólar estadounidense en pesos chilenos (USD/CLP).
-      Fuente: mesadineOLTP_.mercado.divisas. Útil para preguntas sobre el dólar,
-      nivel del tipo de cambio, depreciación/apreciación del peso chileno.
+      Serie diaria del fixing USD/CLP publicado por el Banco Central de Chile.
+      Útil para preguntas sobre el dólar, nivel del tipo de cambio,
+      depreciación/apreciación del peso chileno.
     segment: mercado_cambiario
-    tags: [dolar, USD, CLP, tipo de cambio, divisas, peso chileno, paridad, FX]
-    parquet: fx.parquet
+    tags: [dolar, USD, CLP, tipo de cambio, fixing, peso chileno, paridad, FX]
+    parquet: clp_monto.parquet
     sql: |
-      SELECT strftime(date, '%Y-%m-%d') AS fecha, value AS usdclp
-      FROM read_parquet('{snapshots_dir}/fx.parquet')
-      WHERE series_id = 'usdclp'
-        AND date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      ORDER BY date DESC
+      SELECT strftime(Fecha, '%Y-%m-%d') AS fecha, CLP AS usdclp
+      FROM read_parquet('{parquet_dir}/clp_monto.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      ORDER BY Fecha DESC
       LIMIT {limit}
     params:
       - name: fecha_inicio
         type: date
         default: "-365d"
-        description: "Fecha de inicio (YYYY-MM-DD)"
       - name: fecha_fin
         type: date
         default: "hoy"
-        description: "Fecha de fin (YYYY-MM-DD)"
       - name: limit
         type: int
         default: 200
@@ -54,10 +49,10 @@ queries:
     columns: [fecha, usdclp]
 
   - query_id: indice_monedas_latam
-    name: "Índice de monedas LATAM y comparables"
+    name: "Índice de monedas LATAM, comparables y commodities"
     description: >
-      Índices de monedas latinoamericanas (LATAM), monedas comparables a Chile
-      y monedas de países exportadores de commodities. Mide la fortaleza
+      Índices agregados de monedas latinoamericanas (LATAM), monedas comparables
+      a Chile y monedas de países exportadores de commodities. Mide la fortaleza
       relativa del CLP frente a su grupo de pares.
     segment: mercado_cambiario
     tags: [monedas, LATAM, comparables, commodities, índice, CLP relativo, pares]
@@ -88,22 +83,24 @@ queries:
     columns: [fecha, monedas_latam, monedas_comparables, monedas_commodities]
 
   - query_id: forwards_clp_curva
-    name: "Forwards USD/CLP ajustados (30, 90, 180, 360 días)"
+    name: "Forward points USD/CLP (1M, 3M, 6M, 12M)"
     description: >
-      Forwards del dólar-peso ajustados por plazos de 30, 90, 180 y 360 días.
-      Útil para preguntas sobre expectativas de tipo de cambio futuro, mercado
-      de forwards, cobertura cambiaria.
+      Forward points del dólar-peso para plazos 1M, 3M, 6M y 12M.
+      Útil para preguntas sobre expectativas de tipo de cambio futuro,
+      mercado de forwards y cobertura cambiaria.
     segment: mercado_cambiario
     tags: [forwards, FWD, dolar, CLP, plazo, cobertura, derivados cambiarios]
-    parquet: forwards_clp.parquet
+    parquet: forward_points.parquet
     sql: |
-      PIVOT (
-        SELECT strftime(date, '%Y-%m-%d') AS fecha, series_id, value
-        FROM read_parquet('{snapshots_dir}/forwards_clp.parquet')
-        WHERE date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      )
-      ON series_id
-      USING FIRST(value)
+      SELECT
+        strftime(Fecha, '%Y-%m-%d') AS fecha,
+        MAX(CASE WHEN Serie = '1M'  THEN Valor END) AS fwd_clp_1m,
+        MAX(CASE WHEN Serie = '3M'  THEN Valor END) AS fwd_clp_3m,
+        MAX(CASE WHEN Serie = '6M'  THEN Valor END) AS fwd_clp_6m,
+        MAX(CASE WHEN Serie = '12M' THEN Valor END) AS fwd_clp_12m
+      FROM read_parquet('{parquet_dir}/forward_points.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      GROUP BY fecha
       ORDER BY fecha DESC
       LIMIT {limit}
     params:
@@ -116,9 +113,9 @@ queries:
       - name: limit
         type: int
         default: 200
-    unit: "CLP por USD"
+    unit: "puntos forward (CLP)"
     frequency: diario
-    columns: [fecha, fwd_clp_30, fwd_clp_90, fwd_clp_180, fwd_clp_360]
+    columns: [fecha, fwd_clp_1m, fwd_clp_3m, fwd_clp_6m, fwd_clp_12m]
 
   - query_id: microestructura_fx
     name: "Microestructura mercado cambiario (spread bid-ask, volatilidad, monto)"
@@ -164,15 +161,22 @@ queries:
       tasas de largo plazo en pesos.
     segment: renta_fija_chile
     tags: [BTP, bonos, pesos, CLP, curva soberana, renta fija, BCCh, tasas largo plazo]
-    parquet: bonos_clp.parquet
+    parquet: btp_curva.parquet
     sql: |
-      PIVOT (
-        SELECT strftime(date, '%Y-%m-%d') AS fecha, series_id, value
-        FROM read_parquet('{snapshots_dir}/bonos_clp.parquet')
-        WHERE date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      )
-      ON series_id
-      USING FIRST(value)
+      SELECT
+        strftime(Fecha, '%Y-%m-%d') AS fecha,
+        MAX(CASE WHEN Tenor = '1Y'  THEN Valor END) AS btp_1y,
+        MAX(CASE WHEN Tenor = '2Y'  THEN Valor END) AS btp_2y,
+        MAX(CASE WHEN Tenor = '5Y'  THEN Valor END) AS btp_5y,
+        MAX(CASE WHEN Tenor = '7Y'  THEN Valor END) AS btp_7y,
+        MAX(CASE WHEN Tenor = '10Y' THEN Valor END) AS btp_10y,
+        MAX(CASE WHEN Tenor = '15Y' THEN Valor END) AS btp_15y,
+        MAX(CASE WHEN Tenor = '20Y' THEN Valor END) AS btp_20y,
+        MAX(CASE WHEN Tenor = '25Y' THEN Valor END) AS btp_25y,
+        MAX(CASE WHEN Tenor = '30Y' THEN Valor END) AS btp_30y
+      FROM read_parquet('{parquet_dir}/btp_curva.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      GROUP BY fecha
       ORDER BY fecha DESC
       LIMIT {limit}
     params:
@@ -197,15 +201,21 @@ queries:
       tasas reales de largo plazo, curva UF, comparación BTP vs BTU.
     segment: renta_fija_chile
     tags: [BTU, bonos UF, tasa real, inflación, curva UF, renta fija real, BCCh, BEI]
-    parquet: bonos_uf.parquet
+    parquet: btu_curva.parquet
     sql: |
-      PIVOT (
-        SELECT strftime(date, '%Y-%m-%d') AS fecha, series_id, value
-        FROM read_parquet('{snapshots_dir}/bonos_uf.parquet')
-        WHERE date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      )
-      ON series_id
-      USING FIRST(value)
+      SELECT
+        strftime(Fecha, '%Y-%m-%d') AS fecha,
+        MAX(CASE WHEN Tenor = '2Y'  THEN Valor END) AS btu_2y,
+        MAX(CASE WHEN Tenor = '5Y'  THEN Valor END) AS btu_5y,
+        MAX(CASE WHEN Tenor = '7Y'  THEN Valor END) AS btu_7y,
+        MAX(CASE WHEN Tenor = '10Y' THEN Valor END) AS btu_10y,
+        MAX(CASE WHEN Tenor = '15Y' THEN Valor END) AS btu_15y,
+        MAX(CASE WHEN Tenor = '20Y' THEN Valor END) AS btu_20y,
+        MAX(CASE WHEN Tenor = '25Y' THEN Valor END) AS btu_25y,
+        MAX(CASE WHEN Tenor = '30Y' THEN Valor END) AS btu_30y
+      FROM read_parquet('{parquet_dir}/btu_curva.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      GROUP BY fecha
       ORDER BY fecha DESC
       LIMIT {limit}
     params:
@@ -230,25 +240,25 @@ queries:
       en el mercado. Útil para preguntas sobre expectativas de inflación de largo plazo.
     segment: renta_fija_chile
     tags: [BTP, BTU, break-even inflación, BEI, inflación implícita, 5Y, 10Y, nominal vs real]
-    parquet: bonos_clp.parquet
+    parquet: btp_curva.parquet
     sql: |
       SELECT
-        strftime(n.date, '%Y-%m-%d') AS fecha,
-        n.value AS btp_5y,
-        r5.value AS btu_5y,
-        n.value - r5.value AS bei_5y,
-        n10.value AS btp_10y,
-        r10.value AS btu_10y,
-        n10.value - r10.value AS bei_10y
-      FROM read_parquet('{snapshots_dir}/bonos_clp.parquet') n
-      JOIN read_parquet('{snapshots_dir}/bonos_uf.parquet') r5
-        ON strftime(n.date, '%Y-%m-%d') = strftime(r5.date, '%Y-%m-%d') AND r5.series_id = 'btu_5y'
-      JOIN read_parquet('{snapshots_dir}/bonos_clp.parquet') n10
-        ON strftime(n.date, '%Y-%m-%d') = strftime(n10.date, '%Y-%m-%d') AND n10.series_id = 'btp_10y'
-      JOIN read_parquet('{snapshots_dir}/bonos_uf.parquet') r10
-        ON strftime(n.date, '%Y-%m-%d') = strftime(r10.date, '%Y-%m-%d') AND r10.series_id = 'btu_10y'
-      WHERE n.series_id = 'btp_5y'
-        AND n.date >= '{fecha_inicio}' AND n.date <= '{fecha_fin}'
+        strftime(b5.Fecha, '%Y-%m-%d') AS fecha,
+        b5.Valor  AS btp_5y,
+        u5.Valor  AS btu_5y,
+        b5.Valor - u5.Valor  AS bei_5y,
+        b10.Valor AS btp_10y,
+        u10.Valor AS btu_10y,
+        b10.Valor - u10.Valor AS bei_10y
+      FROM read_parquet('{parquet_dir}/btp_curva.parquet') b5
+      JOIN read_parquet('{parquet_dir}/btu_curva.parquet') u5
+        ON b5.Fecha = u5.Fecha AND u5.Tenor = '5Y'
+      JOIN read_parquet('{parquet_dir}/btp_curva.parquet') b10
+        ON b5.Fecha = b10.Fecha AND b10.Tenor = '10Y'
+      JOIN read_parquet('{parquet_dir}/btu_curva.parquet') u10
+        ON b5.Fecha = u10.Fecha AND u10.Tenor = '10Y'
+      WHERE b5.Tenor = '5Y'
+        AND b5.Fecha >= '{fecha_inicio}' AND b5.Fecha <= '{fecha_fin}'
       ORDER BY fecha DESC
       LIMIT {limit}
     params:
@@ -269,20 +279,26 @@ queries:
     name: "Curva Swap Promedio Cámara en pesos (SPC CLP)"
     description: >
       Tasas del Swap Promedio Cámara (SPC) en pesos chilenos para plazos
-      3M, 6M, 9M, 1Y, 2Y, 5Y, 10Y. El SPC es la tasa swap referenciada
-      a la TPM overnight. Útil para preguntas sobre expectativas de TPM,
-      curva de swaps CLP, spreads OIS.
+      3M, 6M, 9M, 12M, 18M, 2Y, 5Y, 10Y. Es una tasa swap de MERCADO del peso
+      (OIS local), un dato de mercado y no una tasa oficial. Úsala para la
+      curva de swaps CLP, su pendiente y spreads swap de mercado en pesos.
     segment: renta_fija_chile
-    tags: [SPC, swap, CLP, pesos, TPM, OIS, cámara, expectativas monetarias, swaps]
-    parquet: curva_spc_clp.parquet
+    tags: [SPC, swap, CLP, pesos, OIS, cámara, swaps, curva swap, swap cámara]
+    parquet: spc_hist.parquet
     sql: |
-      PIVOT (
-        SELECT strftime(date, '%Y-%m-%d') AS fecha, series_id, value
-        FROM read_parquet('{snapshots_dir}/curva_spc_clp.parquet')
-        WHERE date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      )
-      ON series_id
-      USING FIRST(value)
+      SELECT
+        strftime(Fecha, '%Y-%m-%d') AS fecha,
+        MAX(CASE WHEN Tenor = '3M'  THEN Valor END) AS spc_3m_clp,
+        MAX(CASE WHEN Tenor = '6M'  THEN Valor END) AS spc_6m_clp,
+        MAX(CASE WHEN Tenor = '9M'  THEN Valor END) AS spc_9m_clp,
+        MAX(CASE WHEN Tenor = '12M' THEN Valor END) AS spc_1y_clp,
+        MAX(CASE WHEN Tenor = '18M' THEN Valor END) AS spc_18m_clp,
+        MAX(CASE WHEN Tenor = '2Y'  THEN Valor END) AS spc_2y_clp,
+        MAX(CASE WHEN Tenor = '5Y'  THEN Valor END) AS spc_5y_clp,
+        MAX(CASE WHEN Tenor = '10Y' THEN Valor END) AS spc_10y_clp
+      FROM read_parquet('{parquet_dir}/spc_hist.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      GROUP BY fecha
       ORDER BY fecha DESC
       LIMIT {limit}
     params:
@@ -297,7 +313,7 @@ queries:
         default: 200
     unit: "% anual"
     frequency: diario
-    columns: [fecha, spc_3m_clp, spc_6m_clp, spc_9m_clp, spc_1y_clp, spc_2y_clp, spc_5y_clp, spc_10y_clp]
+    columns: [fecha, spc_3m_clp, spc_6m_clp, spc_9m_clp, spc_1y_clp, spc_18m_clp, spc_2y_clp, spc_5y_clp, spc_10y_clp]
 
   - query_id: spc_uf_curva
     name: "Curva Swap Promedio Cámara en UF (SPC UF)"
@@ -337,8 +353,8 @@ queries:
     name: "Curva de rendimiento US Treasuries (UST)"
     description: >
       Tasas de los bonos del Tesoro de Estados Unidos (US Treasuries) para
-      plazos 2Y, 5Y, 10Y, 20Y y 30Y. Fuente: Bloomberg. Útil para preguntas
-      sobre la curva soberana americana, pendiente 2Y-10Y, tasas externas.
+      plazos 2Y, 5Y, 10Y, 20Y y 30Y. Útil para preguntas sobre la curva
+      soberana americana, pendiente 2Y-10Y, tasas externas.
     segment: renta_fija_eeuu
     tags: [UST, US Treasury, bonos EEUU, curva americana, Fed, tasas externas, 10Y, 2Y]
     parquet: ust.parquet
@@ -369,23 +385,23 @@ queries:
   # ── TASAS MONETARIAS CHILE ────────────────────────────────────────────────
 
   - query_id: spreads_dap_swap_clp
-    name: "Spreads DAP y Prime vs Swap interbancario (CLP)"
+    name: "Spreads DAP vs Swap interbancario en CLP (3M, 6M, 12M)"
     description: >
-      Spreads entre depósitos a plazo fijo (DAP) y tasas prime de bancos
-      frente al swap interbancario (Base_DMN), en plazos 1M, 3M, 6M y 12M.
-      Útil para medir tensiones en el mercado de crédito bancario chileno.
+      Spreads entre depósitos a plazo fijo (DAP) y el swap interbancario CLP
+      en plazos 3M, 6M y 12M. Mide tensiones en el mercado de crédito bancario.
+      Nota: prime spreads no disponibles en esta fuente.
     segment: tasas_monetarias_chile
-    tags: [DAP, Prime, spread, swap, CLP, depósito, tensión, liquidez bancaria, tasa captación]
-    parquet: tasas_clp.parquet
+    tags: [DAP, spread, swap, CLP, depósito, tensión, liquidez bancaria, tasa captación]
+    parquet: spread_dap_swap.parquet
     sql: |
-      PIVOT (
-        SELECT strftime(date, '%Y-%m-%d') AS fecha, series_id, value
-        FROM read_parquet('{snapshots_dir}/tasas_clp.parquet')
-        WHERE series_id LIKE 'spread_%_clp'
-          AND date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      )
-      ON series_id
-      USING FIRST(value)
+      SELECT
+        strftime(Fecha, '%Y-%m-%d') AS fecha,
+        MAX(CASE WHEN Serie = '3M'  THEN Valor END) AS spread_dap_swap_3m_clp,
+        MAX(CASE WHEN Serie = '6M'  THEN Valor END) AS spread_dap_swap_6m_clp,
+        MAX(CASE WHEN Serie = '12M' THEN Valor END) AS spread_dap_swap_12m_clp
+      FROM read_parquet('{parquet_dir}/spread_dap_swap.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      GROUP BY fecha
       ORDER BY fecha DESC
       LIMIT {limit}
     params:
@@ -400,7 +416,7 @@ queries:
         default: 200
     unit: "puntos base (bp)"
     frequency: diario
-    columns: [fecha, spread_dap_swap_1m_clp, spread_dap_swap_3m_clp, spread_dap_swap_6m_clp, spread_dap_swap_12m_clp, spread_prime_swap_1m_clp, spread_prime_swap_3m_clp, spread_prime_swap_6m_clp, spread_prime_swap_12m_clp]
+    columns: [fecha, spread_dap_swap_3m_clp, spread_dap_swap_6m_clp, spread_dap_swap_12m_clp]
 
   - query_id: pdbc_bolsa
     name: "Tasas PDBC bolsa por plazo (7d, 30d, 90d, 180d, 360d)"
@@ -437,24 +453,22 @@ queries:
     columns: [fecha, pdbc_bolsa_7d, pdbc_bolsa_30, pdbc_bolsa_90, pdbc_bolsa_180, pdbc_bolsa_360]
 
   - query_id: tib_mercado
-    name: "Tasa Interbancaria (TIB) — tasa y monto transado"
+    name: "Mercado interbancario (TIB) — spread TIB-TPM y monto transado"
     description: >
-      Tasa y monto de las operaciones en el mercado interbancario de Chile (TIB).
-      La TIB es la referencia de liquidez overnight entre bancos. Útil para
-      preguntas sobre liquidez bancaria, spread TIB-TPM, tensiones interbancarias.
+      Spread de la Tasa Interbancaria (TIB) sobre la TPM en puntos base,
+      y monto transado en el mercado interbancario overnight de Chile.
+      Útil para medir tensiones de liquidez entre bancos.
     segment: tasas_monetarias_chile
-    tags: [TIB, interbancario, overnight, liquidez, tasa, monto, overnight, spread TPM]
-    parquet: tasas_clp.parquet
+    tags: [TIB, interbancario, overnight, liquidez, spread, monto, TPM]
+    parquet: tib_monto_transado.parquet
     sql: |
-      PIVOT (
-        SELECT strftime(date, '%Y-%m-%d') AS fecha, series_id, value
-        FROM read_parquet('{snapshots_dir}/tasas_clp.parquet')
-        WHERE series_id IN ('tib_tasa', 'tib_monto')
-          AND date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      )
-      ON series_id
-      USING FIRST(value)
-      ORDER BY fecha DESC
+      SELECT
+        strftime(Fecha, '%Y-%m-%d') AS fecha,
+        "Spread TIB-TPM" AS tib_spread,
+        Monto AS tib_monto
+      FROM read_parquet('{parquet_dir}/tib_monto_transado.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      ORDER BY Fecha DESC
       LIMIT {limit}
     params:
       - name: fecha_inicio
@@ -466,9 +480,9 @@ queries:
       - name: limit
         type: int
         default: 100
-    unit: "% y MM CLP"
+    unit: "bps y MM CLP"
     frequency: diario
-    columns: [fecha, tib_tasa, tib_monto]
+    columns: [fecha, tib_spread, tib_monto]
 
   # ── TASAS USD / MERCADO INTERNACIONAL ────────────────────────────────────
 
@@ -545,7 +559,6 @@ queries:
     description: >
       Secured Overnight Financing Rate (SOFR) de la Fed en plazos 1M, 3M, 6M
       y 12M. Reemplazó al LIBOR USD como tasa de referencia global.
-      Útil para preguntas sobre tasas externas, fondeo interbancario global.
     segment: tasas_internacionales
     tags: [SOFR, LIBOR, Fed, dolar, tasa referencia, interbancario global, 1M, 3M, 6M, 12M]
     parquet: tasas_usd_mn.parquet
@@ -608,22 +621,28 @@ queries:
     columns: [fecha, prime_usd_30, prime_usd_90, prime_usd_180, prime_usd_360]
 
   - query_id: curva_ois_sofr
-    name: "Curva OIS-SOFR (expectativas Fed funds 3M–24M)"
+    name: "Curva OIS (expectativas Fed funds 3M–10Y)"
     description: >
-      Overnight Index Swaps referenciados a SOFR en plazos 3M, 6M, 9M, 12M
-      y 24M. Refleja las expectativas del mercado sobre la tasa Fed Funds
-      en el mediano plazo. Útil para preguntas sobre política monetaria de EEUU.
+      Overnight Index Swaps para plazos 3M, 6M, 9M, 12M, 18M, 2Y, 5Y y 10Y.
+      Refleja las expectativas del mercado sobre la tasa Fed Funds en el
+      mediano plazo. Útil para preguntas sobre política monetaria de EEUU.
     segment: tasas_internacionales
     tags: [OIS, SOFR, Fed funds, expectativas, política monetaria EEUU, 3M, 6M, 12M, 24M]
-    parquet: ois_sofr.parquet
+    parquet: ois_hist.parquet
     sql: |
-      PIVOT (
-        SELECT strftime(date, '%Y-%m-%d') AS fecha, series_id, value
-        FROM read_parquet('{snapshots_dir}/ois_sofr.parquet')
-        WHERE date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      )
-      ON series_id
-      USING FIRST(value)
+      SELECT
+        strftime(Fecha, '%Y-%m-%d') AS fecha,
+        MAX(CASE WHEN Tenor = '3M'  THEN Valor END) AS ois_sofr_3m,
+        MAX(CASE WHEN Tenor = '6M'  THEN Valor END) AS ois_sofr_6m,
+        MAX(CASE WHEN Tenor = '9M'  THEN Valor END) AS ois_sofr_9m,
+        MAX(CASE WHEN Tenor = '12M' THEN Valor END) AS ois_sofr_12m,
+        MAX(CASE WHEN Tenor = '18M' THEN Valor END) AS ois_sofr_18m,
+        MAX(CASE WHEN Tenor = '2Y'  THEN Valor END) AS ois_sofr_24m,
+        MAX(CASE WHEN Tenor = '5Y'  THEN Valor END) AS ois_sofr_5y,
+        MAX(CASE WHEN Tenor = '10Y' THEN Valor END) AS ois_sofr_10y
+      FROM read_parquet('{parquet_dir}/ois_hist.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      GROUP BY fecha
       ORDER BY fecha DESC
       LIMIT {limit}
     params:
@@ -638,25 +657,28 @@ queries:
         default: 200
     unit: "% anual"
     frequency: diario
-    columns: [fecha, ois_sofr_3m, ois_sofr_6m, ois_sofr_9m, ois_sofr_12m, ois_sofr_24m]
+    columns: [fecha, ois_sofr_3m, ois_sofr_6m, ois_sofr_9m, ois_sofr_12m, ois_sofr_18m, ois_sofr_24m, ois_sofr_5y, ois_sofr_10y]
 
   - query_id: expectativas_tpm_mipr
-    name: "Expectativas de TPM implícitas en MIPR (spreads 3M–24M)"
+    name: "Expectativas de TPM implícitas en MIPR (spreads 3M–2Y)"
     description: >
       Spreads de la curva MIPR (tasa swap interbancaria promedio) que revelan
       las expectativas del mercado sobre cambios en la Tasa de Política Monetaria
-      (TPM) del BCCh en horizontes de 3M, 6M, 9M, 12M y 24M.
+      (TPM) del BCCh en horizontes de 3M, 6M, 9M, 12M y 2Y.
     segment: politica_monetaria
     tags: [TPM, expectativas, MIPR, swap, política monetaria, BCCh, 3M, 6M, 12M, mercado implícito]
-    parquet: expectativas_tpm.parquet
+    parquet: mipr_spread_hist.parquet
     sql: |
-      PIVOT (
-        SELECT strftime(date, '%Y-%m-%d') AS fecha, series_id, value
-        FROM read_parquet('{snapshots_dir}/expectativas_tpm.parquet')
-        WHERE date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      )
-      ON series_id
-      USING FIRST(value)
+      SELECT
+        strftime(Fecha, '%Y-%m-%d') AS fecha,
+        MAX(CASE WHEN Tenor = '3M'  THEN Valor END) AS spread_mipr_3m,
+        MAX(CASE WHEN Tenor = '6M'  THEN Valor END) AS spread_mipr_6m,
+        MAX(CASE WHEN Tenor = '9M'  THEN Valor END) AS spread_mipr_9m,
+        MAX(CASE WHEN Tenor = '12M' THEN Valor END) AS spread_mipr_12m,
+        MAX(CASE WHEN Tenor = '2Y'  THEN Valor END) AS spread_mipr_24m
+      FROM read_parquet('{parquet_dir}/mipr_spread_hist.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      GROUP BY fecha
       ORDER BY fecha DESC
       LIMIT {limit}
     params:
@@ -669,7 +691,7 @@ queries:
       - name: limit
         type: int
         default: 200
-    unit: "% anual"
+    unit: "bps"
     frequency: diario
     columns: [fecha, spread_mipr_3m, spread_mipr_6m, spread_mipr_9m, spread_mipr_12m, spread_mipr_24m]
 
@@ -679,20 +701,19 @@ queries:
     name: "LCR en moneda extranjera (sistémico y no sistémico)"
     description: >
       Ratio de Cobertura de Liquidez (LCR) en moneda extranjera (MX)
-      para bancos sistémicos, no sistémicos y total del sistema. El LCR mide
-      la capacidad de los bancos de enfrentar salidas de liquidez en 30 días.
+      para bancos sistémicos y no sistémicos. Mide la capacidad de los bancos
+      de enfrentar salidas de liquidez en 30 días.
     segment: liquidez_bancaria
     tags: [LCR, liquidez, moneda extranjera, MX, sistémico, bancos, cobertura, Basilea III]
-    parquet: liquidez_mx.parquet
+    parquet: lcr.parquet
     sql: |
-      PIVOT (
-        SELECT strftime(date, '%Y-%m-%d') AS fecha, series_id, value
-        FROM read_parquet('{snapshots_dir}/liquidez_mx.parquet')
-        WHERE series_id IN ('lcr_sistemico','lcr_no_sistemico','lcr_total')
-          AND date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      )
-      ON series_id
-      USING FIRST(value)
+      SELECT
+        strftime(Fecha, '%Y-%m-%d') AS fecha,
+        MAX(CASE WHEN Categoria = 'Sistémico'    THEN LCR END) AS lcr_sistemico,
+        MAX(CASE WHEN Categoria = 'No Sistémico' THEN LCR END) AS lcr_no_sistemico
+      FROM read_parquet('{parquet_dir}/lcr.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      GROUP BY fecha
       ORDER BY fecha DESC
       LIMIT {limit}
     params:
@@ -705,9 +726,9 @@ queries:
       - name: limit
         type: int
         default: 200
-    unit: "ratio (%)"
-    frequency: diario
-    columns: [fecha, lcr_sistemico, lcr_no_sistemico, lcr_total]
+    unit: "ratio"
+    frequency: mensual
+    columns: [fecha, lcr_sistemico, lcr_no_sistemico]
 
   - query_id: nsfr_mx_bancos
     name: "NSFR en moneda extranjera (sistémico y no sistémico)"
@@ -717,16 +738,15 @@ queries:
       vs requerido en un horizonte de 1 año.
     segment: liquidez_bancaria
     tags: [NSFR, financiamiento estable, moneda extranjera, MX, sistémico, bancos, Basilea III]
-    parquet: liquidez_mx.parquet
+    parquet: nsfr.parquet
     sql: |
-      PIVOT (
-        SELECT strftime(date, '%Y-%m-%d') AS fecha, series_id, value
-        FROM read_parquet('{snapshots_dir}/liquidez_mx.parquet')
-        WHERE series_id IN ('nsfr_sistemico','nsfr_no_sistemico','nsfr_total')
-          AND date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      )
-      ON series_id
-      USING FIRST(value)
+      SELECT
+        strftime(Fecha, '%Y-%m-%d') AS fecha,
+        MAX(CASE WHEN Categoria = 'Sistémico'    THEN NSFR END) AS nsfr_sistemico,
+        MAX(CASE WHEN Categoria = 'No Sistémico' THEN NSFR END) AS nsfr_no_sistemico
+      FROM read_parquet('{parquet_dir}/nsfr.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      GROUP BY fecha
       ORDER BY fecha DESC
       LIMIT {limit}
     params:
@@ -739,25 +759,28 @@ queries:
       - name: limit
         type: int
         default: 200
-    unit: "ratio (%)"
-    frequency: diario
-    columns: [fecha, nsfr_sistemico, nsfr_no_sistemico, nsfr_total]
+    unit: "ratio"
+    frequency: mensual
+    columns: [fecha, nsfr_sistemico, nsfr_no_sistemico]
 
   - query_id: ratio_liquidez_obligaciones
-    name: "Ratio de liquidez sobre obligaciones totales MX"
+    name: "Ratio de liquidez MX sobre obligaciones (sistémico y no sistémico)"
     description: >
-      Ratio de activos líquidos en moneda extranjera sobre obligaciones totales
-      del sistema bancario. Indicador sintético de la posición de liquidez
-      sistémica en dólares.
+      Ratio de activos líquidos en moneda extranjera sobre obligaciones del
+      sistema bancario, por tipo de banco. Indicador sintético de la posición
+      de liquidez sistémica en dólares.
     segment: liquidez_bancaria
     tags: [ratio liquidez, obligaciones, moneda extranjera, MX, sistémico, activos líquidos]
-    parquet: liquidez_mx.parquet
+    parquet: ratio_liquidez_obligaciones.parquet
     sql: |
-      SELECT strftime(date, '%Y-%m-%d') AS fecha, value AS ratio_liq_obligaciones
-      FROM read_parquet('{snapshots_dir}/liquidez_mx.parquet')
-      WHERE series_id = 'ratio_liq_obligaciones_total'
-        AND date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      ORDER BY date DESC
+      SELECT
+        strftime(Fecha, '%Y-%m-%d') AS fecha,
+        MAX(CASE WHEN Categoria = 'Sistémico'    THEN LCR_MX END) AS ratio_sistémico,
+        MAX(CASE WHEN Categoria = 'No Sistémico' THEN LCR_MX END) AS ratio_no_sistémico
+      FROM read_parquet('{parquet_dir}/ratio_liquidez_obligaciones.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      GROUP BY fecha
+      ORDER BY fecha DESC
       LIMIT {limit}
     params:
       - name: fecha_inicio
@@ -771,25 +794,26 @@ queries:
         default: 200
     unit: "ratio"
     frequency: diario
-    columns: [fecha, ratio_liq_obligaciones]
+    columns: [fecha, ratio_sistémico, ratio_no_sistémico]
 
   # ── COMMODITIES ───────────────────────────────────────────────────────────
 
   - query_id: precio_cobre
-    name: "Precio del cobre histórico"
+    name: "Precio del cobre histórico (USD/lb)"
     description: >
-      Serie histórica del precio del cobre en centavos de dólar por libra (c/lb)
-      o dólares por tonelada métrica (USD/TM). Fuente: Bloomberg/LME.
+      Serie histórica del precio del cobre en dólares por libra (USD/lb).
+      Fuente: parquet cobre_dxy (columna Cobre almacenada en USc/lb, se convierte ÷100).
       Determinante clave del tipo de cambio CLP y de las exportaciones chilenas.
     segment: commodities
     tags: [cobre, copper, LME, commodities, exportaciones, Chile, precio, USD]
-    parquet: commodities.parquet
+    parquet: cobre_dxy.parquet
     sql: |
-      SELECT strftime(date, '%Y-%m-%d') AS fecha, value AS cobre_usd_lb
-      FROM read_parquet('{snapshots_dir}/commodities.parquet')
-      WHERE series_id = 'cobre'
-        AND date >= '{fecha_inicio}' AND date <= '{fecha_fin}'
-      ORDER BY date DESC
+      SELECT
+        strftime(Fecha, '%Y-%m-%d') AS fecha,
+        Cobre / 100.0 AS cobre_usd_lb
+      FROM read_parquet('{parquet_dir}/cobre_dxy.parquet')
+      WHERE Fecha >= '{fecha_inicio}' AND Fecha <= '{fecha_fin}'
+      ORDER BY Fecha DESC
       LIMIT {limit}
     params:
       - name: fecha_inicio

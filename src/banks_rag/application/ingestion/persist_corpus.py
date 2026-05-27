@@ -95,6 +95,26 @@ def persist_corpus(
             f"  3. Re-vectorizar con el mismo modelo de la tabla existente."
         )
 
+    # Deduplicar por document_id: dos archivos con mismo slug causarían
+    # CardinalityViolation en el ON CONFLICT DO UPDATE de psycopg2.
+    # El último documento con cada ID gana (mismo comportamiento que el upsert).
+    docs_by_id: dict[str, dict] = {}
+    for d in documents:
+        docs_by_id[d["document_id"]] = d
+    if len(docs_by_id) < len(documents):
+        dupes = len(documents) - len(docs_by_id)
+        import logging
+        logging.getLogger(__name__).warning(
+            "%d documento(s) con document_id duplicado eliminados antes del upsert. "
+            "Revisar slugify_document_id para archivos con el mismo nombre en distintas carpetas.",
+            dupes,
+        )
+    documents = list(docs_by_id.values())
+
+    # Deduplicar chunks por chunk_id por la misma razón.
+    chunks_by_id: dict[str, dict] = {c["chunk_id"]: c for c in chunks}
+    chunks = list(chunks_by_id.values())
+
     repo.upsert_documents(documents)
     doc_ids = [d["document_id"] for d in documents]
     repo.delete_chunks_for_docs(doc_ids)

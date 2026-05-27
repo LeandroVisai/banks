@@ -222,12 +222,29 @@ async def get_recent_policy_decisions(
     max_chunks_per_doc = max(1, min(int(max_chunks_per_doc), 8))
     repo = _repo()
 
-    docs = await asyncio.to_thread(repo.list_documents, doc_type="COMUNICADO_RPM", limit=50)
+    # Consultar ambos tipos: COMUNICADO_RPM (nuevo esquema de carpetas)
+    # y COMUNICADO (tipo legacy de documentos ingresados antes de la
+    # migración a Datos_prueba/RPM/Comunicados_RPM/).
+    docs_rpm, docs_legacy = await asyncio.gather(
+        asyncio.to_thread(repo.list_documents, doc_type="COMUNICADO_RPM", limit=50),
+        asyncio.to_thread(repo.list_documents, doc_type="COMUNICADO", limit=50),
+    )
+    seen: set[str] = set()
+    docs: list[dict] = []
+    for d in [*docs_rpm, *docs_legacy]:
+        if d["document_id"] not in seen:
+            seen.add(d["document_id"])
+            docs.append(d)
+
     if not docs:
         return {
             "decisions": [],
             "n_decisions": 0,
-            "message": "No hay Comunicados en el corpus.",
+            "message": (
+                "No hay Comunicados de política monetaria en el corpus. "
+                "Para responder sobre TPM debes indicar explícitamente que "
+                "no tienes documentos del BCCh disponibles."
+            ),
         }
 
     # Orden por fecha descendente; document_date es ISO, el orden lexicográfico

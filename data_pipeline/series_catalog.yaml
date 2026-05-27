@@ -1,33 +1,29 @@
 # =============================================================================
-# series_catalog.yaml — Catálogo de series de tiempo para el chatbot.
+# series_catalog.yaml — Catálogo de series que extract.py extrae del DW
+#                        y materializa como parquets en snapshots/.
 #
-# Cada serie se extrae del data warehouse (mesadineOLTP_, dbo.Base_DMN, etc.)
-# vía las queries de querys/Monitor.py y se materializa en parquet.
+# IMPORTANTE: Este catálogo solo contiene las series SIN equivalente en
+# data_pipeline/parquet/ (fuente primaria, más fresca). Las series migradas
+# a parquet/ ya no se generan aquí para evitar duplicación.
+#
+# Series en parquet/ (NO incluir aquí):
+#   clp_monto, forward_points, btp_curva, btu_curva, spc_hist,
+#   spread_dap_swap, tib_monto_transado, ois_hist, mipr_spread_hist,
+#   lcr, nsfr, ratio_liquidez_obligaciones, cobre_dxy, petroleo_tcn, etc.
 #
 # Formato de cada serie:
 #   id:           identificador único, snake_case
-#   name:         nombre legible
-#   category:     grupo (un archivo parquet por categoría)
-#   unit:         "% anual" | "CLP por USD" | "USD/lb" | "bp" | etc.
+#   unit:         "% anual" | "CLP por USD" | "bp" | etc.
 #   frequency:    diario | mensual | trimestral
-#   source:       BCCh | Bloomberg | INE | LME | NYMEX | Fed | DACE
-#   variable:     mapeo a taxonomy.py (TASA_INTERES, INFLACION, etc.)
-#   tenor:        opcional; para curvas (5Y, 10Y, etc.)
 #   sql_table:    tabla SQL Server de origen
-#   sql_column:   columna que contiene el valor (en el formato wide original)
-#   description:  texto que el LLM ve cuando explora el catálogo
-#
-# Convenciones:
-#   - Las tasas porcentuales del DW vienen como fracción (0.085 = 8.5%).
-#     extract.py las multiplica por 100 si `multiply_by_100: true`.
-#   - Para spreads en bps, multiplicar por 10000 si vienen en fracción.
+#   sql_column:   columna que contiene el valor
 # =============================================================================
 
 categories:
 
-  # ─── TASAS CLP — DAP / Prime / Swap ──────────────────────────────────────
+  # ─── TASAS CLP — PDBC / TIB (solo series sin equivalente en parquet/) ──────
   tasas_clp:
-    description: "Tasas en pesos chilenos: DAP, Prime, Swap, PDBC, TIB"
+    description: "Tasas PDBC bolsa y TIB — sin equivalente en parquet/"
     parquet_file: tasas_clp.parquet
     series:
       - id: spread_dap_swap_1m_clp
@@ -52,14 +48,12 @@ categories:
         sql_table: dbo.Base_DMN
         sql_column: "[SPREAD DS 90]"
         multiply_by: 100
-        description: "Diferencia DAP vs Swap interbancario, plazo 3 meses"
 
       - id: spread_dap_swap_6m_clp
         name: "Spread DAP-Swap 6M"
         unit: "bp"
         frequency: diario
         source: DACE
-        variable: TASA_INTERES_MERCADO
         tenor: 6M
         sql_table: dbo.Base_DMN
         sql_column: "[SPREAD DS 180]"
@@ -70,7 +64,6 @@ categories:
         unit: "bp"
         frequency: diario
         source: DACE
-        variable: TASA_INTERES_MERCADO
         tenor: 12M
         sql_table: dbo.Base_DMN
         sql_column: "[SPREAD DS 360]"
@@ -81,7 +74,6 @@ categories:
         unit: "bp"
         frequency: diario
         source: DACE
-        variable: TASA_INTERES_MERCADO
         tenor: 1M
         sql_table: dbo.Base_DMN
         sql_column: "[SPREAD PS 30]"
@@ -175,80 +167,9 @@ categories:
         sql_table: mesadineOLTP_.Interbancario.Transacciones
         derivation: "sum(Monto) groupby Fecha"
 
-  # ─── CURVAS SWAP CLP (SPC) ───────────────────────────────────────────────
-  curva_spc_clp:
-    description: "Curva swap promedio cámara CLP (SPC) — todos los tenores"
-    parquet_file: curva_spc_clp.parquet
-    series:
-      - id: spc_3m_clp
-        name: "SPC CLP 3M"
-        unit: "% anual"
-        frequency: diario
-        source: Bloomberg
-        variable: TASA_INTERES_MERCADO
-        tenor: 3M
-        sql_table: dbo.bbg_spc_clp
-        sql_column: SPC_3M
-
-      - id: spc_6m_clp
-        name: "SPC CLP 6M"
-        unit: "% anual"
-        frequency: diario
-        source: Bloomberg
-        tenor: 6M
-        sql_table: dbo.bbg_spc_clp
-        sql_column: SPC_6M
-
-      - id: spc_9m_clp
-        name: "SPC CLP 9M"
-        unit: "% anual"
-        frequency: diario
-        source: Bloomberg
-        tenor: 9M
-        sql_table: dbo.bbg_spc_clp
-        sql_column: SPC_9M
-
-      - id: spc_1y_clp
-        name: "SPC CLP 1Y"
-        unit: "% anual"
-        frequency: diario
-        source: Bloomberg
-        tenor: 1Y
-        sql_table: dbo.bbg_spc_clp
-        sql_column: SPC_1Y
-
-      - id: spc_2y_clp
-        name: "SPC CLP 2Y"
-        unit: "% anual"
-        frequency: diario
-        source: Bloomberg
-        tenor: 2Y
-        sql_table: dbo.bbg_spc_clp
-        sql_column: SPC_2Y
-
-      - id: spc_5y_clp
-        name: "SPC CLP 5Y"
-        unit: "% anual"
-        frequency: diario
-        source: Bloomberg
-        variable: TASAS_LARGO_PLAZO
-        tenor: 5Y
-        sql_table: dbo.bbg_spc_clp
-        sql_column: SPC_5Y
-
-      - id: spc_10y_clp
-        name: "SPC CLP 10Y"
-        unit: "% anual"
-        frequency: diario
-        source: Bloomberg
-        variable: TASAS_LARGO_PLAZO
-        tenor: 10Y
-        sql_table: dbo.bbg_spc_clp
-        sql_column: SPC_10Y
-
-  # ─── CURVA SPC UF ────────────────────────────────────────────────────────
+  # ─── CURVA SPC UF (sin equivalente en parquet/) ──────────────────────────
   curva_spc_uf:
-    description: "Curva swap promedio cámara UF"
+    description: "Curva swap promedio cámara UF — sin equivalente en parquet/"
     parquet_file: curva_spc_uf.parquet
     series:
       - id: spc_3m_uf
@@ -270,177 +191,9 @@ categories:
         sql_table: dbo.bbg_spc_uf
         sql_column: SPC_1Y
 
-  # ─── BONOS CHILE (BTP / BTU) ─────────────────────────────────────────────
-  bonos_clp:
-    description: "Bonos del Tesoro y BCCh en pesos (BTP) — todos los tenores"
-    parquet_file: bonos_clp.parquet
-    series:
-      - id: btp_1y
-        name: "BTP 1Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        variable: TASAS_LARGO_PLAZO
-        tenor: 1Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS $ 1Y]"
-        description: "Bono Tesoreria General República en pesos, 1 año"
-
-      - id: btp_2y
-        name: "BTP 2Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        tenor: 2Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS $ 2Y]"
-
-      - id: btp_5y
-        name: "BTP 5Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        variable: TASAS_LARGO_PLAZO
-        tenor: 5Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS $ 5Y]"
-
-      - id: btp_7y
-        name: "BTP 7Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        tenor: 7Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS $ 7Y]"
-
-      - id: btp_10y
-        name: "BTP 10Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        variable: TASAS_LARGO_PLAZO
-        tenor: 10Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS $ 10Y]"
-
-      - id: btp_15y
-        name: "BTP 15Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        tenor: 15Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS $ 15Y]"
-
-      - id: btp_20y
-        name: "BTP 20Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        tenor: 20Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS $ 20Y]"
-
-      - id: btp_25y
-        name: "BTP 25Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        tenor: 25Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS $ 25Y]"
-
-      - id: btp_30y
-        name: "BTP 30Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        tenor: 30Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS $ 30Y]"
-
-  bonos_uf:
-    description: "Bonos del Tesoro y BCCh en UF (BTU) — todos los tenores"
-    parquet_file: bonos_uf.parquet
-    series:
-      - id: btu_2y
-        name: "BTU 2Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        tenor: 2Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS UF 2Y]"
-
-      - id: btu_5y
-        name: "BTU 5Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        variable: TASAS_LARGO_PLAZO
-        tenor: 5Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS UF 5Y]"
-
-      - id: btu_7y
-        name: "BTU 7Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        tenor: 7Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS UF 7Y]"
-
-      - id: btu_10y
-        name: "BTU 10Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        variable: TASAS_LARGO_PLAZO
-        tenor: 10Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS UF 10Y]"
-
-      - id: btu_15y
-        name: "BTU 15Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        tenor: 15Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS UF 15Y]"
-
-      - id: btu_20y
-        name: "BTU 20Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        tenor: 20Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS UF 20Y]"
-
-      - id: btu_25y
-        name: "BTU 25Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        tenor: 25Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS UF 25Y]"
-
-      - id: btu_30y
-        name: "BTU 30Y"
-        unit: "% anual"
-        frequency: diario
-        source: BCCh
-        tenor: 30Y
-        sql_table: dbo.Base_DMN
-        sql_column: "[BONOS UF 30Y]"
-
-  # ─── US TREASURIES ───────────────────────────────────────────────────────
+  # ─── US TREASURIES (sin equivalente en parquet/) ─────────────────────────
   ust:
-    description: "Yields del tesoro de EEUU"
+    description: "Yields del tesoro de EEUU — sin equivalente en parquet/"
     parquet_file: ust.parquet
     series:
       - id: ust_2y
@@ -491,111 +244,9 @@ categories:
         sql_table: DACE.dbo.bbg_rfi30_gen
         sql_column: EEUU
 
-  # ─── OIS SOFR ────────────────────────────────────────────────────────────
-  ois_sofr:
-    description: "OIS sobre SOFR — expectativas tasa Fed"
-    parquet_file: ois_sofr.parquet
-    series:
-      - id: ois_sofr_3m
-        name: "OIS SOFR 3M"
-        unit: "% anual"
-        frequency: diario
-        source: Bloomberg
-        tenor: 3M
-        sql_table: DACE.dbo.bbg_OIS_SOFR
-        sql_column: ois3m
-
-      - id: ois_sofr_6m
-        name: "OIS SOFR 6M"
-        unit: "% anual"
-        frequency: diario
-        source: Bloomberg
-        tenor: 6M
-        sql_table: DACE.dbo.bbg_OIS_SOFR
-        sql_column: ois6m
-
-      - id: ois_sofr_9m
-        name: "OIS SOFR 9M"
-        unit: "% anual"
-        frequency: diario
-        source: Bloomberg
-        tenor: 9M
-        sql_table: DACE.dbo.bbg_OIS_SOFR
-        sql_column: ois9m
-
-      - id: ois_sofr_12m
-        name: "OIS SOFR 12M"
-        unit: "% anual"
-        frequency: diario
-        source: Bloomberg
-        tenor: 12M
-        sql_table: DACE.dbo.bbg_OIS_SOFR
-        sql_column: ois12m
-
-      - id: ois_sofr_24m
-        name: "OIS SOFR 24M"
-        unit: "% anual"
-        frequency: diario
-        source: Bloomberg
-        tenor: 24M
-        sql_table: DACE.dbo.bbg_OIS_SOFR
-        sql_column: ois24m
-
-  # ─── EXPECTATIVAS DE TPM (MIPR) ──────────────────────────────────────────
-  expectativas_tpm:
-    description: "Expectativa de TPM implícita en swaps cámara (MIPR)"
-    parquet_file: expectativas_tpm.parquet
-    series:
-      - id: spread_mipr_3m
-        name: "Spread MIPR 3M-1D"
-        unit: "% anual"
-        frequency: diario
-        source: DACE
-        variable: TASA_INTERES
-        tenor: 3M
-        sql_table: DACE.dbo.zero_curve_MIPR
-        sql_column: "[spread_MIPR_3M1D]"
-        description: "Expectativa TPM implícita en swap 3M vs 1D"
-
-      - id: spread_mipr_6m
-        unit: "% anual"
-        name: "Spread MIPR 6M-1D"
-        frequency: diario
-        source: DACE
-        tenor: 6M
-        sql_table: DACE.dbo.zero_curve_MIPR
-        sql_column: "[spread_MIPR_6M1D]"
-
-      - id: spread_mipr_9m
-        name: "Spread MIPR 9M-1D"
-        unit: "% anual"
-        frequency: diario
-        source: DACE
-        tenor: 9M
-        sql_table: DACE.dbo.zero_curve_MIPR
-        sql_column: "[spread_MIPR_9M1D]"
-
-      - id: spread_mipr_12m
-        name: "Spread MIPR 12M-1D"
-        unit: "% anual"
-        frequency: diario
-        source: DACE
-        tenor: 12M
-        sql_table: DACE.dbo.zero_curve_MIPR
-        sql_column: "[spread_MIPR_12M1D]"
-
-      - id: spread_mipr_24m
-        name: "Spread MIPR 24M-1D"
-        unit: "% anual"
-        frequency: diario
-        source: DACE
-        tenor: 24M
-        sql_table: DACE.dbo.zero_curve_MIPR
-        sql_column: "[spread_MIPR_24M1D]"
-
-  # ─── FX (DIVISAS) ────────────────────────────────────────────────────────
+  # ─── FX (DIVISAS) — índices sin equivalente en parquet/ ──────────────────
   fx:
-    description: "Tipo de cambio CLP y comparables"
+    description: "Índices de monedas y FX — sin equivalente en parquet/"
     parquet_file: fx.parquet
     series:
       - id: usdclp
@@ -704,63 +355,7 @@ categories:
         sql_table: dbo.Base_DMN
         sql_column: "[DIF. Tasas EEUU 1Y]"
 
-  # ─── COMMODITIES ─────────────────────────────────────────────────────────
-  commodities:
-    description: "Precios de commodities relevantes para Chile"
-    parquet_file: commodities.parquet
-    series:
-      - id: cobre
-        name: "Cobre"
-        unit: "USD/lb"
-        frequency: diario
-        source: Bloomberg
-        variable: COMMODITIES
-        sql_table: dbo.bbg_commodities
-        sql_column: COBRE
-
-  # ─── FORWARDS USD/CLP ────────────────────────────────────────────────────
-  forwards_clp:
-    description: "Forwards USD/CLP — todos los tenores"
-    parquet_file: forwards_clp.parquet
-    series:
-      - id: fwd_clp_30
-        name: "FWD USD/CLP 30 días"
-        unit: "puntos"
-        frequency: diario
-        source: DACE
-        tenor: 30D
-        sql_table: dbo.Base_DMN
-        sql_column: "[FWD Ajus. 30]"
-        description: "Forward ajustado USD/CLP, 30 días"
-
-      - id: fwd_clp_90
-        name: "FWD USD/CLP 90 días"
-        unit: "puntos"
-        frequency: diario
-        source: DACE
-        tenor: 90D
-        sql_table: dbo.Base_DMN
-        sql_column: "[FWD Ajus. 90]"
-
-      - id: fwd_clp_180
-        name: "FWD USD/CLP 180 días"
-        unit: "puntos"
-        frequency: diario
-        source: DACE
-        tenor: 180D
-        sql_table: dbo.Base_DMN
-        sql_column: "[FWD Ajus. 180]"
-
-      - id: fwd_clp_360
-        name: "FWD USD/CLP 360 días"
-        unit: "puntos"
-        frequency: diario
-        source: DACE
-        tenor: 360D
-        sql_table: dbo.Base_DMN
-        sql_column: "[FWD Ajus. 360]"
-
-  # ─── TASAS USD MN (off-shore, on-shore, SOFR) ────────────────────────────
+  # ─── TASAS USD MN (TADO, Prime USD, SOFR, on-shore) ─────────────────────
   tasas_usd_mn:
     description: "Tasas USD en plaza local (TADO, Prime USD, DAP USD) y SOFR"
     parquet_file: tasas_usd_mn.parquet
@@ -914,76 +509,6 @@ categories:
         sql_table: dbo.Base_DMN
         sql_column: "[Spread On Shore Base DAP 12M]"
         multiply_by: 100
-
-  # ─── LIQUIDEZ MX (LCR / NSFR / Cobertura) ────────────────────────────────
-  liquidez_mx:
-    description: "Indicadores de liquidez bancaria en moneda extranjera"
-    parquet_file: liquidez_mx.parquet
-    series:
-      - id: lcr_total
-        name: "LCR Total"
-        unit: "ratio"
-        frequency: mensual
-        source: SBIF/DACE
-        sql_table: mesadineOLTP_.c49.indicadoresMonitoreo
-        derivation: "sum(activosLiquidos)/sum(egresosNetos)"
-        description: "Liquidity Coverage Ratio agregado"
-
-      - id: lcr_sistemico
-        name: "LCR Bancos Sistémicos"
-        unit: "ratio"
-        frequency: mensual
-        source: SBIF/DACE
-        sql_table: mesadineOLTP_.c49.indicadoresMonitoreo
-        derivation: "sum_filter(Categoria='Sistémico')"
-
-      - id: lcr_no_sistemico
-        name: "LCR Bancos No Sistémicos"
-        unit: "ratio"
-        frequency: mensual
-        source: SBIF/DACE
-        sql_table: mesadineOLTP_.c49.indicadoresMonitoreo
-        derivation: "sum_filter(Categoria='No Sistémico')"
-
-      - id: nsfr_total
-        name: "NSFR Total"
-        unit: "ratio"
-        frequency: mensual
-        source: SBIF/DACE
-        sql_table: mesadineOLTP_.c49.indicadoresMonitoreo
-        derivation: "sum(fuenteFinanciamientoEstable)/sum(financiamientoEstableRequerido)"
-
-      - id: nsfr_sistemico
-        name: "NSFR Bancos Sistémicos"
-        unit: "ratio"
-        frequency: mensual
-        source: SBIF/DACE
-        sql_table: mesadineOLTP_.c49.indicadoresMonitoreo
-        derivation: "sum_filter(Categoria='Sistémico')"
-
-      - id: nsfr_no_sistemico
-        name: "NSFR Bancos No Sistémicos"
-        unit: "ratio"
-        frequency: mensual
-        source: SBIF/DACE
-        sql_table: mesadineOLTP_.c49.indicadoresMonitoreo
-        derivation: "sum_filter(Categoria='No Sistémico')"
-
-      - id: ratio_liq_obligaciones_total
-        name: "Ratio Liquidez/Obligaciones 30d (Total)"
-        unit: "ratio"
-        frequency: diario
-        source: DACE
-        sql_table: Outputs.Bancos.Ratio_Cobertura_MX_30d_Historico
-        derivation: "sum(Liquidez)/(sum(DAP)+sum(Creditos_externos))*0.75"
-
-      - id: ihh_liquidez_mx
-        name: "Concentración liquidez MX (IHH)"
-        unit: "índice HHI"
-        frequency: diario
-        source: BCCh/StockHistorico.RIM
-        sql_table: MesadineOLTP_.StockHistorico.RIM
-        derivation: "Herfindahl–Hirschman sobre BCCh+Corresponsales"
 
   # ─── CALIDAD DEL MERCADO ─────────────────────────────────────────────────
   microestructura:

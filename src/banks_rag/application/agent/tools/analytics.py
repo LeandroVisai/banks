@@ -448,7 +448,7 @@ _SNAPSHOT_INDICATORS: list[tuple[str, str, str, str]] = [
     ("cobre", "Precio del cobre", "precio_cobre", "cobre_usd_lb"),
     ("btp_10y", "Bono nominal BCCh 10 años (BTP)", "curva_btp_clp", "btp_10y"),
     ("btu_10y", "Bono real BCCh 10 años (BTU)", "curva_btu_uf", "btu_10y"),
-    ("tib", "Tasa interbancaria (TIB)", "tib_mercado", "tib_tasa"),
+    ("tib_spread", "Spread TIB-TPM (bps)", "tib_mercado", "tib_spread"),
     ("ust_10y", "US Treasury 10 años", "curva_ust", "ust_10y"),
     ("exp_tpm_3m", "Expectativa TPM implícita 3M (spread MIPR)",
      "expectativas_tpm_mipr", "spread_mipr_3m"),

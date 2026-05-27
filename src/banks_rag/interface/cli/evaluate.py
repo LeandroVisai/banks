@@ -14,6 +14,7 @@ Uso:
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -64,24 +65,68 @@ def _format_metric(value: float, baseline: float | None = None) -> str:
     return f"{pct} ({sign}{delta:.1%})"
 
 
-def _run_retrieval_eval(k: int) -> tuple[AggregateMetrics, list[RetrievalResult]]:
-    """Evalúa los casos del golden set de retrieval con hits sintéticos.
+def _build_search_backend():
+    """Construye ``(embedder, repo)`` para búsqueda real contra el corpus.
 
-    En modo offline (sin BD) genera hits vacíos — el score será 0, útil para
-    detectar regresiones de interfaz y validar la cadena de cómputo.
-    Con BD real, substituir _mock_hits por hybrid_search real.
+    Devuelve ``None`` si el modelo de embeddings o la BD no están disponibles
+    (entorno offline / CI sin GPU ni Postgres): el caller cae a hits vacíos en
+    vez de romperse, preservando el modo offline de validación de la cadena.
     """
+    try:
+        from banks_rag.infrastructure.embeddings.sentence_transformers_embedder import (
+            build_default_embedder,
+        )
+        from banks_rag.infrastructure.persistence import PostgresRepo
+
+        embedder = build_default_embedder()
+        repo = PostgresRepo(prefix=os.getenv("RAG_TABLE_PREFIX", ""))
+        repo.existing_embedding_dim()  # toca la BD para fallar temprano si no hay conexión
+        return embedder, repo
+    except Exception as e:  # noqa: BLE001
+        typer.secho(
+            f"[retrieval] ⚠ búsqueda real no disponible ({type(e).__name__}: {e}). "
+            "Usando hits vacíos (recall=0). Configura Postgres + modelo de embeddings "
+            "para medir retrieval de verdad.",
+            fg=typer.colors.YELLOW, err=True,
+        )
+        return None
+
+
+def _run_retrieval_eval(k: int) -> tuple[AggregateMetrics, list[RetrievalResult]]:
+    """Evalúa el golden set de retrieval contra ``hybrid_search`` real.
+
+    Corre la búsqueda híbrida (HNSW + BM25 → RRF → MMR → reranker) sobre el
+    corpus en Postgres y mide recall@k / MRR / nDCG contra los criterios del
+    golden set (doc_types, sections, min_importance esperados).
+
+    Si la BD o el modelo no están disponibles, cae a hits vacíos (recall=0)
+    para no romper en entornos offline/CI sin GPU.
+    """
+    from banks_rag.application.retrieval.hybrid_search import hybrid_search
+
     cases = load_retrieval_golden_set()
+    backend = _build_search_backend()
     results: list[RetrievalResult] = []
     for case in cases:
-        # Modo offline: hits vacíos (score 0 para todos)
-        mock_hits: list[dict] = []
+        query = case.get("query", "")
+        hits: list[dict] = []
+        if backend is not None:
+            embedder, repo = backend
+            try:
+                hits = hybrid_search(query, query_embedder=embedder, repo=repo, k=k).hits
+            except Exception as e:  # noqa: BLE001
+                typer.secho(
+                    f"[retrieval] ⚠ hybrid_search falló ({type(e).__name__}: {e}). "
+                    "Cayendo a hits vacíos para los casos restantes.",
+                    fg=typer.colors.YELLOW, err=True,
+                )
+                backend = None  # no reintentar: el resto del golden set usa hits vacíos
         r = evaluate_retrieval(
-            mock_hits,
+            hits,
             expected_doc_types=case.get("expected_doc_types", []),
             expected_sections=case.get("expected_sections", []),
             min_importance=case.get("min_importance"),
-            query=case.get("query", ""),
+            query=query,
             k=k,
         )
         results.append(r)
