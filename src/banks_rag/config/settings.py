@@ -47,13 +47,26 @@ class Settings(BaseSettings):
     rag_table_prefix: str = Field(default_factory=lambda: os.getenv("RAG_TABLE_PREFIX", ""))
 
     # ── LLM ──────────────────────────────────────────────────────────────────
-    llm_family: Literal["qwen", "gemma", "mock"] = "mock"
+    llm_family: Literal["qwen", "gemma", "mock", "vllm"] = "mock"
+
+    # llama.cpp settings (familias "qwen" y "gemma")
     llm_model_path: str = ""
     llm_n_ctx: int = 16384
     llm_n_gpu_layers: int = -1  # todo a GPU
     llm_temperature: float = 0.2
     llm_top_p: float = 0.9
     llm_max_tokens: int = 2048
+
+    # vLLM client settings (familia "vllm") — servidor externo OpenAI-compatible
+    vllm_base_url: str = "http://localhost:8000/v1"
+    vllm_model: str = ""                # e.g. "Qwen/Qwen3-32B-AWQ"
+    vllm_api_key: str = "none"
+    vllm_enable_thinking: bool = True   # strip <think> / usar reasoning_content
+    vllm_tool_choice: str = "auto"      # "auto" | "required"
+    vllm_timeout: float = 120.0
+    vllm_temperature: float = 0.2
+    vllm_top_p: float = 0.9
+    vllm_max_tokens: int = 2048
 
     # ── Agente ───────────────────────────────────────────────────────────────
     max_agent_iterations: int = 6

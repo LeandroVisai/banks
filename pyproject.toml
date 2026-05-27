@@ -35,8 +35,10 @@ dependencies = [
     "Pillow>=10.0.0",
     "numpy>=1.26.0",
 
-    # LLM (llama.cpp como inference engine — sin vLLM)
+    # LLM — llama.cpp (backend GGUF, rollback) y cliente vLLM (backend externo)
     "llama-cpp-python>=0.3.0",
+    "openai>=1.54.0",   # cliente HTTP para servidor vLLM (OpenAI-compatible)
+    "httpx>=0.27.0",    # timeout configurable para openai client
 
     # Extracción
     "pypdf>=4.0.0",

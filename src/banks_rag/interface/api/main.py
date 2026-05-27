@@ -70,11 +70,16 @@ async def lifespan(app: FastAPI):
         from banks_rag.infrastructure.embeddings import build_default_embedder
         deps.embedder = build_default_embedder()
 
-    # LLM: instancia LlamaCppEngine para familias qwen/gemma.
+    # LLM: rama vllm (servidor externo) o llama.cpp (GGUF local).
     if deps.llm is None and settings.llm_family not in ("mock", ""):
         try:
-            from banks_rag.infrastructure.llm.llama_cpp_engine import LlamaCppEngine
-            deps.llm = LlamaCppEngine.from_settings(settings)
+            if settings.llm_family == "vllm":
+                from banks_rag.infrastructure.llm.vllm_engine import VLLMEngine
+                deps.llm = VLLMEngine.from_settings(settings)
+            else:
+                # familias "qwen" y "gemma" — llama.cpp con GGUF
+                from banks_rag.infrastructure.llm.llama_cpp_engine import LlamaCppEngine
+                deps.llm = LlamaCppEngine.from_settings(settings)
             await deps.llm.load()
             log.info("LLM cargado: %s", deps.llm.name)
         except Exception:

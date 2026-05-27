@@ -1,0 +1,65 @@
+[Unit]
+Description=Banks RAG — servidor vLLM (inferencia OpenAI-compatible)
+Documentation=file:///opt/banks_rag/docs/vLLM_SETUP.md
+After=network.target
+# banks-api arranca después de este servicio, pero no fuerza dependencia
+# para que el API pueda estar up aunque vLLM aún esté cargando el modelo.
+
+[Service]
+Type=exec
+User=banks_rag
+Group=banks_rag
+WorkingDirectory=/opt/banks_rag
+EnvironmentFile=/etc/banks_rag.env
+
+# BANKS_VLLM_MODEL debe estar definido en /etc/banks_rag.env.
+# Ejemplo: BANKS_VLLM_MODEL=Qwen/Qwen3-32B-AWQ
+# Para modelo local: BANKS_VLLM_MODEL=/opt/banks_rag/models/Qwen--Qwen3-32B-AWQ
+#
+# Flags clave:
+#   --tool-call-parser hermes    → Qwen3, Qwen2.5, Mistral, Llama-3
+#   --tool-call-parser pythonic  → Gemma 3/4
+#   --enable-reasoning           → activa reasoning_content separado (Qwen3 thinking)
+ExecStart=/opt/banks_rag/.venv/bin/vllm serve ${BANKS_VLLM_MODEL} \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --max-model-len 32768 \
+    --enable-auto-tool-choice \
+    --tool-call-parser hermes \
+    --enable-reasoning \
+    --api-key none \
+    --disable-log-requests
+
+# vLLM tarda 1-3 minutos en cargar modelos 32B.
+# banks-api maneja el período de inicio retornando 503 hasta que vLLM esté listo.
+TimeoutStartSec=300s
+
+# Reinicio ante crash (no ante stop manual)
+Restart=on-failure
+RestartSec=30s
+StartLimitIntervalSec=120s
+StartLimitBurst=3
+
+# Output al journal de systemd
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=banks-vllm
+
+# Límites de recursos
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# CUDA necesita acceso a los dispositivos NVIDIA
+DeviceAllow=/dev/nvidia0 rw
+DeviceAllow=/dev/nvidia1 rw
+DeviceAllow=/dev/nvidiactl rw
+DeviceAllow=/dev/nvidia-uvm rw
+DeviceAllow=/dev/nvidia-uvm-tools rw
+
+# Seguridad básica
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/banks_rag/models /opt/banks_rag/logs /tmp /root/.cache/huggingface
+
+[Install]
+WantedBy=multi-user.target
