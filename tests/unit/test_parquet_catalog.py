@@ -1,0 +1,414 @@
+"""Tests del catálogo parquet + tools del agente (post-switch SQL→parquet).
+
+Cubre:
+- ``parquet_catalog_loader``: carga del YAML, parseo, search_datasets, get_dataset.
+- ``_parquet_query``: ``date_column``, ``build_fetch_sql`` (forma + validación),
+  ``_normalize_filters``.
+- ``discover_query`` tool: scoring, filtro por segmento, top_k.
+- ``execute_query`` tool: dataset desconocido, parquet faltante, happy path con
+  registro de series en ``state.series_used``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from banks_rag.application.agent.tools._parquet_query import (
+    build_fetch_sql,
+    date_column,
+)
+from banks_rag.domain.agent import AgentState
+from banks_rag.infrastructure.sql.parquet_catalog_loader import (
+    ColumnSpec,
+    ParquetDataset,
+    get_dataset,
+    load_parquet_catalog,
+    search_datasets,
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fixtures
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def minimal_parquet_catalog_yaml(tmp_path: Path) -> Path:
+    """Catálogo mínimo con 2 datasets (uno simple, uno long-format con enum)."""
+    content = """
+version: "1.0"
+parquet_dir: data_pipeline/parquet
+
+datasets:
+  - id: usdclp_test
+    file: clp_monto_test.parquet
+    name: "USD/CLP test"
+    description: "Serie diaria del dólar"
+    segment: mercado_cambiario
+    unit: "CLP por USD"
+    date_range: ["2024-01-01", "2024-12-31"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: CLP, type: DOUBLE}
+
+  - id: btp_test
+    file: btp_test.parquet
+    name: "Curva BTP test"
+    description: "Curva soberana CLP por tenor"
+    segment: renta_fija_chile
+    unit: "% anual"
+    date_range: ["2024-01-01", "2024-12-31"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["2Y", "5Y", "10Y"]}
+      - {name: Valor, type: DOUBLE}
+"""
+    p = tmp_path / "parquet_catalog.yaml"
+    p.write_text(content)
+    return p
+
+
+@pytest.fixture
+def datasets(minimal_parquet_catalog_yaml: Path) -> list[ParquetDataset]:
+    return load_parquet_catalog(minimal_parquet_catalog_yaml)
+
+
+def _dataset(
+    id_: str,
+    columns: list[ColumnSpec] | None = None,
+    segment: str = "seg",
+    unit: str = "u",
+) -> ParquetDataset:
+    """Helper para construir un ParquetDataset en memoria."""
+    cols = columns or [
+        ColumnSpec("Fecha", "TIMESTAMP"),
+        ColumnSpec("Valor", "DOUBLE"),
+    ]
+    return ParquetDataset(
+        id=id_,
+        file=f"{id_}.parquet",
+        name=f"Dataset {id_}",
+        description=f"desc {id_}",
+        segment=segment,
+        unit=unit,
+        date_range=["2024-01-01", "2024-12-31"],
+        columns=cols,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# parquet_catalog_loader
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.unit
+class TestParquetCatalogLoader:
+    def test_loads_datasets(self, datasets: list[ParquetDataset]) -> None:
+        assert len(datasets) == 2
+        ids = {d.id for d in datasets}
+        assert {"usdclp_test", "btp_test"} == ids
+
+    def test_columns_parsed(self, datasets: list[ParquetDataset]) -> None:
+        btp = get_dataset(datasets, "btp_test")
+        assert btp is not None
+        tenor = next(c for c in btp.columns if c.name == "Tenor")
+        assert tenor.type == "VARCHAR"
+        assert tenor.values == ["2Y", "5Y", "10Y"]
+
+    def test_get_dataset_missing(self, datasets: list[ParquetDataset]) -> None:
+        assert get_dataset(datasets, "no_existe") is None
+
+    def test_search_returns_relevant(self, datasets: list[ParquetDataset]) -> None:
+        results = search_datasets(datasets, "tipo de cambio dolar usd clp")
+        assert results[0].id == "usdclp_test"
+
+    def test_search_segment_filter(self, datasets: list[ParquetDataset]) -> None:
+        results = search_datasets(datasets, "bonos", segment="renta_fija_chile")
+        assert all(d.segment == "renta_fija_chile" for d in results)
+
+    def test_to_dict_shape(self, datasets: list[ParquetDataset]) -> None:
+        d = get_dataset(datasets, "btp_test").to_dict()
+        assert d["id"] == "btp_test"
+        assert any(c["name"] == "Tenor" and c.get("values") == ["2Y", "5Y", "10Y"]
+                   for c in d["columns"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _parquet_query: date_column + build_fetch_sql + validación
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.unit
+class TestDateColumn:
+    def test_prefers_timestamp(self) -> None:
+        ds = _dataset("x", [
+            ColumnSpec("Fecha", "TIMESTAMP"),
+            ColumnSpec("Valor", "DOUBLE"),
+        ])
+        assert date_column(ds) == "Fecha"
+
+    def test_fallback_to_name(self) -> None:
+        # Sin TIMESTAMP, cae a nombres convencionales.
+        ds = _dataset("x", [
+            ColumnSpec("Fecha", "VARCHAR"),  # mal tipado pero matchea por nombre
+            ColumnSpec("Valor", "DOUBLE"),
+        ])
+        assert date_column(ds) == "Fecha"
+
+    def test_raises_when_no_date(self) -> None:
+        ds = _dataset("x", [
+            ColumnSpec("X", "DOUBLE"),
+            ColumnSpec("Y", "DOUBLE"),
+        ])
+        with pytest.raises(ValueError, match="columna de fecha"):
+            date_column(ds)
+
+
+@pytest.mark.unit
+class TestBuildFetchSql:
+    PARQUET_DIR = Path("/data/parquet")
+
+    def test_basic_select_all(self) -> None:
+        ds = _dataset("usdclp_test")
+        sql, date_col, cols = build_fetch_sql(ds, parquet_dir=self.PARQUET_DIR)
+        assert date_col == "Fecha"
+        assert cols == ["Fecha", "Valor"]
+        assert 'SELECT "Fecha", "Valor"' in sql
+        assert "/data/parquet/usdclp_test.parquet" in sql
+        assert "ORDER BY \"Fecha\" DESC" in sql
+        assert "LIMIT 200" in sql
+
+    def test_date_range_quoted(self) -> None:
+        ds = _dataset("x")
+        sql, _, _ = build_fetch_sql(
+            ds, parquet_dir=self.PARQUET_DIR,
+            fecha_inicio="2024-01-01", fecha_fin="2024-12-31",
+        )
+        assert "\"Fecha\" >= '2024-01-01'" in sql
+        assert "\"Fecha\" <= '2024-12-31'" in sql
+
+    def test_filter_equality_for_enum_column(self) -> None:
+        ds = _dataset("btp_test", [
+            ColumnSpec("Fecha", "TIMESTAMP"),
+            ColumnSpec("Tenor", "VARCHAR", values=["2Y", "10Y"]),
+            ColumnSpec("Valor", "DOUBLE"),
+        ])
+        sql, _, _ = build_fetch_sql(
+            ds, parquet_dir=self.PARQUET_DIR,
+            columns=["Valor"], filters={"Tenor": "10Y"},
+        )
+        assert "\"Tenor\" = '10Y'" in sql
+
+    def test_filter_in_list(self) -> None:
+        ds = _dataset("btp_test", [
+            ColumnSpec("Fecha", "TIMESTAMP"),
+            ColumnSpec("Tenor", "VARCHAR", values=["2Y", "5Y", "10Y"]),
+            ColumnSpec("Valor", "DOUBLE"),
+        ])
+        sql, _, _ = build_fetch_sql(
+            ds, parquet_dir=self.PARQUET_DIR,
+            filters={"Tenor": ["2Y", "10Y"]},
+        )
+        assert "\"Tenor\" IN ('2Y', '10Y')" in sql
+
+    def test_limit_capped_at_max(self) -> None:
+        ds = _dataset("x")
+        sql, _, _ = build_fetch_sql(
+            ds, parquet_dir=self.PARQUET_DIR, limit=9999,
+        )
+        assert "LIMIT 500" in sql
+
+    def test_invalid_date_raises(self) -> None:
+        ds = _dataset("x")
+        with pytest.raises(ValueError, match="fecha_inicio"):
+            build_fetch_sql(
+                ds, parquet_dir=self.PARQUET_DIR,
+                fecha_inicio="ayer",
+            )
+
+    def test_invalid_column_raises(self) -> None:
+        ds = _dataset("x")
+        with pytest.raises(ValueError, match="columnas inválidas"):
+            build_fetch_sql(
+                ds, parquet_dir=self.PARQUET_DIR,
+                columns=["NoExiste"],
+            )
+
+    def test_filter_enum_value_rejected(self) -> None:
+        ds = _dataset("btp_test", [
+            ColumnSpec("Fecha", "TIMESTAMP"),
+            ColumnSpec("Tenor", "VARCHAR", values=["2Y", "10Y"]),
+            ColumnSpec("Valor", "DOUBLE"),
+        ])
+        with pytest.raises(ValueError, match="fuera del enum"):
+            build_fetch_sql(
+                ds, parquet_dir=self.PARQUET_DIR,
+                filters={"Tenor": "100Y"},
+            )
+
+    def test_filter_unknown_column_rejected(self) -> None:
+        ds = _dataset("x")
+        with pytest.raises(ValueError, match="no existe"):
+            build_fetch_sql(
+                ds, parquet_dir=self.PARQUET_DIR,
+                filters={"Banco": "BCI"},
+            )
+
+    def test_identifier_with_space_quoted(self) -> None:
+        ds = _dataset("tib", [
+            ColumnSpec("Fecha", "TIMESTAMP"),
+            ColumnSpec("Spread TIB-TPM", "DOUBLE"),
+        ])
+        sql, _, _ = build_fetch_sql(
+            ds, parquet_dir=self.PARQUET_DIR,
+            columns=["Spread TIB-TPM"],
+        )
+        assert '"Spread TIB-TPM"' in sql
+
+    def test_value_with_apostrophe_escaped(self) -> None:
+        ds = _dataset("x", [
+            ColumnSpec("Fecha", "TIMESTAMP"),
+            ColumnSpec("Banco", "VARCHAR"),
+            ColumnSpec("Valor", "DOUBLE"),
+        ])
+        sql, _, _ = build_fetch_sql(
+            ds, parquet_dir=self.PARQUET_DIR,
+            filters={"Banco": "O'Higgins"},
+        )
+        # Apostrophe doblada (escape SQL): O''Higgins
+        assert "O''Higgins" in sql
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# discover_query (tool)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.unit
+class TestDiscoverQuery:
+    def _run(self, coro):
+        return asyncio.run(coro)
+
+    def _mock_catalog(self, entries):
+        return patch(
+            "banks_rag.application.agent.tools.discover_query.load_parquet_catalog",
+            return_value=entries,
+        )
+
+    def test_returns_relevant_dataset(self, datasets: list[ParquetDataset]) -> None:
+        from banks_rag.application.agent.tools.discover_query import discover_query
+        with self._mock_catalog(datasets):
+            result = self._run(
+                discover_query(state=MagicMock(), query="tipo de cambio dolar usd clp"),
+            )
+        assert result["n_results"] >= 1
+        ids = [r["id"] for r in result["results"]]
+        assert "usdclp_test" in ids
+
+    def test_segment_filter(self, datasets: list[ParquetDataset]) -> None:
+        from banks_rag.application.agent.tools.discover_query import discover_query
+        with self._mock_catalog(datasets):
+            result = self._run(
+                discover_query(state=MagicMock(), query="bonos",
+                               segment="renta_fija_chile"),
+            )
+        assert all(r["segment"] == "renta_fija_chile" for r in result["results"])
+
+    def test_unknown_segment_returns_error(self, datasets: list[ParquetDataset]) -> None:
+        from banks_rag.application.agent.tools.discover_query import discover_query
+        with self._mock_catalog(datasets):
+            result = self._run(
+                discover_query(state=MagicMock(), query="x", segment="no_existe"),
+            )
+        assert "error" in result
+        assert "segments_disponibles" in result
+
+    def test_top_k_limits_results(self, datasets: list[ParquetDataset]) -> None:
+        from banks_rag.application.agent.tools.discover_query import discover_query
+        with self._mock_catalog(datasets):
+            result = self._run(
+                discover_query(state=MagicMock(), query="datos", top_k=1),
+            )
+        assert result["n_results"] <= 1
+
+    def test_result_has_hint(self, datasets: list[ParquetDataset]) -> None:
+        from banks_rag.application.agent.tools.discover_query import discover_query
+        with self._mock_catalog(datasets):
+            result = self._run(
+                discover_query(state=MagicMock(), query="cualquier cosa"),
+            )
+        assert "hint" in result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# execute_query (tool)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_EXEC_MODULE = "banks_rag.application.agent.tools.execute_query"
+
+
+@pytest.mark.unit
+class TestExecuteQuery:
+    @pytest.mark.asyncio
+    async def test_unknown_dataset_id(self) -> None:
+        from banks_rag.application.agent.tools.execute_query import execute_query
+        with patch(
+            f"{_EXEC_MODULE}.fetch_rows_from_dataset",
+            new=AsyncMock(side_effect=ValueError("dataset_id desconocido: 'x'")),
+        ):
+            result = await execute_query(state=AgentState(), dataset_id="x")
+        assert "error" in result
+        assert "desconocido" in result["error"]
+        assert result["dataset_id"] == "x"
+
+    @pytest.mark.asyncio
+    async def test_parquet_file_missing(self) -> None:
+        from banks_rag.application.agent.tools.execute_query import execute_query
+        with patch(
+            f"{_EXEC_MODULE}.fetch_rows_from_dataset",
+            new=AsyncMock(side_effect=FileNotFoundError("no existe en /x.parquet")),
+        ):
+            result = await execute_query(state=AgentState(), dataset_id="x")
+        assert "error" in result
+        assert "no existe" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_happy_path_registers_series(self) -> None:
+        from banks_rag.application.agent.tools.execute_query import execute_query
+        ds = _dataset("usdclp_test", unit="CLP por USD")
+        rows = [
+            {"Fecha": "2024-02-01", "Valor": 950.0},
+            {"Fecha": "2024-01-01", "Valor": 900.0},
+        ]
+        state = AgentState()
+        with patch(
+            f"{_EXEC_MODULE}.fetch_rows_from_dataset",
+            new=AsyncMock(return_value=(ds, rows, "Fecha", ["Fecha", "Valor"])),
+        ):
+            result = await execute_query(
+                state=state, dataset_id="usdclp_test", columns=["Valor"],
+            )
+        assert result["dataset_id"] == "usdclp_test"
+        assert result["unit"] == "CLP por USD"
+        assert result["columns"] == ["Fecha", "Valor"]
+        assert result["n_rows"] == 2
+        assert result["truncated"] is False
+        # Una serie por cada columna no-fecha
+        assert "usdclp_test:Valor" in state.series_used
+        assert state.series_used["usdclp_test:Valor"]["n_observations"] == 2
+
+    @pytest.mark.asyncio
+    async def test_truncated_flag_at_max_rows(self) -> None:
+        from banks_rag.application.agent.tools.execute_query import (
+            _MAX_ROWS,
+            execute_query,
+        )
+        ds = _dataset("x")
+        rows = [{"Fecha": f"2024-01-{i:02d}", "Valor": float(i)}
+                for i in range(1, _MAX_ROWS + 1)]
+        with patch(
+            f"{_EXEC_MODULE}.fetch_rows_from_dataset",
+            new=AsyncMock(return_value=(ds, rows, "Fecha", ["Fecha", "Valor"])),
+        ):
+            result = await execute_query(state=AgentState(), dataset_id="x")
+        assert result["truncated"] is True
+        assert result["truncated_note"] is not None

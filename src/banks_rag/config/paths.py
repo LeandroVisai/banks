@@ -26,11 +26,12 @@ MODELS_DIR = ROOT / "models"
 # Datos persistentes nuevos
 DATA_DIR = ROOT / "data"
 DATA_GOLDEN_SET_DIR = DATA_DIR / "golden_set"
-DATA_SNAPSHOTS_DIR = DATA_DIR / "snapshots"
+# Logs de conversación del agente (JSONL diario) para evaluación de respuestas.
+DATA_CHAT_LOGS_DIR = DATA_DIR / "chat_logs"
 
-# Catálogo SQL (Fase 4)
+# Catálogo parquet (datasets crudos del DW; tools del agente arman SQL safe).
 SQL_CATALOG_DIR = ROOT / "sql_catalog"
-SQL_CATALOG_YAML = SQL_CATALOG_DIR / "catalog.yaml"
+PARQUET_CATALOG_YAML = SQL_CATALOG_DIR / "parquet_catalog.yaml"
 
 # Outputs por etapa
 DOCUMENTS_JSON = LOGS_DIR / "documents.json"

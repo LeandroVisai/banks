@@ -253,11 +253,6 @@ class TestGetDocumentChunksTool:
         assert "error" in result
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# historical_series — graceful fallback cuando dw_store no está
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 @pytest.mark.unit
 class TestSearchVisualsTool:
     @pytest.mark.asyncio
@@ -328,39 +323,3 @@ class TestSearchVisualsTool:
             )
 
         assert captured["kinds"] == ["TABLE"]
-
-
-@pytest.mark.unit
-class TestHistoricalSeriesTool:
-    @pytest.mark.asyncio
-    async def test_list_returns_error_without_dw_store(self) -> None:
-        state = AgentState()
-        with patch(
-            "banks_rag.application.agent.tools.historical_series._import_dw_store",
-            return_value=None,
-        ):
-            result, _ = await dispatch(state, "list_historical_series", {})
-        assert "error" in result
-
-    @pytest.mark.asyncio
-    async def test_get_returns_error_without_get_data_path(
-        self, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        state = AgentState()
-        monkeypatch.delenv("GET_DATA_PATH", raising=False)
-
-        # dw_store disponible pero sin GET_DATA_PATH → error temprano
-        class FakeDw:
-            @staticmethod
-            def get_series_meta(series_id, catalog_path=None):
-                return {"name": "Mock", "unit": "%"}
-
-        with patch(
-            "banks_rag.application.agent.tools.historical_series._import_dw_store",
-            return_value=FakeDw,
-        ):
-            result, _ = await dispatch(
-                state, "get_historical_series", {"series_id": "tpm"},
-            )
-        assert "error" in result
-        assert "GET_DATA_PATH" in result["error"]

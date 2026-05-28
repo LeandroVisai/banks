@@ -7,7 +7,6 @@ Tools registradas:
   - ``search_documents``: hybrid search sobre el corpus (TEXT por default).
   - ``search_visuals``: hybrid search restringido a chunks VISUAL/TABLE.
   - ``list_documents`` / ``get_document_chunks``: exploración por tipo/año/filename.
-  - ``list_historical_series`` / ``get_historical_series``: series macro vía DW.
   - ``discover_query``: descubre queries analíticas en el catálogo SQL (Fase 4).
   - ``execute_query``: ejecuta una query del catálogo sobre parquets (Fase 4).
   - ``list_parquets``: descubre datasets analíticos en el catálogo de parquets.
@@ -24,7 +23,6 @@ from . import (  # noqa: F401
     discover_query,
     document_lookup,
     execute_query,
-    historical_series,
     list_parquets,
     meeting_lookup,
     query_parquet,

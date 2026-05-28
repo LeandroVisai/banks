@@ -54,10 +54,9 @@ class SubAgentSpec:
     tool_names: tuple[str, ...]
 
 
-# Nota: list_historical_series / get_historical_series quedan deliberadamente
-# fuera de todo sub-agente — dependen del DW SQL (GET_DATA_PATH), no disponible
-# en el despliegue offline. El catálogo SQL (discover_query/execute_query) es
-# el camino vigente para series de tiempo.
+# Las series de tiempo se consultan exclusivamente vía el catálogo de parquets
+# (discover_query / execute_query / analytics). La extracción SQL en vivo del DW
+# fue eliminada del proyecto.
 SUBAGENTS: dict[str, SubAgentSpec] = {
     "document": SubAgentSpec(
         key="document",

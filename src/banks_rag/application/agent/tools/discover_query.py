@@ -1,43 +1,44 @@
-"""Tool ``discover_query`` — busca queries analíticas relevantes en el catálogo SQL.
+"""Tool ``discover_query`` — busca datasets del parquet_catalog para responder
+una pregunta sobre series financieras o macroeconómicas.
 
-El agente la usa para encontrar qué query del catálogo responde mejor a una
-pregunta sobre series financieras (tipo de cambio, curvas de bonos, liquidez,
-etc.) antes de llamar a ``execute_query``.
+El agente la usa para encontrar qué *dataset* del catálogo tiene los datos
+que necesita (USD/CLP, curva BTP, LCR, precio del cobre, etc.) antes de
+llamar a ``execute_query`` o a alguna de las analytics tools.
 
-Estrategia de scoring: BM25-like por solapamiento de términos entre la
-consulta del usuario y los campos {name, description, tags, segment} de
-cada entrada del catálogo. No requiere embeddings ni modelo adicional.
-"""
+Estrategia de scoring: BM25-like delegado en
+``parquet_catalog_loader.search_datasets`` (solapamiento de tokens entre la
+consulta del usuario y los campos ``id+name+description+segment+unit`` de
+cada dataset)."""
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Any
 
-from banks_rag.infrastructure.sql.catalog_loader import load_catalog
+from banks_rag.infrastructure.sql.parquet_catalog_loader import (
+    load_parquet_catalog,
+    search_datasets,
+)
 
 from .registry import register
 
 if TYPE_CHECKING:
     from banks_rag.domain.agent import AgentState
 
-_STOP_WORDS = frozenset({
-    "de", "del", "la", "el", "los", "las", "un", "una", "unos", "unas",
-    "en", "con", "por", "para", "que", "qué", "y", "o", "a", "al",
-    "se", "es", "son", "fue", "ser", "como", "más", "pero", "si",
-    "the", "of", "in", "for", "and", "or", "a", "an", "to", "is",
-})
 
 _SCHEMA = {
     "type": "function",
     "function": {
         "name": "discover_query",
         "description": (
-            "Busca en el catálogo de queries analíticas cuál es la más adecuada "
-            "para responder una pregunta sobre datos financieros o macroeconómicos "
-            "(tipo de cambio, tasas, bonos, liquidez bancaria, commodities, etc.). "
-            "Retorna las top-k entradas con su query_id, descripción y parámetros. "
-            "Úsala ANTES de execute_query para descubrir el query_id correcto."
+            "Descubre qué datasets del catálogo de parquets responden a una "
+            "pregunta sobre datos financieros o macroeconómicos (tipo de "
+            "cambio, tasas, bonos, liquidez bancaria, commodities, balance "
+            "del sistema, etc.). Retorna los top-k datasets con su id, "
+            "esquema de columnas, unidad y rango de fechas disponibles. "
+            "Úsala ANTES de execute_query (para traer las filas) o de las "
+            "analytics tools (compute_variation, compute_spread, "
+            "get_series_stats, detect_anomaly), todas las cuales reciben el "
+            "`id` del dataset que esta tool devuelve."
         ),
         "parameters": {
             "type": "object",
@@ -45,25 +46,26 @@ _SCHEMA = {
                 "query": {
                     "type": "string",
                     "description": (
-                        "Pregunta o descripción en lenguaje natural de los datos "
-                        "que necesitas (ej. 'curva de bonos BTP en pesos', "
-                        "'tipo de cambio dólar último mes', 'LCR sistémico bancos')."
+                        "Pregunta o descripción en lenguaje natural de los "
+                        "datos que necesitas (ej. 'curva de bonos BTP en "
+                        "pesos', 'tipo de cambio dólar último mes', "
+                        "'activos del banco BCI en pesos')."
                     ),
                 },
                 "top_k": {
                     "type": "integer",
-                    "description": "Número de resultados a retornar (default 5, máx 10).",
+                    "description": "Número de datasets a retornar (default 5, máx 20).",
                     "default": 5,
                     "minimum": 1,
-                    "maximum": 10,
+                    "maximum": 20,
                 },
                 "segment": {
                     "type": "string",
                     "description": (
-                        "Filtrar por segmento de mercado: mercado_cambiario, "
-                        "renta_fija_chile, renta_fija_eeuu, tasas_monetarias_chile, "
-                        "tasas_internacionales, liquidez_bancaria, commodities, "
-                        "politica_monetaria."
+                        "Filtrar por segmento del catálogo (ej. "
+                        "'mercado_cambiario', 'balance_bancario', "
+                        "'renta_fija_chile', 'commodities', "
+                        "'liquidez_bancaria', 'politica_monetaria')."
                     ),
                 },
             },
@@ -73,52 +75,37 @@ _SCHEMA = {
 }
 
 
-def _tokenize(text: str) -> set[str]:
-    tokens = re.findall(r"[a-záéíóúüñA-ZÁÉÍÓÚÜÑ0-9]+", text.lower())
-    return {t for t in tokens if t not in _STOP_WORDS and len(t) > 1}
-
-
-def _score(entry_tokens: set[str], query_tokens: set[str]) -> int:
-    return len(entry_tokens & query_tokens)
-
-
 @register("discover_query", _SCHEMA)
 async def discover_query(
-    state: "AgentState",
+    state: AgentState,
     query: str,
     top_k: int = 5,
     segment: str | None = None,
 ) -> dict[str, Any]:
-    entries = load_catalog()
+    entries = load_parquet_catalog()
 
     if segment:
-        entries = [e for e in entries if e.segment == segment]
-        if not entries:
+        in_segment = [e for e in entries if e.segment == segment]
+        if not in_segment:
             return {
-                "error": f"Segmento {segment!r} sin entradas en el catálogo.",
-                "segments_disponibles": list({e.segment for e in load_catalog()}),
+                "error": f"Segmento {segment!r} sin datasets en el catálogo.",
+                "segments_disponibles": sorted({e.segment for e in entries}),
             }
+        entries = in_segment
 
-    query_tokens = _tokenize(query)
-    scored = []
-    for entry in entries:
-        entry_text = " ".join([
-            entry.name,
-            entry.description,
-            entry.segment,
-            " ".join(entry.tags),
-        ])
-        score = _score(_tokenize(entry_text), query_tokens)
-        scored.append((score, entry))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[: min(top_k, 10)]
+    top_k = max(1, min(int(top_k), 20))
+    top = search_datasets(entries, query, top_k=top_k)
 
     return {
-        "results": [e.to_discovery_dict() for _, e in top],
+        "results": [e.to_dict() for e in top],
         "n_results": len(top),
         "hint": (
-            "Usa execute_query con el query_id elegido y los parámetros "
-            "fecha_inicio / fecha_fin / limit para obtener los datos."
+            "Cada resultado tiene `id` (úsalo como `dataset_id`), `columns` "
+            "(con tipos y valores de enum cuando aplica) y `date_range` "
+            "(primera y última fecha del parquet). Para traer filas crudas "
+            "usa execute_query(dataset_id, columns?, fecha_inicio?, "
+            "fecha_fin?, filters?, limit?). Para análisis usa "
+            "compute_variation / compute_spread / get_series_stats / "
+            "detect_anomaly con (dataset_id, column)."
         ),
     }

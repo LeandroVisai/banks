@@ -450,16 +450,18 @@ print(r.rag, r.sql)              # True False
 
 ## 6. Catálogo SQL agentic
 
-Consulta 23 series financieras del Monitor PM sin conexión al SQL Server.
-Los datos viven en `data_pipeline/snapshots/*.parquet`.
+Consulta series financieras del DW sin conexión al SQL Server.
+Los datos viven en `data_pipeline/parquet/*.parquet` y el catálogo con su
+esquema en `sql_catalog/parquet_catalog.yaml`.
 
 ### Requisito: tener los parquets
 
-Los parquets deben generarse previamente desde el SQL Server (con `data_pipeline/extract.py`)
-y copiarse a `data_pipeline/snapshots/`. El sistema los lee con DuckDB sin BD adicional.
+Los parquets se generan fuera de este repo (en una máquina con acceso al DW) y
+se copian a `data_pipeline/parquet/`. El sistema los lee con DuckDB sin BD
+adicional. Ya **no** hay extracción SQL en vivo ni snapshots dentro del repo.
 
 ```bash
-ls data_pipeline/snapshots/*.parquet
+ls data_pipeline/parquet/*.parquet
 # fx.parquet, bonos_clp.parquet, commodities.parquet, etc.
 ```
 

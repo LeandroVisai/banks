@@ -1,12 +1,14 @@
-"""Catalog endpoints: exponen el SQL catalog vía REST para alimentar gráficos.
+"""Catalog endpoints: exponen el ``parquet_catalog`` vía REST para alimentar
+gráficos del frontend sin pasar por el agente (latencia baja, sin coste LLM).
 
-Reutiliza ``catalog_loader`` + ``duckdb_runner`` para evitar duplicar lógica.
-El frontend ``interface2/`` consume estos endpoints sin pasar por el agente
-(latencia baja, sin coste de LLM).
+Reusa exactamente el mismo helper que ``execute_query``
+(``application/agent/tools/_parquet_query.fetch_rows_from_dataset``) — la SQL
+la arma siempre la capa de infra a partir de parámetros validados; el cliente
+HTTP no aporta SQL.
 
 Endpoints:
-  - ``GET /v1/catalog``           → lista las 23 queries del catálogo
-  - ``GET /v1/query/{query_id}``  → ejecuta una query y retorna filas
+  - ``GET /v1/catalog``              → lista los datasets del parquet_catalog
+  - ``GET /v1/query/{dataset_id}``   → fetch parametrizado, retorna filas
 """
 
 from __future__ import annotations
@@ -16,18 +18,16 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
-from banks_rag.config.paths import ROOT
-from banks_rag.infrastructure.sql.catalog_loader import (
-    get_entry,
-    load_catalog,
-    render_sql,
+from banks_rag.application.agent.tools._parquet_query import (
+    fetch_rows_from_dataset,
 )
 from banks_rag.infrastructure.sql.duckdb_runner import MAX_ROWS as _MAX_ROWS
-from banks_rag.infrastructure.sql.duckdb_runner import run_duckdb as _run_duckdb
+from banks_rag.infrastructure.sql.duckdb_runner import last_date_in_rows as _last_date
+from banks_rag.infrastructure.sql.parquet_catalog_loader import load_parquet_catalog
 from banks_rag.interface.api.schemas import (
-    CatalogEntry,
-    CatalogListResponse,
-    CatalogParamSpec,
+    DatasetColumn,
+    DatasetEntry,
+    DatasetListResponse,
     QueryResponse,
 )
 
@@ -35,83 +35,67 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["catalog"])
 
-_SNAPSHOTS_DIR = ROOT / "data_pipeline" / "snapshots"
 
-
-@router.get("/catalog", response_model=CatalogListResponse)
-async def list_catalog() -> CatalogListResponse:
-    """Lista las queries del catálogo con metadata para alimentar el sidebar."""
-    entries = await asyncio.to_thread(load_catalog)
+@router.get("/catalog", response_model=DatasetListResponse)
+async def list_catalog() -> DatasetListResponse:
+    """Lista los datasets del parquet_catalog con esquema para el sidebar."""
+    entries = await asyncio.to_thread(load_parquet_catalog)
     items = [
-        CatalogEntry(
-            query_id=e.query_id,
+        DatasetEntry(
+            id=e.id,
+            file=e.file,
             name=e.name,
             description=e.description.strip(),
             segment=e.segment,
-            tags=e.tags,
             unit=e.unit,
-            frequency=e.frequency,
-            columns=e.columns,
-            params=[
-                CatalogParamSpec(
-                    name=p.name,
-                    type=p.type,
-                    default=p.default,
-                    description=p.description,
-                )
-                for p in e.params
+            date_range=e.date_range,
+            columns=[
+                DatasetColumn(name=c.name, type=c.type, values=c.values)
+                for c in e.columns
             ],
         )
         for e in entries
     ]
-    return CatalogListResponse(n_entries=len(items), entries=items)
+    return DatasetListResponse(n_entries=len(items), entries=items)
 
 
-@router.get("/query/{query_id}", response_model=QueryResponse)
+@router.get("/query/{dataset_id}", response_model=QueryResponse)
 async def execute_catalog_query(
-    query_id: str,
+    dataset_id: str,
     fecha_inicio: str | None = Query(default=None, description="ISO YYYY-MM-DD"),
     fecha_fin: str | None = Query(default=None, description="ISO YYYY-MM-DD"),
     limit: int | None = Query(default=None, ge=1, le=_MAX_ROWS),
 ) -> QueryResponse:
-    """Ejecuta una query del catálogo y retorna filas para alimentar gráficos."""
-    entries = await asyncio.to_thread(load_catalog)
-    entry = get_entry(entries, query_id)
-    if entry is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"query_id desconocido: {query_id!r}",
-        )
-
-    params: dict = {}
-    if fecha_inicio:
-        params["fecha_inicio"] = fecha_inicio
-    if fecha_fin:
-        params["fecha_fin"] = fecha_fin
-    if limit is not None:
-        params["limit"] = min(int(limit), _MAX_ROWS)
-
-    sql = render_sql(entry, _SNAPSHOTS_DIR, params)
-
+    """Fetch parametrizado del dataset. La SQL la arma el helper safe."""
     try:
-        rows = await asyncio.to_thread(_run_duckdb, sql)
-    except Exception as exc:  # noqa: BLE001
-        log.exception("Error ejecutando %s", query_id)
+        dataset, rows, date_col, select_cols = await fetch_rows_from_dataset(
+            dataset_id,
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception("Error ejecutando dataset %s", dataset_id)
         raise HTTPException(
             status_code=500,
-            detail=f"Error ejecutando {query_id!r}: {exc}",
+            detail=f"Error ejecutando dataset {dataset_id!r}: {exc}",
         ) from exc
 
     truncated = len(rows) >= _MAX_ROWS
     return QueryResponse(
-        query_id=query_id,
-        name=entry.name,
-        unit=entry.unit,
-        frequency=entry.frequency,
-        segment=entry.segment,
-        columns=entry.columns,
+        dataset_id=dataset.id,
+        name=dataset.name,
+        unit=dataset.unit,
+        segment=dataset.segment,
+        date_column=date_col,
+        columns=select_cols,
         rows=rows,
         n_rows=len(rows),
+        last_date_in_data=_last_date(rows),
         truncated=truncated,
         truncated_note=(
             f"Resultados truncados a {_MAX_ROWS} filas. "

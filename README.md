@@ -96,7 +96,7 @@ PYTHONPATH=src python3 -m banks_rag.interface.api.main
 
 Notas:
 - La pill superior derecha pasa por `SIN CONEXIÓN → LLM CARGANDO → OK` mientras `llama-cpp` carga. Los charts del catálogo no esperan al LLM; sólo el panel "Agente IA" sí.
-- Los charts usan `/v1/query/{query_id}` (DuckDB sobre parquets) y los KPIs son hardcoded en `kpi.js` — no requieren PostgreSQL para renderizar.
+- Los charts usan `/v1/query/{dataset_id}` (DuckDB sobre parquets) y los KPIs son hardcoded en `kpi.js` — no requieren PostgreSQL para renderizar.
 
 ### Evaluación
 
@@ -135,7 +135,7 @@ El agente consulta series del Monitor PM vía DuckDB sobre parquets offline:
 | Liquidez bancaria | `lcr_mx_bancos`, `nsfr_mx_bancos`, `ratio_liquidez_obligaciones` |
 | Commodities | `precio_cobre` |
 
-Parquets en `data_pipeline/snapshots/`. Definiciones en [`sql_catalog/catalog.yaml`](sql_catalog/catalog.yaml).
+Parquets en `data_pipeline/parquet/`. Esquemas (id, columnas, tipos, enums, `date_range`) en [`sql_catalog/parquet_catalog.yaml`](sql_catalog/parquet_catalog.yaml) — 107 datasets. La SQL la arma siempre la tool (`_parquet_query.build_fetch_sql`); el LLM solo elige dataset + filtros.
 
 ---
 
@@ -176,10 +176,11 @@ banks/
 ├── tests/
 │   ├── unit/            # 498 tests, sin BD ni modelos reales
 │   └── integration/     # requieren PostgreSQL + pgvector
-├── sql_catalog/         # catalog.yaml — 23 queries DuckDB
-├── data_pipeline/       # snapshots/ (parquets del Monitor PM)
+├── sql_catalog/         # parquet_catalog.yaml — 107 datasets con esquema
+├── data_pipeline/       # parquet/ — 107 datasets crudos del DW (única fuente)
 ├── data/
-│   └── golden_set/      # retrieval.jsonl, sql_routing.jsonl, generation.jsonl
+│   ├── golden_set/      # retrieval.jsonl, sql_routing.jsonl, generation.jsonl
+│   └── chat_logs/       # JSONL diario de turnos del agente (gitignored)
 ├── deploy/
 │   ├── systemd/
 │   ├── nginx/

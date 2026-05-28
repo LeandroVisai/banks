@@ -1,12 +1,12 @@
 """
-data_pipeline — Catálogo y acceso a series macro/financieras del Data Warehouse.
+data_pipeline — Parquets crudos de series macro/financieras del Data Warehouse.
 
-Carga las queries de querys/Monitor.py vía un catálogo declarativo
-(series_catalog.yaml) y las ejecuta contra el SQL Server en tiempo real.
+Ya NO contiene extracción SQL en vivo ni snapshots derivados: los parquets en
+``parquet/`` son la única fuente. El agente los consulta vía el catálogo
+``sql_catalog/parquet_catalog.yaml`` y las tools de ``banks_rag`` arman la SQL
+(``application/agent/tools/_parquet_query.py``) — el LLM nunca escribe SQL.
 
-Módulos principales:
-  dw_store      — consulta en vivo al DW (uso en producción, ambos chatbots)
-  parquet_store — acceso a snapshots parquet (backup/offline)
-  extract.py    — genera snapshots parquet desde el DW (uso manual/cron)
+Para refrescar los datos: regenerar los .parquet en otra máquina (con acceso al
+DW) y copiarlos a ``parquet/``. Este paquete no abre conexiones al SQL Server.
 """
-__version__ = "2.0.0"
+__version__ = "3.0.0"

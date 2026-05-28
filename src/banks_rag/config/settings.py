@@ -20,7 +20,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .paths import MODELS_DIR, ROOT
+from .paths import DATA_CHAT_LOGS_DIR, MODELS_DIR, ROOT
 
 
 class Settings(BaseSettings):
@@ -71,9 +71,9 @@ class Settings(BaseSettings):
     def api_keys_set(self) -> set[str]:
         return {k.strip() for k in self.api_keys.split(",") if k.strip()}
 
-    # ── Data ─────────────────────────────────────────────────────────────────
-    catalog_path: str = ""
-    get_data_path: str = ""
+    # ── Chat logging ─────────────────────────────────────────────────────────
+    chat_log_enabled: bool = True
+    chat_log_dir: str = ""  # vacío = default DATA_CHAT_LOGS_DIR
 
     # ── Helpers ──────────────────────────────────────────────────────────────
     @property
@@ -89,6 +89,14 @@ class Settings(BaseSettings):
         if p.is_absolute():
             return p
         return MODELS_DIR / self.llm_model_path
+
+    @property
+    def chat_log_dir_resolved(self) -> Path:
+        """Directorio donde se persisten los logs de chat (JSONL diario)."""
+        if not self.chat_log_dir:
+            return DATA_CHAT_LOGS_DIR
+        p = Path(self.chat_log_dir)
+        return p if p.is_absolute() else ROOT / self.chat_log_dir
 
 
 # Instancia global lazy. Tests pueden override via override_settings().

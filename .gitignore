@@ -17,8 +17,8 @@ data/documents*.json
 data/images/
 data/logs_intermedios/
 
-# ── Snapshots DW (parquets generados por data_pipeline/) ─────────────────────
-data_pipeline/snapshots/*.parquet
+# ── Logs de conversación del agente (JSONL diario) ───────────────────────────
+data/chat_logs/
 
 # ── Variables de entorno locales ──────────────────────────────────────────────
 .env

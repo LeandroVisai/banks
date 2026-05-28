@@ -86,7 +86,11 @@ Datos_prueba/Monitor PM/textos_monitor_pm.xlsx
 
 - **CrossEncoderReranker usa lazy import**: `from sentence_transformers import CrossEncoder` solo en `load()`.
 
-- **SQL catalog en `sql_catalog/catalog.yaml`**: 23 queries DuckDB sobre parquets en `data_pipeline/snapshots/`. Para agregar una serie nueva, añadir entrada al YAML; no tocar el código Python.
+- **Catálogo de datasets en `sql_catalog/parquet_catalog.yaml`**: 107 datasets sobre parquets en `data_pipeline/parquet/`, con esquema completo (columnas, tipos, valores de enum, `date_range`). El LLM elige `dataset_id` + columnas/filtros vía `discover_query`/`execute_query`/analytics; **la SQL la arma siempre la tool** (`_parquet_query.build_fetch_sql`) — el LLM NUNCA escribe SQL.
+
+- **`data_pipeline/` ya NO extrae de SQL**: la extracción en vivo del DW (`dw_store`, `extract.py`), los snapshots y `series_catalog.yaml` fueron eliminados. Los parquets en `data_pipeline/parquet/` son la única fuente; se regeneran fuera del repo y se copian. No quedan tools que consulten el SQL Server (la antigua `historical_series` se eliminó).
+
+- **Logging de turnos del agente**: cada turno de `/v1/chat` se persiste como una línea JSON en `data/chat_logs/chat-YYYY-MM-DD.jsonl` vía `infrastructure/observability/chat_log.py` (best-effort, nunca tumba el request). Guarda pregunta, respuesta y evidencia (tool_trace, chunks_seen, series_used, citas) para contrastar respuestas reales vs. esperadas. Control: `BANKS_CHAT_LOG_ENABLED` / `BANKS_CHAT_LOG_DIR`.
 
 - **Tests unitarios sin BD ni modelos**: todos los tests en `tests/unit/` usan mocks. `PYTHONPATH=src pytest tests/unit/ -q` debe pasar en < 2s sin internet ni GPU.
 
@@ -100,11 +104,11 @@ Datos_prueba/Monitor PM/textos_monitor_pm.xlsx
 2. `infrastructure/extractors/taxonomy.py` → `SECTION_KEYWORDS`: añadir patrones del nuevo tipo.
 3. Ejecutar `banks-ingest run` (idempotente).
 
-## Agregar nuevas series al catálogo SQL
+## Agregar nuevos datasets al catálogo de parquets
 
-1. Generar parquet en `data_pipeline/snapshots/<nombre>.parquet` con columnas `(date, series_id, value[, tenor])`.
-2. Añadir entrada en `sql_catalog/catalog.yaml` con `query_id`, `name`, `description`, `segment`, `tags`, `parquet`, `sql`.
-3. Añadir caso a `data/golden_set/sql_routing.jsonl`.
+1. Dejar el parquet en `data_pipeline/parquet/<nombre>.parquet` con sus columnas reales (no es necesario un schema canónico).
+2. Añadir entrada en `sql_catalog/parquet_catalog.yaml` bajo `datasets:` con `id`, `file`, `name`, `description`, `segment`, `unit`, `date_range` y `columns` (cada columna con `name` + `type`; si es categórica, opcionalmente `values:` para enum).
+3. Añadir caso a `data/golden_set/sql_routing.jsonl` validando que `discover_query` + el nuevo `dataset_id` respondan la pregunta.
 
 ## Ajustar parámetros de búsqueda
 
@@ -149,6 +153,8 @@ chunks    (chunk_id PK, document_id FK,
 | `BANKS_TRACING` | `off` | `otlp` para OpenTelemetry |
 | `BANKS_RATE_LIMIT_RPM` | `60` | Requests/minuto por API key |
 | `RAG_VISUAL_IMG_WEIGHT` | `0.7` | Peso imagen en dual embedding |
+| `BANKS_CHAT_LOG_ENABLED` | `true` | `false` para no persistir turnos del agente |
+| `BANKS_CHAT_LOG_DIR` | `data/chat_logs` | Otra ruta para los JSONL de chat |
 
 ## Gemelo de desarrollo
 

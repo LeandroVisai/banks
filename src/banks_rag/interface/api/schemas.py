@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Health
 # ─────────────────────────────────────────────────────────────────────────────
@@ -55,7 +54,7 @@ class HistoricalSeriesRef(BaseModel):
     series_id: str
     series_name: str
     unit: str
-    frequency: str
+    frequency: str = ""   # parquet_catalog no declara frequency a nivel dataset
     n_observations: int
     first_date: str | None
     last_date: str | None
@@ -146,42 +145,41 @@ class SearchResponse(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Catalog (SQL queries para alimentar el frontend de gráficos)
+# Catalog (parquet_catalog para alimentar el frontend de gráficos)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class CatalogParamSpec(BaseModel):
+class DatasetColumn(BaseModel):
     name: str
     type: str
-    default: str
-    description: str = ""
+    values: list[str] = Field(default_factory=list)
 
 
-class CatalogEntry(BaseModel):
-    query_id: str
+class DatasetEntry(BaseModel):
+    id: str
+    file: str
     name: str
     description: str
     segment: str
-    tags: list[str]
     unit: str
-    frequency: str
-    columns: list[str]
-    params: list[CatalogParamSpec]
+    date_range: list[str] | None = None
+    columns: list[DatasetColumn]
 
 
-class CatalogListResponse(BaseModel):
+class DatasetListResponse(BaseModel):
     n_entries: int
-    entries: list[CatalogEntry]
+    entries: list[DatasetEntry]
 
 
 class QueryResponse(BaseModel):
-    query_id: str
+    dataset_id: str
     name: str
     unit: str
-    frequency: str
     segment: str
+    date_column: str
     columns: list[str]
     rows: list[dict]
     n_rows: int
+    last_date_in_data: str | None = None
     truncated: bool
     truncated_note: str | None = None

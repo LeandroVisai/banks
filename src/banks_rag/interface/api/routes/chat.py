@@ -11,6 +11,7 @@ from banks_rag.application.agent import (
     run_agent,
 )
 from banks_rag.config import get_settings
+from banks_rag.infrastructure.observability import log_chat_error, log_chat_turn
 from banks_rag.interface.api.schemas import (
     ChatRequest,
     ChatResponse,
@@ -44,6 +45,9 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         if m.role != "system"
     ]
 
+    model = getattr(deps.llm, "name", settings.llm_family)
+    request_id = getattr(request.state, "request_id", "")
+
     try:
         result = await run_agent(
             body.message,
@@ -56,10 +60,19 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("run_agent falló en /v1/chat")
+        log_chat_error(
+            body.message, history, str(exc),
+            model=model, prompt_version=PROMPT_VERSION, request_id=request_id,
+        )
         raise HTTPException(
             status_code=502,
             detail=f"El agente no pudo completar el turno: {exc}",
         ) from exc
+
+    log_chat_turn(
+        body.message, history, result,
+        model=model, prompt_version=PROMPT_VERSION, request_id=request_id,
+    )
 
     return ChatResponse(
         response=result.response,
@@ -71,6 +84,6 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         cited_refs=result.cited_refs,
         total_tokens=result.total_tokens,
         latency_ms=result.latency_ms,
-        model=getattr(deps.llm, "name", settings.llm_family),
+        model=model,
         prompt_version=PROMPT_VERSION,
     )

@@ -200,9 +200,10 @@ usuario → POST /v1/chat (chat.py)
           └─ con tool_calls → asyncio.gather(dispatch por tool):
                 search_documents / search_visuals → hybrid_search
                    (recall vector HNSW + léxico BM25 → RRF → MMR → importance_boost → reranker)
-                discover_query  → catálogo SQL (catalog.yaml)
-                execute_query   → render_sql → DuckDB sobre parquets
-                document_lookup / historical_series (ruta legacy DW)
+                discover_query  → parquet_catalog.yaml (search_datasets)
+                execute_query   → _parquet_query.build_fetch_sql (SQL safe, LLM no escribe SQL) → DuckDB
+                analytics (compute_variation/spread/stats/anomaly/snapshot)
+                   → fetch_rows_from_dataset (mismo helper) → series_analytics puras
              → resultados truncados → inyectados como role:"tool" → repetir
 ```
 

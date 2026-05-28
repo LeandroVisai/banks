@@ -1,5 +1,6 @@
 """Observabilidad: logging estructurado, métricas Prometheus, tracing OTel."""
 
+from .chat_log import log_chat_error, log_chat_turn
 from .logging import bind_request_context, configure_logging, get_context, get_logger
 from .metrics import (
     AGENT_ITERATIONS,
@@ -25,6 +26,9 @@ __all__ = [
     "bind_request_context",
     "get_context",
     "get_logger",
+    # chat log
+    "log_chat_turn",
+    "log_chat_error",
     # metrics
     "CHAT_REQUESTS",
     "TOOL_CALLS",

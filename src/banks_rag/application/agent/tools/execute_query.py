@@ -1,139 +1,172 @@
-"""Tool ``execute_query`` — ejecuta una query del catálogo SQL sobre parquets.
+"""Tool ``execute_query`` — fetcher parametrizado sobre parquet_catalog.
 
-Usa DuckDB para consultar los parquets del DW. El agente llama esta tool
-después de ``discover_query`` cuando ya sabe el ``query_id`` correcto.
+NO es SQL libre escrita por el LLM. El LLM pasa parámetros estructurados
+(``dataset_id``, columnas opcionales, rango de fecha, filtros por igualdad/IN
+contra columnas enum) y la tool construye la SQL safe internamente vía
+``_parquet_query.build_fetch_sql``: identificadores comillados, valores
+escapados, ``LIMIT`` acotado por ``MAX_ROWS``.
 
-Limita la salida a ``max_rows`` para no saturar el contexto del LLM.
+Después de ejecutar registra cada serie consultada en ``state.add_series``
+para que el panel de "series utilizadas" del frontend muestre el dato.
 """
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
-from banks_rag.config.paths import ROOT
-from banks_rag.infrastructure.sql.catalog_loader import (
-    get_entry,
-    load_catalog,
-    render_sql,
-)
 from banks_rag.infrastructure.sql.duckdb_runner import MAX_ROWS as _MAX_ROWS
 from banks_rag.infrastructure.sql.duckdb_runner import last_date_in_rows as _last_date
-from banks_rag.infrastructure.sql.duckdb_runner import run_duckdb as _run_duckdb
 
+from ._parquet_query import DEFAULT_LIMIT, fetch_rows_from_dataset
 from .registry import register
 
 if TYPE_CHECKING:
     from banks_rag.domain.agent import AgentState
 
-_SNAPSHOTS_DIR = ROOT / "data_pipeline" / "snapshots"
-_PARQUET_DIR = ROOT / "data_pipeline" / "parquet"
-# _MAX_ROWS: techo duro de filas, compartido con duckdb_runner; la tool
-# advierte al modelo si el resultado se truncó.
 
 _SCHEMA = {
     "type": "function",
     "function": {
         "name": "execute_query",
         "description": (
-            "Ejecuta una query analítica del catálogo SQL sobre los parquets "
-            "del Data Warehouse y retorna los datos en formato tabular. "
-            "Úsala tras discover_query cuando ya tienes el query_id. "
-            "Los datos incluyen series financieras: tipo de cambio, tasas, "
-            "bonos, liquidez bancaria, commodities, etc."
+            "Trae filas de un dataset del catálogo de parquets (tipo de "
+            "cambio, tasas, bonos, liquidez, commodities, balance bancario, "
+            "etc.). Úsala tras discover_query cuando ya tienes el "
+            "`dataset_id`. La SQL la arma la tool — tú solo eliges qué "
+            "columnas y filtros. Para análisis (variación, spread, "
+            "estadística, anomalía) usa las analytics tools."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "query_id": {
+                "dataset_id": {
                     "type": "string",
                     "description": (
-                        "Identificador de la query en el catálogo "
-                        "(obtenido con discover_query)."
+                        "ID del dataset (obtenido con discover_query)."
+                    ),
+                },
+                "columns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Columnas a traer (además de la fecha, que siempre "
+                        "se incluye). Si omites, trae todas las del dataset. "
+                        "Usa los nombres EXACTOS del esquema (case-sensitive)."
                     ),
                 },
                 "fecha_inicio": {
                     "type": "string",
-                    "description": "Fecha de inicio en formato ISO YYYY-MM-DD.",
+                    "description": "Fecha desde (ISO YYYY-MM-DD).",
                 },
                 "fecha_fin": {
                     "type": "string",
-                    "description": "Fecha de fin en formato ISO YYYY-MM-DD (default: hoy).",
+                    "description": "Fecha hasta (ISO YYYY-MM-DD).",
+                },
+                "filters": {
+                    "type": "object",
+                    "description": (
+                        "Filtros de igualdad por columna: "
+                        "`{\"Banco\": \"BCI\"}` o `{\"Banco\": [\"BCI\", "
+                        "\"Chile\"]}`. Las columnas deben existir en el "
+                        "esquema; si la columna declara `values` (enum), el "
+                        "valor pasado debe estar en esa lista."
+                    ),
+                    "additionalProperties": True,
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Máximo de filas a retornar (default del catálogo, máx 500).",
+                    "description": f"Máximo de filas (default {DEFAULT_LIMIT}, máx {_MAX_ROWS}).",
                     "minimum": 1,
-                    "maximum": 500,
+                    "maximum": _MAX_ROWS,
                 },
             },
-            "required": ["query_id"],
+            "required": ["dataset_id"],
         },
     },
 }
 
 
+def _register_series(
+    state: AgentState,
+    dataset_name: str,
+    dataset_unit: str,
+    dataset_id: str,
+    date_col: str,
+    select_cols: list[str],
+    rows: list[dict],
+) -> None:
+    """Registra una entrada en ``state.series_used`` por cada columna no-fecha
+    devuelta. Mirror del patrón usado en analytics.py."""
+    if not rows:
+        return
+    date_rows = [{"date": r.get(date_col)} for r in rows]
+    for col in select_cols:
+        if col == date_col:
+            continue
+        state.add_series(
+            f"{dataset_id}:{col}",
+            {
+                "series_name": f"{dataset_name} — {col}",
+                "unit": dataset_unit,
+            },
+            date_rows,
+        )
+
+
 @register("execute_query", _SCHEMA)
 async def execute_query(
     state: AgentState,
-    query_id: str,
+    dataset_id: str,
+    columns: list[str] | None = None,
     fecha_inicio: str | None = None,
     fecha_fin: str | None = None,
+    filters: dict[str, Any] | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
-    entries = load_catalog()
-    entry = get_entry(entries, query_id)
-    if entry is None:
-        available = [e.query_id for e in entries]
-        return {
-            "error": f"query_id desconocido: {query_id!r}.",
-            "available_query_ids": available,
-        }
-
-    # Construir params respetando lo que pasó el agente
-    params: dict[str, Any] = {}
-    if fecha_inicio:
-        params["fecha_inicio"] = fecha_inicio
-    if fecha_fin:
-        params["fecha_fin"] = fecha_fin
-    if limit is not None:
-        params["limit"] = min(int(limit), _MAX_ROWS)
-
-    sql = render_sql(entry, _SNAPSHOTS_DIR, params, parquet_dir=_PARQUET_DIR)
-
     try:
-        rows = await asyncio.to_thread(_run_duckdb, sql)
-    except Exception as exc:  # noqa: BLE001
+        dataset, rows, date_col, select_cols = await fetch_rows_from_dataset(
+            dataset_id,
+            columns=columns,
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            filters=filters,
+            limit=limit,
+        )
+    except ValueError as exc:
+        return {"error": str(exc), "dataset_id": dataset_id}
+    except FileNotFoundError as exc:
+        return {"error": str(exc), "dataset_id": dataset_id}
+    except Exception as exc:
         return {
-            "error": f"Error ejecutando {query_id!r}: {exc}",
-            "query_id": query_id,
+            "error": f"Error ejecutando dataset {dataset_id!r}: {exc}",
+            "dataset_id": dataset_id,
         }
 
-    truncated = len(rows) >= _MAX_ROWS
+    _register_series(
+        state, dataset.name, dataset.unit, dataset.id, date_col, select_cols, rows,
+    )
+
     last_date = _last_date(rows)
+    truncated = len(rows) >= _MAX_ROWS
     return {
-        "query_id": query_id,
-        "name": entry.name,
-        "unit": entry.unit,
-        "frequency": entry.frequency,
-        "segment": entry.segment,
-        "columns": entry.columns,
+        "dataset_id": dataset.id,
+        "name": dataset.name,
+        "unit": dataset.unit,
+        "segment": dataset.segment,
+        "date_column": date_col,
+        "columns": select_cols,
         "rows": rows,
         "n_rows": len(rows),
         "last_date_in_data": last_date,
         "data_currency_warning": (
             f"El último dato disponible es del {last_date}. "
-            "NO asumas que este dato es de hoy; los datos pueden tener rezago."
+            "NO asumas que este dato es de hoy; los parquets tienen rezago."
             if last_date else None
         ),
         "truncated": truncated,
         "truncated_note": (
             f"Resultados truncados a {_MAX_ROWS} filas. "
-            "Usa fecha_inicio/fecha_fin más acotados para obtener menos filas."
+            "Usa fecha_inicio/fecha_fin o filters más acotados."
             if truncated else None
         ),
     }
-
-
-# _run_duckdb se importa de infrastructure.sql.duckdb_runner (helper compartido
-# con las analytics tools). Se re-exporta con nombre privado por compatibilidad.

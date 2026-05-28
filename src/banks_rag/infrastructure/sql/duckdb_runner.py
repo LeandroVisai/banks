@@ -1,4 +1,4 @@
-"""Ejecución de SQL DuckDB sobre los parquets de snapshots.
+"""Ejecución de SQL DuckDB sobre los parquets del catálogo.
 
 Helper compartido por ``execute_query`` y las analytics tools. Abre una
 conexión ``:memory:`` por llamada — las llamadas concurrentes no comparten
