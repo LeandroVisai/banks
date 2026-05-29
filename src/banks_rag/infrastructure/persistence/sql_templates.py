@@ -102,14 +102,30 @@ def post_schema_migrations(chunks_table: str) -> list[str]:
     ]
 
 
-def index_statements(docs_table: str, chunks_table: str) -> list[str]:
-    """18 índices: BTREE para filtros, GIN para JSONB/array/tsvector, HNSW para vector.
+def index_statements(docs_table: str, chunks_table: str, dim: int = 4096) -> list[str]:
+    """Índices: BTREE para filtros, GIN para JSONB/array/tsvector, ANN para vector.
 
-    HNSW usa ``vector_cosine_ops`` con ``m=16, ef_construction=64`` — ajustado
-    para corpus de ~10K-100K chunks. Para corpus mayores subir ``ef_construction``
-    a 128 mejora recall a costa de tiempo de build.
+    Índice vectorial según la dimensión del embedding y los límites de pgvector:
+    - dim ≤ 2000: HNSW con ``vector_cosine_ops`` (rápido; el límite de índice de
+      pgvector para el tipo ``vector`` es 2000 dims).
+    - dim > 2000 (p. ej. Qwen3-VL-Embedding-8B = 4096): NINGÚN índice ANN de
+      pgvector aplica — HNSW/IVFFlat sobre ``vector`` topan en 2000 dims y aun
+      ``halfvec`` topa en 4000. Se omite el índice ANN y la búsqueda vectorial
+      corre como KNN EXACTO (seq scan). Para ~50K chunks es sub-segundo. Si el
+      corpus creciera mucho, alternativas: (a) truncar a ≤2000 dims con
+      Matryoshka y HNSW, o (b) quantización binaria (``bit``) con reranking.
+    Los embeddings deben venir L2-normalizados (cosine).
     """
-    return [
+    vector_index: str | None
+    if dim <= 2000:
+        vector_index = (
+            f"CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw ON {chunks_table} "
+            f"USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)"
+        )
+    else:
+        vector_index = None  # KNN exacto; pgvector no indexa >2000 dims
+
+    stmts = [
         # documents
         f"CREATE INDEX IF NOT EXISTS idx_docs_type ON {docs_table}(doc_type_category)",
         f"CREATE INDEX IF NOT EXISTS idx_docs_institution ON {docs_table}(institution)",
@@ -129,9 +145,6 @@ def index_statements(docs_table: str, chunks_table: str) -> list[str]:
         f"CREATE INDEX IF NOT EXISTS idx_chunks_entities ON {chunks_table} "
         f"USING GIN(entities jsonb_path_ops)",
         f"CREATE INDEX IF NOT EXISTS idx_chunks_tsv ON {chunks_table} USING GIN(text_tsv)",
-        # chunks — HNSW (cosine; embeddings deben venir L2-normalizados de Fase 1C)
-        f"CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw ON {chunks_table} "
-        f"USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)",
         # chunks — fechas y compuestos para filtros frecuentes
         f"CREATE INDEX IF NOT EXISTS idx_chunks_chunk_date ON {chunks_table}(chunk_date) "
         f"WHERE chunk_date IS NOT NULL",
@@ -143,6 +156,11 @@ def index_statements(docs_table: str, chunks_table: str) -> list[str]:
         f"CREATE INDEX IF NOT EXISTS idx_chunks_date_imp ON {chunks_table}(chunk_date, importance_score DESC) "
         f"WHERE chunk_date IS NOT NULL",
     ]
+    # El índice ANN del vector solo si la dimensión es indexable por pgvector
+    # (≤2000); en >2000 dims se omite y la búsqueda corre como KNN exacto.
+    if vector_index is not None:
+        stmts.append(vector_index)
+    return stmts
 
 
 # ── DML: upsert / insert / update tsv ─────────────────────────────────────────

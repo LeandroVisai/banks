@@ -46,20 +46,28 @@ class TestListDocumentsSql:
 @pytest.mark.unit
 class TestIndexStatements:
     def test_count(self) -> None:
-        # 18 índices según diseño:
-        # - 3 docs (BTREE) + 5 chunks BTREE/parciales + 4 GIN +
-        #   1 HNSW + 4 fechas/compuestos = 17 (legacy) o 18 (con compuestos extra)
-        stmts = sql.index_statements("documents", "chunks")
-        # Verificar al menos los críticos en lugar del count exacto
+        # Núcleo de filtros + GIN + compuestos. El índice vectorial es +1 solo
+        # cuando dim ≤ 2000 (ver test dedicado).
+        stmts = sql.index_statements("documents", "chunks", dim=1536)
         assert len(stmts) >= 15
 
-    def test_hnsw_with_cosine_ops(self) -> None:
-        stmts = sql.index_statements("documents", "chunks")
-        hnsw_stmts = [s for s in stmts if "hnsw" in s.lower()]
-        assert len(hnsw_stmts) == 1
-        assert "vector_cosine_ops" in hnsw_stmts[0]
-        assert "m = 16" in hnsw_stmts[0]
-        assert "ef_construction = 64" in hnsw_stmts[0]
+    def test_hnsw_for_indexable_dim(self) -> None:
+        # dim ≤ 2000: HNSW con vector_cosine_ops (indexable por pgvector).
+        stmts = sql.index_statements("documents", "chunks", dim=1536)
+        hnsw = [s for s in stmts if "hnsw" in s.lower()]
+        assert len(hnsw) == 1
+        assert "vector_cosine_ops" in hnsw[0]
+        assert "m = 16" in hnsw[0]
+
+    def test_no_ann_index_above_2000_dims(self) -> None:
+        # dim > 2000 (ej. Qwen3-VL-Embedding-8B = 4096): pgvector NO indexa
+        # (HNSW/IVFFlat topan en 2000, halfvec en 4000). Se omite el índice ANN
+        # y la búsqueda corre como KNN exacto. No debe aparecer hnsw NI ivfflat.
+        stmts = sql.index_statements("documents", "chunks", dim=4096)
+        assert not any("hnsw" in s.lower() for s in stmts)
+        assert not any("ivfflat" in s.lower() for s in stmts)
+        # Los demás índices (GIN, BTREE, fechas) siguen presentes.
+        assert any("USING GIN(text_tsv)" in s for s in stmts)
 
     def test_gin_indices_exist(self) -> None:
         stmts = sql.index_statements("documents", "chunks")

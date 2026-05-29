@@ -160,7 +160,7 @@ class PostgresRepo:
             cur.execute(sql.schema_sql(dim, self.docs_table, self.chunks_table))
             for migration in sql.post_schema_migrations(self.chunks_table):
                 cur.execute(migration)
-            for stmt in sql.index_statements(self.docs_table, self.chunks_table):
+            for stmt in sql.index_statements(self.docs_table, self.chunks_table, dim=dim):
                 cur.execute(stmt)
 
     # ── Inspección ────────────────────────────────────────────────────────────
