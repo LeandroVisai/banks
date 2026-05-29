@@ -47,3 +47,7 @@ class AgentResult:
     # de alucinación. Se eliminan del texto pero se reportan aquí en vez de
     # ocultarse, para que la evaluación de faithfulness pueda medirlas.
     invalid_refs: list[int] = field(default_factory=list)
+    # Cifras financieras de la respuesta que no provienen de ninguna
+    # herramienta de este turno (grounding numérico). Señal de alucinación de
+    # valores; se reportan para evaluación y para que el frontend las marque.
+    ungrounded_numbers: list[float] = field(default_factory=list)

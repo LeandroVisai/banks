@@ -313,14 +313,26 @@ class TestDiscoverQuery:
             )
         assert all(r["segment"] == "renta_fija_chile" for r in result["results"])
 
-    def test_unknown_segment_returns_error(self, datasets: list[ParquetDataset]) -> None:
+    def test_unknown_segment_soft_resolves(self, datasets: list[ParquetDataset]) -> None:
+        # Segmento desconocido NO debe fallar (era el error duro de los logs que
+        # dejaba al modelo sin datos): busca en todo el catálogo y avisa.
         from banks_rag.application.agent.tools.discover_query import discover_query
         with self._mock_catalog(datasets):
             result = self._run(
-                discover_query(state=MagicMock(), query="x", segment="no_existe"),
+                discover_query(state=MagicMock(), query="tipo de cambio",
+                               segment="no_existe"),
             )
-        assert "error" in result
-        assert "segments_disponibles" in result
+        assert "error" not in result
+        assert result["n_results"] >= 1
+        assert "no reconocido" in result.get("segment_note", "")
+
+    def test_segment_alias_resolves(self, datasets: list[ParquetDataset]) -> None:
+        # Un alias del dominio ("AFP") se resuelve al segmento canónico. Con el
+        # catálogo de prueba (sin fondos_pension) cae al aviso de no-reconocido,
+        # así que validamos contra el catálogo real vía search_datasets aparte.
+        from banks_rag.domain_knowledge.financial_aliases import resolve_segment
+        assert resolve_segment("AFP", {"fondos_pension"}) == "fondos_pension"
+        assert resolve_segment("fx", {"mercado_cambiario"}) == "mercado_cambiario"
 
     def test_top_k_limits_results(self, datasets: list[ParquetDataset]) -> None:
         from banks_rag.application.agent.tools.discover_query import discover_query

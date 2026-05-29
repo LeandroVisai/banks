@@ -19,6 +19,7 @@ from banks_rag.domain.retrieval import SearchFilters
 from banks_rag.infrastructure.embeddings import build_default_embedder
 from banks_rag.infrastructure.persistence import PostgresRepo
 
+from ._doc_types import DOC_TYPE_VALUES, normalize_doc_types
 from .registry import register
 
 if TYPE_CHECKING:
@@ -57,15 +58,15 @@ SCHEMA = {
                     "maximum": 10,
                 },
                 "doc_type": {
-                    "type": "string",
+                    "type": "array",
+                    "items": {"type": "string", "enum": list(DOC_TYPE_VALUES)},
                     "description": (
-                        "Filtrar por tipo de documento. Útil cuando la "
-                        "pregunta es específica (p.ej. solo Minutas)."
+                        "Filtrar por uno o varios tipos de documento (también "
+                        "acepta un solo string). Útil cuando la pregunta es "
+                        "específica (p.ej. solo Minutas). Valores: "
+                        + ", ".join(DOC_TYPE_VALUES)
+                        + "."
                     ),
-                    "enum": [
-                        "COMUNICADO_RPM", "MINUTA_RPM", "MINUTA_IPOM", "IPOM",
-                        "IEF", "FED_STATEMENT", "REPORTE_RESEARCH", "MONITOR_PM",
-                    ],
                 },
                 "year": {
                     "type": "integer",
@@ -98,18 +99,23 @@ def _parse_date(s: str | None) -> date | None:
 
 
 def _build_filters(
-    doc_type: str | None,
+    doc_type: str | list[str] | None,
     year: int | None,
     date_from: str | None,
     date_to: str | None,
 ) -> SearchFilters:
-    """Convierte los argumentos de la tool a un ``SearchFilters``."""
+    """Convierte los argumentos de la tool a un ``SearchFilters``.
+
+    ``doc_type`` admite string o array; se normaliza a los valores canónicos
+    de ``doc_type_category`` (ver ``_doc_types.normalize_doc_types``).
+    """
     df = _parse_date(date_from)
     dt = _parse_date(date_to)
 
     filters = SearchFilters()
-    if doc_type:
-        filters.doc_types = [doc_type]
+    doc_types = normalize_doc_types(doc_type)
+    if doc_types:
+        filters.doc_types = doc_types
 
     # Si vienen exact dates iguales → exact_date; si rango → year range.
     if df and dt and df == dt:
@@ -152,7 +158,7 @@ async def search_documents(
     state: "AgentState",
     query: str,
     k: int = 5,
-    doc_type: str | None = None,
+    doc_type: str | list[str] | None = None,
     year: int | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
@@ -194,7 +200,7 @@ async def search_documents(
         "results": results,
         "n_results": len(results),
         "filters_applied": {
-            "doc_type": doc_type,
+            "doc_type": filters.doc_types or None,
             "year": year,
             "date_from": date_from,
             "date_to": date_to,

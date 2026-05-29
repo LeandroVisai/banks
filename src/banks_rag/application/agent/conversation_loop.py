@@ -4,15 +4,17 @@ Arquitectura (Fase B):
 
     run_agent  =  ORQUESTADOR
       · ve solo las tools delegate_to_* (una por especialista)
-      · descompone la pregunta y delega
+      · descompone la pregunta y delega al especialista de mercado correcto
       · sintetiza la respuesta final con citas [N]
         │
-        ├─ delegate_to_document_analyst ─┐
-        ├─ delegate_to_quant_analyst ────┤
-        ├─ delegate_to_policy_analyst ───┤  run_subagent  =  ESPECIALISTA
-        └─ delegate_to_market_analyst ───┘    · ve solo sus tools de dominio
-                                              · ejecuta su propio loop LLM↔tools
-                                              · devuelve un análisis al orquestador
+        ├─ delegate_to_fx_analyst ──────────┐  (especialistas de mercado)
+        ├─ delegate_to_nr_analyst ──────────┤
+        ├─ delegate_to_afp_analyst ─────────┤
+        ├─ delegate_to_ffmm_analyst ────────┤  run_subagent  =  ESPECIALISTA
+        ├─ delegate_to_renta_fija_analyst ──┤    · ve solo sus tools de dominio
+        ├─ delegate_to_liquidez_analyst ────┤    · ejecuta su propio loop LLM↔tools
+        ├─ delegate_to_document_analyst ────┤    · devuelve un análisis al orquestador
+        └─ delegate_to_policy_analyst ──────┘  (especialistas del corpus)
 
 Tanto el orquestador como cada sub-agente corren el mismo loop genérico
 ``_run_tool_loop``; lo que cambia es el system prompt, el set de tools y la
@@ -27,13 +29,14 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from datetime import date
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from banks_rag.domain.agent import AgentResult, AgentState
 
 from .citation_verifier import verify_citations
+from .numeric_grounding import extract_numbers, has_financial_numbers, verify_numbers
 from .prompts import MAX_ITERATIONS_FALLBACK_MESSAGE, ORCHESTRATOR_SYSTEM_PROMPT
 from .subagents import (
     DELEGATE_SCHEMAS,
@@ -71,6 +74,34 @@ def _with_today(system_prompt: str) -> str:
     return encabezado + system_prompt
 
 
+# Tools que producen EVIDENCIA numérica (justifican citar una cifra). Las de
+# exploración (discover_query, list_documents) y la delegación NO cuentan: ver
+# datasets no es lo mismo que tener sus valores. Si un especialista emite cifras
+# con 0 de estas tools, la respuesta es alucinada.
+EVIDENCE_TOOLS: frozenset[str] = frozenset({
+    "execute_query",
+    "compute_variation",
+    "compute_spread",
+    "compute_composition",
+    "compute_aggregate",
+    "get_series_stats",
+    "detect_anomaly",
+    "get_market_snapshot",
+    "get_recent_policy_decisions",
+    "search_documents",
+    "search_visuals",
+    "get_document_chunks",
+    "compare_meetings",
+})
+
+# Mensaje con que se reemplaza el análisis de un especialista que emitió cifras
+# sin ninguna evidencia (anti-alucinación). El orquestador NO debe propagar
+# números inventados a un gerente del BCCh.
+_UNGROUNDED_SUBAGENT_MESSAGE = (
+    "No pude obtener datos para responder con cifras: las herramientas no "
+    "devolvieron evidencia numérica. No dispongo de ese dato en el catálogo."
+)
+
 DEFAULT_MAX_ITERATIONS = 6
 DEFAULT_SUBAGENT_MAX_ITERATIONS = 4
 DEFAULT_MAX_TOOL_RESULT_TOKENS = 1500
@@ -89,7 +120,7 @@ DispatchFn = Callable[[AgentState, str, dict], Awaitable[tuple[dict, int]]]
 def _serialize_tool_result(result: Any) -> str:
     try:
         return json.dumps(result, ensure_ascii=False, default=str)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return str(result)
 
 
@@ -196,10 +227,21 @@ def _truncate_tool_result(result: Any, budget: int, count_tokens) -> str:
 
 
 def _format_chunks_seen(state: AgentState) -> list[dict]:
-    """Snapshot de chunks_seen para el AgentResult final."""
-    return [
-        {
-            "ref": state.chunk_id_to_ref[str(c["chunk_id"])],
+    """Snapshot de chunks_seen para el AgentResult final.
+
+    Expone ``kind`` y, para los chunks VISUAL (gráficos/tablas de IPoM), su
+    ``caption`` y la ``image_url`` (``/v1/images/{chunk_id}``) para que el
+    frontend pueda **renderizar el gráfico** junto a la cita — el LLM es solo
+    texto, así que la interpretación visual la hace el gerente sobre la imagen.
+    """
+    out: list[dict] = []
+    for c in state.chunks_seen:
+        chunk_id = str(c["chunk_id"])
+        kind = (c.get("kind") or "TEXT")
+        # ChunkKind puede venir como enum (.value) o como string.
+        kind = getattr(kind, "value", kind)
+        entry = {
+            "ref": state.chunk_id_to_ref[chunk_id],
             "filename": c.get("filename"),
             "page_start": c.get("page_start"),
             "page_end": c.get("page_end"),
@@ -207,9 +249,13 @@ def _format_chunks_seen(state: AgentState) -> list[dict]:
             "doc_type": c.get("doc_type_category"),
             "date": str(c.get("chunk_date") or c.get("document_date") or ""),
             "importance": round(float(c.get("importance_score") or 0.0), 3),
+            "kind": kind,
         }
-        for c in state.chunks_seen
-    ]
+        if kind != "TEXT":
+            entry["caption"] = c.get("visual_caption")
+            entry["image_url"] = f"/v1/images/{chunk_id}"
+        out.append(entry)
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -240,6 +286,7 @@ async def _run_tool_loop(
     tool_timeout_s: float,
     temperature: float | None,
     max_tokens: int | None,
+    nudge_tool_use: bool = False,
 ) -> _LoopOutcome:
     """Ejecuta el loop iterativo LLM↔tools hasta una respuesta final.
 
@@ -258,6 +305,11 @@ async def _run_tool_loop(
         max_tool_result_tokens: cap por resultado de tool antes de inyectarlo.
         tool_timeout_s: tiempo límite por tool.
         temperature, max_tokens: overrides del LLM.
+        nudge_tool_use: si en la iter 1 el modelo responde sin tools, inyecta un
+            recordatorio y reintenta una vez. Crutch para modelos chicos (Gemma
+            3 12B). Default ``False``: con Qwen3.6-27B (tool calls nativos) es
+            innecesario y rompe respuestas directas legítimas (saludos,
+            preguntas sobre capacidades).
     """
     iteration = 0
     total_tokens = 0
@@ -293,7 +345,8 @@ async def _run_tool_loop(
             # Si el modelo ignoró las tools en la primera iteración, inyectar un
             # recordatorio explícito y reintentar una sola vez. Esto compensa
             # modelos pequeños (Gemma 3 12B) que tienden a responder directo.
-            if tools_arg and iteration == 1:
+            # Solo si nudge_tool_use=True (off por defecto con Qwen).
+            if nudge_tool_use and tools_arg and iteration == 1:
                 log.warning(
                     "[%s] iter 1: respondió sin usar tools — inyectando recordatorio",
                     agent_label,
@@ -368,7 +421,7 @@ async def _run_tool_loop(
                     "error": f"La herramienta '{tc.name}' excedió el tiempo "
                              f"límite ({tool_timeout_s:.0f}s) y fue cancelada.",
                 }, duration_ms
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 duration_ms = int((time.perf_counter() - t0_tool) * 1000)
                 log.exception("[%s] tool %s lanzó una excepción", agent_label, tc.name)
                 return tc, {"error": f"Error inesperado en '{tc.name}': {exc}"}, duration_ms
@@ -385,6 +438,13 @@ async def _run_tool_loop(
                 "name": tc.name,
                 "content": content_str,
             })
+            # Grounding numérico: todo número que la tool entregó queda como
+            # cifra citable. Solo las tools de evidencia cuentan para el guard
+            # anti-alucinación (un error o un resultado vacío no es evidencia).
+            is_error = isinstance(tool_result, dict) and "error" in tool_result
+            if tc.name in EVIDENCE_TOOLS and not is_error:
+                state.note_evidence_tool(agent_label)
+                state.add_grounded_numbers(extract_numbers(content_str))
             state.add_tool_call_trace(
                 iteration=iteration,
                 tool=tc.name,
@@ -455,12 +515,28 @@ async def run_subagent(
         temperature=temperature,
         max_tokens=max_tokens,
     )
+
+    analysis = outcome.final_text
+    finish_reason = outcome.finish_reason
+    # Guard anti-alucinación: si el especialista entregó cifras pero NO corrió
+    # ninguna tool de evidencia, esas cifras son inventadas (caso DV01/AFP de
+    # los logs). Se reemplaza el análisis para no propagarlas al orquestador.
+    evidence_count = state.evidence_tool_calls.get(spec.key, 0)
+    if evidence_count == 0 and has_financial_numbers(analysis):
+        log.warning(
+            "[%s] emitió cifras sin evidencia (0 tools de datos) — descartando "
+            "el análisis para evitar alucinación",
+            spec.key,
+        )
+        analysis = _UNGROUNDED_SUBAGENT_MESSAGE
+        finish_reason = "ungrounded"
+
     return SubAgentResult(
         key=spec.key,
         display_name=spec.display_name,
-        analysis=outcome.final_text,
+        analysis=analysis,
         iterations=outcome.iterations,
-        finish_reason=outcome.finish_reason,
+        finish_reason=finish_reason,
         total_tokens=outcome.total_tokens,
     )
 
@@ -569,6 +645,16 @@ async def run_agent(
             len(invalid_refs), invalid_refs,
         )
 
+    # Grounding numérico de la síntesis final: cifras que no provienen de
+    # ninguna herramienta de este turno. Se reportan (no se ocultan) para que
+    # la evaluación de faithfulness pueda medirlas; el frontend puede marcarlas.
+    ungrounded_numbers, _ = verify_numbers(cleaned_response, state.grounded_numbers)
+    if ungrounded_numbers:
+        log.warning(
+            "respuesta final con %d cifra(s) NO fundada(s) %s — posible alucinación",
+            len(ungrounded_numbers), ungrounded_numbers,
+        )
+
     return AgentResult(
         response=cleaned_response,
         iterations=outcome.iterations,
@@ -580,4 +666,5 @@ async def run_agent(
         total_tokens=outcome.total_tokens,
         latency_ms=int((time.perf_counter() - t0) * 1000),
         invalid_refs=invalid_refs,
+        ungrounded_numbers=ungrounded_numbers,
     )

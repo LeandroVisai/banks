@@ -121,9 +121,16 @@ class TestSearchDocumentsBuildFilters:
 
     def test_doc_type_only(self) -> None:
         from banks_rag.application.agent.tools.search_documents import _build_filters
+        # "COMUNICADO" (vocabulario del LLM) se normaliza al canónico.
         f = _build_filters("COMUNICADO", None, None, None)
-        assert f.doc_types == ["COMUNICADO"]
+        assert f.doc_types == ["COMUNICADO_RPM"]
         assert f.year_from is None
+
+    def test_doc_type_array(self) -> None:
+        from banks_rag.application.agent.tools.search_documents import _build_filters
+        f = _build_filters(["COMUNICADO_RPM", "MINUTA"], None, None, None)
+        # "MINUTA" expande a ambas minutas; canónicos se preservan.
+        assert f.doc_types == ["COMUNICADO_RPM", "MINUTA_RPM", "MINUTA_IPOM"]
 
     def test_year_only(self) -> None:
         from banks_rag.application.agent.tools.search_documents import _build_filters

@@ -20,6 +20,9 @@ data/logs_intermedios/
 # ── Logs de conversación del agente (JSONL diario) ───────────────────────────
 data/chat_logs/
 
+# ── Índice semántico del catálogo (regenerado desde el embedder en runtime) ───
+data/catalog_index.npz
+
 # ── Variables de entorno locales ──────────────────────────────────────────────
 .env
 .env.local

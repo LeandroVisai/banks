@@ -39,6 +39,11 @@ from banks_rag.infrastructure.extractors import (
 
 EXCEL_EXTENSIONS = {".xlsx", ".xls"}
 
+# Solo se extraen gráficos/figuras de los IPoM: son los documentos con visuales
+# analíticos relevantes. Comunicados y Minutas RPM (texto narrativo) NO generan
+# chunks VISUAL — reduce ruido en el índice y en search_visuals.
+VISUAL_DOC_TYPES = frozenset({"IPOM"})
+
 
 @dataclass
 class ExtractionReport:
@@ -126,7 +131,12 @@ def _process_pdf(
             kind=ChunkKind.TEXT,
         ))
 
-    visual_assets = extract_visual_assets(pdf_path, doc_id, images_dir)
+    # Extracción visual solo para IPoM (ver VISUAL_DOC_TYPES).
+    visual_assets = (
+        extract_visual_assets(pdf_path, doc_id, images_dir)
+        if doc_type in VISUAL_DOC_TYPES
+        else []
+    )
     for i, asset in enumerate(visual_assets):
         # El texto del chunk visual incluye el tipo, la caption (si existe)
         # y un snippet del texto vecino — para que BM25/full-text encuentre

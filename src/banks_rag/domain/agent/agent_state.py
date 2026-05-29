@@ -18,6 +18,24 @@ class AgentState:
     chunk_id_to_ref: dict[str, int] = field(default_factory=dict)
     series_used: dict[str, dict] = field(default_factory=dict)
     tool_trace: list[dict] = field(default_factory=list)
+    # Grounding numérico: todos los números que las herramientas entregaron en
+    # este turno. Una cifra de la respuesta solo es válida si matchea aquí
+    # (ver application/agent/numeric_grounding.py).
+    grounded_numbers: list[float] = field(default_factory=list)
+    # Cuántas tools que producen EVIDENCIA numérica corrió cada agente
+    # (key = agent_label). Si un especialista emite cifras con 0 evidencia,
+    # es alucinación.
+    evidence_tool_calls: dict[str, int] = field(default_factory=dict)
+
+    def add_grounded_numbers(self, numbers: list[float]) -> None:
+        """Acumula números entregados por una herramienta (evidencia citable)."""
+        self.grounded_numbers.extend(numbers)
+
+    def note_evidence_tool(self, agent_label: str) -> None:
+        """Registra que ``agent_label`` corrió una tool de evidencia numérica."""
+        self.evidence_tool_calls[agent_label] = (
+            self.evidence_tool_calls.get(agent_label, 0) + 1
+        )
 
     def add_chunk(self, chunk: dict) -> int:
         """Asigna una ref global al chunk. Idempotente: si ya tiene ref, retorna esa.

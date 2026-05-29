@@ -221,17 +221,24 @@ class PostgresRepo:
     def list_documents(
         self,
         *,
-        doc_type: str | None = None,
+        doc_types: list[str] | None = None,
         year: int | None = None,
         limit: int = 30,
     ) -> list[dict]:
-        """Lista documentos con filtros opcionales por tipo y/o año."""
+        """Lista documentos con filtros opcionales por tipo(s) y/o año.
+
+        ``doc_types`` es una lista de doc_type_category (o ``None`` para no
+        filtrar); psycopg2 la adapta a ``text[]`` y el SQL usa ``= ANY``.
+        """
         from psycopg2.extras import RealDictCursor
 
+        # Lista vacía == sin filtro (igual que None): evita ``= ANY('{}')``
+        # que no matchearía ningún documento.
+        types = doc_types or None
         with self.connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 sql.list_documents_sql(self.docs_table),
-                (doc_type, doc_type, year, year, int(limit)),
+                (types, types, year, year, int(limit)),
             )
             return cur.fetchall()
 

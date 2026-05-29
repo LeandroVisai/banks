@@ -48,6 +48,11 @@ class ChunkSeen(BaseModel):
     doc_type: str | None
     date: str
     importance: float
+    # 'TEXT' | 'VISUAL' (gráficos/tablas de IPoM). Para los VISUAL, el frontend
+    # puede renderizar la imagen con image_url y mostrar el caption.
+    kind: str = "TEXT"
+    caption: str | None = None
+    image_url: str | None = None
 
 
 class HistoricalSeriesRef(BaseModel):
@@ -79,6 +84,10 @@ class ChatResponse(BaseModel):
     chunks_seen: list[ChunkSeen]
     series_used: list[HistoricalSeriesRef]
     cited_refs: list[int]
+    # Cifras de la respuesta sin respaldo de ninguna herramienta (grounding
+    # numérico). Si no está vacío, el frontend debería marcarlas como no
+    # verificadas.
+    ungrounded_numbers: list[float] = Field(default_factory=list)
     total_tokens: int
     latency_ms: int
     model: str

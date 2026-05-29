@@ -176,7 +176,9 @@ def build_default_embedder() -> SentenceTransformersEmbedder:
 
     Respeta env vars del legacy:
 
-    - ``RAG_EMBEDDING_MODEL``: modelo principal (default ``Qwen/Qwen3-Embedding``).
+    - ``RAG_EMBEDDING_MODEL``: modelo principal (default ``Qwen3-VL-Embedding-8B``,
+      el embedder multimodal definitivo aprobado en la H100; se resuelve a
+      ``models/Qwen3-VL-Embedding-8B`` para deploy offline). 4096-dim, L2.
     - ``SENTENCE_TRANSFORMERS_HOME``: cache de HF (auto-detectado en deploy offline).
 
     Fallback automático: ``intfloat/multilingual-e5-small`` (modelo chico ~80MB).
@@ -190,7 +192,7 @@ def build_default_embedder() -> SentenceTransformersEmbedder:
     with _DEFAULT_EMBEDDER_LOCK:
         if _DEFAULT_EMBEDDER is not None:
             return _DEFAULT_EMBEDDER
-        primary = os.environ.get("RAG_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding")
+        primary = os.environ.get("RAG_EMBEDDING_MODEL", "Qwen3-VL-Embedding-8B")
         _DEFAULT_EMBEDDER = SentenceTransformersEmbedder(
             primary,
             fallback_models=["intfloat/multilingual-e5-small"],

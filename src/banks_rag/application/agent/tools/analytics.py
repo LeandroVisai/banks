@@ -22,6 +22,8 @@ from banks_rag.infrastructure.sql.parquet_catalog_loader import ParquetDataset
 from banks_rag.infrastructure.sql.series_analytics import (
     anomaly_check,
     clean_series,
+    composition,
+    composition_wide,
     descriptive_stats,
     spread,
     variation,
@@ -430,6 +432,299 @@ async def get_series_stats(
         "periodo": {"desde": fecha_inicio, "hasta": fecha_fin},
         **stats,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# compute_composition
+# ─────────────────────────────────────────────────────────────────────────────
+
+_COMPOSITION_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "compute_composition",
+        "description": (
+            "Calcula la COMPOSICIÓN (% por categoría) de un monto a una fecha "
+            "de corte. Úsala para preguntas de cartera / allocation / "
+            "distribución (ej. '% de la cartera AFP en Chile vs. extranjero', "
+            "'composición de activos por banco'). NO inventes porcentajes: esta "
+            "tool los calcula. Dos modos según el esquema (usa discover_query "
+            "para ver las columnas):\n"
+            "- LONG: una columna categórica + una de monto → pasa "
+            "`category_column` + `value_column` (ej. allocation: "
+            "category_column='Tipo_instrumento', value_column='Monto_USD').\n"
+            "- WIDE: una columna por categoría → pasa `value_columns` con la "
+            "lista de columnas (ej. allocation_int_nac: "
+            "value_columns=['Nacional','Extranjero'])."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "dataset_id": {
+                    "type": "string",
+                    "description": "ID del dataset (obtenido con discover_query).",
+                },
+                "value_column": {
+                    "type": "string",
+                    "description": "Modo LONG: columna numérica a sumar (ej. 'Monto_USD').",
+                },
+                "category_column": {
+                    "type": "string",
+                    "description": (
+                        "Modo LONG: columna categórica por la que desglosar "
+                        "(ej. 'Tipo_instrumento', 'Banco', 'Tipo_fondo')."
+                    ),
+                },
+                "value_columns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Modo WIDE: lista de columnas numéricas, una por "
+                        "categoría (ej. ['Nacional','Extranjero'])."
+                    ),
+                },
+                "fecha_inicio": {
+                    "type": "string",
+                    "description": "ISO YYYY-MM-DD o relativa ('-365d'). Default: -365d.",
+                },
+                "fecha_fin": {
+                    "type": "string",
+                    "description": "ISO u 'hoy'. Default: hoy. Usa la última fecha del rango.",
+                },
+                "filters": _FILTERS_SCHEMA,
+            },
+            "required": ["dataset_id"],
+        },
+    },
+}
+
+
+@register("compute_composition", _COMPOSITION_SCHEMA)
+async def compute_composition(
+    state: AgentState,
+    dataset_id: str,
+    value_column: str | None = None,
+    category_column: str | None = None,
+    value_columns: list[str] | None = None,
+    fecha_inicio: str = "-365d",
+    fecha_fin: str = "hoy",
+    filters: dict | None = None,
+) -> dict[str, Any]:
+    # Determina el modo y las columnas a traer.
+    wide = bool(value_columns)
+    long = bool(category_column and value_column)
+    if not (wide or long):
+        return {
+            "error": (
+                "Indica el modo: LONG (category_column + value_column) o WIDE "
+                "(value_columns con la lista de columnas por categoría)."
+            ),
+        }
+    fetch_cols = list(value_columns) if wide else [category_column, value_column]
+
+    try:
+        fi = _resolve_date(fecha_inicio)
+        ff = _resolve_date(fecha_fin)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    try:
+        dataset, rows, date_col, _ = await fetch_rows_from_dataset(
+            dataset_id,
+            columns=fetch_cols,
+            fecha_inicio=fi,
+            fecha_fin=ff,
+            filters=filters,
+            limit=_ANALYTICS_LIMIT,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        return {"error": str(exc), "dataset_id": dataset_id}
+    except Exception as exc:
+        return {"error": f"Error ejecutando dataset {dataset_id!r}: {exc}"}
+
+    if wide:
+        comp = composition_wide(rows, date_col, list(value_columns))
+        label = f"{', '.join(value_columns)}"
+        series_value_name = value_columns[0]
+    else:
+        comp = composition(rows, date_col, category_column, value_column)
+        label = f"{value_column} por {category_column}"
+        series_value_name = value_column
+
+    if comp is None:
+        return {
+            "error": (
+                f"Sin datos para componer ({label}) en {dataset_id!r} "
+                f"({fecha_inicio} → {fecha_fin}). Verifica las columnas y el rango."
+            ),
+        }
+
+    # Traza: registra la serie de valor en la fecha de corte (para series_used).
+    state.add_series(
+        _series_id(dataset_id, series_value_name, filters),
+        {"series_name": f"{dataset.name} — {label}", "unit": dataset.unit},
+        [{"date": comp["fecha"]}],
+    )
+    return {
+        "dataset_id": dataset_id,
+        "name": dataset.name,
+        "unit": dataset.unit,
+        "mode": "wide" if wide else "long",
+        "category_column": category_column,
+        "value_column": value_column,
+        "value_columns": value_columns,
+        "filters": filters,
+        **comp,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# compute_aggregate
+# ─────────────────────────────────────────────────────────────────────────────
+
+_AGGREGATE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "compute_aggregate",
+        "description": (
+            "Suma / total / posición NETA a una fecha de corte (con signo). NO "
+            "es porcentaje — para shares usa compute_composition. NUNCA sumes a "
+            "mano. Tres usos:\n"
+            "- TOTAL de una columna: pasa `value_column` (ej. DV01 total de la "
+            "cartera AFP: value_column='dv01').\n"
+            "- TOTAL por grupo: `value_column` + `group_by` (ej. DV01 por "
+            "moneda: value_column='dv01', group_by='moneda'; stock por sector: "
+            "value_column='Stock', group_by='Serie').\n"
+            "- NETO de varias columnas: `value_columns` (ej. flujo neto = "
+            "Spot+Forward: value_columns=['Spot','Forward'], filtrando el sector "
+            "con filters)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "dataset_id": {
+                    "type": "string",
+                    "description": "ID del dataset (obtenido con discover_query).",
+                },
+                "value_column": {
+                    "type": "string",
+                    "description": "Columna numérica a sumar (modos TOTAL y TOTAL por grupo).",
+                },
+                "group_by": {
+                    "type": "string",
+                    "description": (
+                        "Columna categórica para desglosar la suma (ej. "
+                        "'moneda', 'Serie', 'Fondo'). Opcional; requiere value_column."
+                    ),
+                },
+                "value_columns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Modo NETO: columnas a sumar entre sí (ej. ['Spot','Forward']).",
+                },
+                "fecha_inicio": {
+                    "type": "string",
+                    "description": "ISO YYYY-MM-DD o relativa ('-365d'). Default: -365d.",
+                },
+                "fecha_fin": {
+                    "type": "string",
+                    "description": "ISO u 'hoy'. Default: hoy. Usa la última fecha del rango.",
+                },
+                "filters": _FILTERS_SCHEMA,
+            },
+            "required": ["dataset_id"],
+        },
+    },
+}
+
+
+@register("compute_aggregate", _AGGREGATE_SCHEMA)
+async def compute_aggregate(
+    state: AgentState,
+    dataset_id: str,
+    value_column: str | None = None,
+    group_by: str | None = None,
+    value_columns: list[str] | None = None,
+    fecha_inicio: str = "-365d",
+    fecha_fin: str = "hoy",
+    filters: dict | None = None,
+) -> dict[str, Any]:
+    # Resolver modo y columnas a traer.
+    if group_by and value_column:
+        mode, fetch_cols = "grouped", [group_by, value_column]
+    elif value_columns:
+        mode, fetch_cols = "net", list(value_columns)
+    elif value_column:
+        mode, fetch_cols = "total", [value_column]
+    else:
+        return {
+            "error": (
+                "Indica qué sumar: `value_column` (total), `value_column`+"
+                "`group_by` (total por grupo) o `value_columns` (neto de columnas)."
+            ),
+        }
+
+    try:
+        fi = _resolve_date(fecha_inicio)
+        ff = _resolve_date(fecha_fin)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    try:
+        dataset, rows, date_col, _ = await fetch_rows_from_dataset(
+            dataset_id,
+            columns=fetch_cols,
+            fecha_inicio=fi,
+            fecha_fin=ff,
+            filters=filters,
+            limit=_ANALYTICS_LIMIT,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        return {"error": str(exc), "dataset_id": dataset_id}
+    except Exception as exc:
+        return {"error": f"Error ejecutando dataset {dataset_id!r}: {exc}"}
+
+    if mode == "grouped":
+        comp = composition(rows, date_col, group_by, value_column)
+        series_name = value_column
+    else:  # "net" o "total" → sumar columnas (wide)
+        cols = value_columns if mode == "net" else [value_column]
+        comp = composition_wide(rows, date_col, cols)
+        series_name = (value_columns or [value_column])[0]
+
+    if comp is None:
+        return {
+            "error": (
+                f"Sin datos para agregar en {dataset_id!r} ({fecha_inicio} → "
+                f"{fecha_fin}). Verifica columnas y rango."
+            ),
+        }
+
+    state.add_series(
+        _series_id(dataset_id, series_name, filters),
+        {"series_name": f"{dataset.name} — {series_name} (agregado)", "unit": dataset.unit},
+        [{"date": comp["fecha"]}],
+    )
+
+    # Presenta totales/neto (no %): renombra `breakdown` según el modo y omite share.
+    componentes = [
+        {"grupo" if mode == "grouped" else "columna": b["categoria"], "valor": b["valor"]}
+        for b in comp["breakdown"]
+    ]
+    out: dict[str, Any] = {
+        "dataset_id": dataset_id,
+        "name": dataset.name,
+        "unit": dataset.unit,
+        "mode": mode,
+        "fecha": comp["fecha"],
+        "filters": filters,
+    }
+    if mode == "net":
+        out["neto"] = comp["total"]
+        out["componentes"] = componentes
+    elif mode == "grouped":
+        out["total"] = comp["total"]
+        out["por_grupo"] = componentes
+    else:  # total
+        out["total"] = comp["total"]
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────

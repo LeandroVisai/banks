@@ -21,6 +21,7 @@ from banks_rag.domain.retrieval import SearchFilters
 from banks_rag.infrastructure.embeddings import build_default_embedder
 from banks_rag.infrastructure.persistence import PostgresRepo
 
+from ._doc_types import DOC_TYPE_VALUES, normalize_doc_types
 from .registry import register
 
 if TYPE_CHECKING:
@@ -67,11 +68,13 @@ SCHEMA = {
                     "enum": ["VISUAL", "TABLE"],
                 },
                 "doc_type": {
-                    "type": "string",
-                    "enum": [
-                        "COMUNICADO_RPM", "MINUTA_RPM", "MINUTA_IPOM", "IPOM",
-                        "IEF", "FED_STATEMENT", "REPORTE_RESEARCH", "MONITOR_PM",
-                    ],
+                    "type": "array",
+                    "items": {"type": "string", "enum": list(DOC_TYPE_VALUES)},
+                    "description": (
+                        "Filtrar por uno o varios tipos de documento (también "
+                        "acepta un solo string). Nota: los visuales solo se "
+                        "extraen de IPoM, así que filtrar por IPOM es lo útil."
+                    ),
                 },
                 "year": {
                     "type": "integer",
@@ -106,14 +109,14 @@ async def search_visuals(
     query: str,
     k: int = 5,
     visual_kind: Literal["VISUAL", "TABLE"] = "VISUAL",
-    doc_type: str | None = None,
+    doc_type: str | list[str] | None = None,
     year: int | None = None,
 ) -> dict[str, Any]:
     k = max(1, min(int(k), 10))
 
     filters = SearchFilters(
         kinds=["VISUAL"] if visual_kind == "VISUAL" else ["TABLE"],
-        doc_types=[doc_type] if doc_type else [],
+        doc_types=normalize_doc_types(doc_type),
         year_from=year, year_to=year,
     )
 

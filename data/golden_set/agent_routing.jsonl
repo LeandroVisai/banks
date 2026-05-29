@@ -1,0 +1,18 @@
+{"query": "¿Cuánto está el dólar hoy?", "expected_specialist": "fx"}
+{"query": "Dame el flujo cambiario spot y forward de la última semana", "expected_specialist": "fx"}
+{"query": "¿Cuál es el precio del cobre?", "expected_specialist": "fx", "expected_dataset": "cobre_dxy"}
+{"query": "¿Cómo están los puntos forward del CLP?", "expected_specialist": "fx", "expected_dataset": "forward_points"}
+{"query": "¿Cuál es la posición de los no residentes en instrumentos financieros?", "expected_specialist": "no_residentes"}
+{"query": "Flujo spot de inversionistas no residentes en abril", "expected_specialist": "no_residentes", "expected_dataset": "flujo_spot_nr"}
+{"query": "¿Tienes el DV01 de los fondos de pensiones?", "expected_specialist": "afp", "expected_dataset": "dv01_spc_afp"}
+{"query": "¿Cuál es la composición de cartera de las AFP?", "expected_specialist": "afp"}
+{"query": "¿Qué proporción de los fondos de AFP está en Chile y cuánto en el extranjero?", "expected_specialist": "afp", "expected_dataset": "allocation_int_nac"}
+{"query": "MTM de los fondos de pensiones", "expected_specialist": "afp", "expected_dataset": "mtm_afp"}
+{"query": "Flujos de los fondos mutuos del último mes", "expected_specialist": "fondos_mutuos"}
+{"query": "Duración de los fondos mutuos", "expected_specialist": "fondos_mutuos", "expected_dataset": "duracion_ffmm"}
+{"query": "¿Cómo está la curva BTP a 10 años?", "expected_specialist": "renta_fija"}
+{"query": "Spread entre el swap y el OIS", "expected_specialist": "renta_fija", "expected_dataset": "spread_swap_ois"}
+{"query": "¿Cuál es el stock de PDBC por agente?", "expected_specialist": "renta_fija"}
+{"query": "¿Cómo está el LCR del sistema bancario?", "expected_specialist": "liquidez", "expected_dataset": "lcr"}
+{"query": "Composición de activos bancarios en moneda nacional", "expected_specialist": "liquidez"}
+{"query": "¿Cuál es el spread de crédito de los DAP?", "expected_specialist": "renta_fija"}

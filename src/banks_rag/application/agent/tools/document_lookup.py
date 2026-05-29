@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from banks_rag.infrastructure.persistence import PostgresRepo
 
+from ._doc_types import DOC_TYPE_VALUES, normalize_doc_types
 from .registry import register
 
 if TYPE_CHECKING:
@@ -27,21 +28,24 @@ LIST_SCHEMA = {
     "function": {
         "name": "list_documents",
         "description": (
-            "Lista documentos del corpus filtrando por tipo y/o año. Útil "
+            "Lista documentos del corpus filtrando por tipo(s) y/o año. Útil "
             "para explorar qué documentos hay disponibles antes de hacer "
             "una búsqueda específica. Por ejemplo: '¿qué Minutas hay del "
-            "2024?' → list_documents(doc_type='MINUTA', year=2024)."
+            "2024?' → list_documents(doc_type=['MINUTA_RPM','MINUTA_IPOM'], "
+            "year=2024). `doc_type` admite uno o varios tipos."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "doc_type": {
-                    "type": "string",
-                    "enum": [
-                        "COMUNICADO_RPM", "MINUTA_RPM", "MINUTA_IPOM", "IPOM",
-                        "IEF", "FED_STATEMENT", "REPORTE_RESEARCH", "MONITOR_PM",
-                    ],
-                    "description": "Tipo de documento a listar.",
+                    "type": "array",
+                    "items": {"type": "string", "enum": list(DOC_TYPE_VALUES)},
+                    "description": (
+                        "Uno o varios tipos de documento a listar. También "
+                        "acepta un solo string. Valores: "
+                        + ", ".join(DOC_TYPE_VALUES)
+                        + "."
+                    ),
                 },
                 "year": {
                     "type": "integer",
@@ -65,14 +69,15 @@ LIST_SCHEMA = {
 @register("list_documents", LIST_SCHEMA)
 async def list_documents(
     state: "AgentState",
-    doc_type: str | None = None,
+    doc_type: str | list[str] | None = None,
     year: int | None = None,
     limit: int = 30,
 ) -> dict[str, Any]:
+    doc_types = normalize_doc_types(doc_type)
     repo = PostgresRepo(prefix=os.getenv("RAG_TABLE_PREFIX", ""))
     rows = await asyncio.to_thread(
         repo.list_documents,
-        doc_type=doc_type, year=year, limit=int(limit),
+        doc_types=doc_types, year=year, limit=int(limit),
     )
     return {
         "documents": [

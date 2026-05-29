@@ -36,6 +36,134 @@ def clean_series(rows: list[dict], date_col: str, value_col: str) -> list[Point]
     return out
 
 
+def composition(
+    rows: list[dict],
+    date_col: str,
+    category_col: str,
+    value_col: str,
+    *,
+    fecha: str | None = None,
+) -> dict[str, Any] | None:
+    """Breakdown por categoría a una fecha (la última disponible si no se da ``fecha``).
+
+    Para preguntas de COMPOSICIÓN/CARTERA: agrupa ``value_col`` por
+    ``category_col`` en una fecha de corte y calcula el porcentaje de cada
+    categoría sobre el total. Resuelve directamente "¿qué % está en X vs Y?"
+    (ej. allocation AFP Chile vs. extranjero) — antes el LLM inventaba esas
+    cifras.
+
+    Args:
+        rows: filas crudas con al menos ``date_col``, ``category_col``, ``value_col``.
+        fecha: fecha de corte exacta (debe coincidir con un valor de ``date_col``);
+            si es ``None`` se usa la última fecha presente en ``rows``.
+
+    Returns:
+        ``{fecha, total, n_categorias, breakdown:[{categoria, valor, share_pct}…]}``
+        con ``breakdown`` ordenado desc por valor; o ``None`` si no hay datos
+        válidos para la fecha de corte. ``share_pct`` es ``None`` si el total es 0.
+    """
+    # (fecha_str, categoria, valor) válidos.
+    clean: list[tuple[str, str, float]] = []
+    for row in rows:
+        f = row.get(date_col)
+        cat = row.get(category_col)
+        raw = row.get(value_col)
+        if f is None or cat is None or raw is None:
+            continue
+        try:
+            clean.append((str(f), str(cat), float(raw)))
+        except (TypeError, ValueError):
+            continue
+    if not clean:
+        return None
+
+    corte = fecha if fecha is not None else max(f for f, _, _ in clean)
+    en_corte = [(c, v) for f, c, v in clean if f == corte]
+    if not en_corte:
+        return None
+
+    sums: dict[str, float] = {}
+    for cat, val in en_corte:
+        sums[cat] = sums.get(cat, 0.0) + val
+
+    total = sum(sums.values())
+    breakdown = [
+        {
+            "categoria": cat,
+            "valor": round(val, 6),
+            "share_pct": round(100.0 * val / total, 2) if total else None,
+        }
+        for cat, val in sorted(sums.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+    return {
+        "fecha": corte,
+        "total": round(total, 6),
+        "n_categorias": len(breakdown),
+        "breakdown": breakdown,
+    }
+
+
+def composition_wide(
+    rows: list[dict],
+    date_col: str,
+    value_cols: list[str],
+    *,
+    fecha: str | None = None,
+) -> dict[str, Any] | None:
+    """Composición a partir de columnas WIDE (una columna por categoría).
+
+    Para datasets donde cada categoría es su propia columna numérica (ej.
+    ``allocation_int_nac`` con ``Nacional`` y ``Extranjero``): a la fecha de
+    corte, suma cada columna y calcula su share sobre el total. Resuelve "% en
+    Chile vs. extranjero" sin que el LLM invente las cifras.
+
+    Returns el mismo shape que ``composition`` (``breakdown`` con ``categoria``
+    = nombre de columna), o ``None`` si no hay filas válidas en la fecha.
+    """
+    # Fecha de corte: la última con al menos una columna no nula.
+    dated: list[tuple[str, dict]] = []
+    for row in rows:
+        f = row.get(date_col)
+        if f is None:
+            continue
+        if any(row.get(c) is not None for c in value_cols):
+            dated.append((str(f), row))
+    if not dated:
+        return None
+
+    corte = fecha if fecha is not None else max(f for f, _ in dated)
+    en_corte = [r for f, r in dated if f == corte]
+    if not en_corte:
+        return None
+
+    sums: dict[str, float] = {c: 0.0 for c in value_cols}
+    for row in en_corte:
+        for c in value_cols:
+            raw = row.get(c)
+            if raw is None:
+                continue
+            try:
+                sums[c] += float(raw)
+            except (TypeError, ValueError):
+                continue
+
+    total = sum(sums.values())
+    breakdown = [
+        {
+            "categoria": c,
+            "valor": round(sums[c], 6),
+            "share_pct": round(100.0 * sums[c] / total, 2) if total else None,
+        }
+        for c in sorted(value_cols, key=lambda k: sums[k], reverse=True)
+    ]
+    return {
+        "fecha": corte,
+        "total": round(total, 6),
+        "n_categorias": len(breakdown),
+        "breakdown": breakdown,
+    }
+
+
 def variation(series: list[Point]) -> dict[str, Any] | None:
     """Variación entre el primer y el último punto de la serie.
 

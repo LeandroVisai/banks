@@ -82,6 +82,7 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         chunks_seen=[ChunkSeen(**c) for c in result.chunks_seen],
         series_used=[HistoricalSeriesRef(**s) for s in result.series_used],
         cited_refs=result.cited_refs,
+        ungrounded_numbers=result.ungrounded_numbers,
         total_tokens=result.total_tokens,
         latency_ms=result.latency_ms,
         model=model,

@@ -225,15 +225,17 @@ PGVECTOR_AVAILABLE_SQL = "SELECT 1 FROM pg_available_extensions WHERE name = 've
 
 
 def list_documents_sql(docs_table: str) -> str:
-    """Lista documentos con filtros opcionales por tipo y/o año.
+    """Lista documentos con filtros opcionales por tipo(s) y/o año.
 
-    El caller pasa los filtros como params; la cláusula WHERE se construye
-    con ``COALESCE`` para que cada filtro sea opcional sin tocar SQL.
+    El filtro de tipo acepta una **lista** de doc_type_category (``= ANY``):
+    el caller pasa ``None`` para no filtrar, o un ``list[str]`` (psycopg2 lo
+    adapta a ``text[]``). Comparar con ``= ANY(%s::text[])`` evita el bug
+    ``operator does not exist: text = text[]`` cuando llega más de un tipo.
     """
     return f"""
 SELECT document_id, filename, doc_type_category, document_date, document_year
 FROM {docs_table}
-WHERE (%s::text IS NULL OR doc_type_category = %s)
+WHERE (%s::text[] IS NULL OR doc_type_category = ANY(%s::text[]))
   AND (%s::int IS NULL OR document_year = %s)
 ORDER BY COALESCE(document_year, 0) DESC, document_date DESC NULLS LAST, filename
 LIMIT %s

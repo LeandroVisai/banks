@@ -23,6 +23,8 @@ from banks_rag.infrastructure.sql.parquet_catalog_loader import (
 from banks_rag.infrastructure.sql.series_analytics import (
     anomaly_check,
     clean_series,
+    composition,
+    composition_wide,
     descriptive_stats,
     spread,
     variation,
@@ -457,3 +459,184 @@ class TestGetMarketSnapshot:
         assert "bei_10y" in claves
         bei = next(i for i in result["indicadores"] if i["clave"] == "bei_10y")
         assert bei["valor"] == pytest.approx(3.5)   # 5.8 - 2.3
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# composition / composition_wide (puras)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestCompositionPure:
+    def test_long_shares_at_latest_date(self) -> None:
+        rows = [
+            {"Fecha": "2026-04-30", "Cat": "A", "Monto": 60.0},
+            {"Fecha": "2026-04-30", "Cat": "B", "Monto": 40.0},
+            {"Fecha": "2026-03-31", "Cat": "A", "Monto": 10.0},  # fecha anterior → ignorada
+        ]
+        comp = composition(rows, "Fecha", "Cat", "Monto")
+        assert comp["fecha"] == "2026-04-30"
+        assert comp["total"] == 100.0
+        shares = {b["categoria"]: b["share_pct"] for b in comp["breakdown"]}
+        assert shares == {"A": 60.0, "B": 40.0}
+        # Ordenado desc por valor.
+        assert comp["breakdown"][0]["categoria"] == "A"
+
+    def test_long_aggregates_same_category(self) -> None:
+        rows = [
+            {"Fecha": "2026-04-30", "Cat": "A", "Monto": 30.0},
+            {"Fecha": "2026-04-30", "Cat": "A", "Monto": 30.0},
+            {"Fecha": "2026-04-30", "Cat": "B", "Monto": 40.0},
+        ]
+        comp = composition(rows, "Fecha", "Cat", "Monto")
+        shares = {b["categoria"]: b["share_pct"] for b in comp["breakdown"]}
+        assert shares["A"] == 60.0 and shares["B"] == 40.0
+
+    def test_long_empty_returns_none(self) -> None:
+        assert composition([], "Fecha", "Cat", "Monto") is None
+
+    def test_long_share_none_when_total_zero(self) -> None:
+        rows = [
+            {"Fecha": "2026-04-30", "Cat": "A", "Monto": 5.0},
+            {"Fecha": "2026-04-30", "Cat": "B", "Monto": -5.0},
+        ]
+        comp = composition(rows, "Fecha", "Cat", "Monto")
+        assert comp["total"] == 0.0
+        assert all(b["share_pct"] is None for b in comp["breakdown"])
+
+    def test_wide_shares(self) -> None:
+        rows = [
+            {"fecha": "2026-04-30", "Nacional": 46.43, "Extranjero": 53.57},
+            {"fecha": "2026-03-31", "Nacional": 50.0, "Extranjero": 50.0},  # ignorada
+        ]
+        comp = composition_wide(rows, "fecha", ["Nacional", "Extranjero"])
+        assert comp["fecha"] == "2026-04-30"
+        shares = {b["categoria"]: b["share_pct"] for b in comp["breakdown"]}
+        assert shares["Extranjero"] == pytest.approx(53.57, abs=0.01)
+        assert shares["Nacional"] == pytest.approx(46.43, abs=0.01)
+
+    def test_wide_empty_returns_none(self) -> None:
+        assert composition_wide([], "fecha", ["A", "B"]) is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# compute_composition (tool, fetch mockeado)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestComputeComposition:
+    @pytest.mark.asyncio
+    async def test_wide_mode(self) -> None:
+        ds = _dataset("allocation_int_nac", columns=[
+            ColumnSpec("fecha", "TIMESTAMP"),
+            ColumnSpec("Nacional", "DOUBLE"),
+            ColumnSpec("Extranjero", "DOUBLE"),
+        ], unit="%")
+        rows = [{"fecha": "2026-04-30", "Nacional": 46.43, "Extranjero": 53.57}]
+        with patch(f"{_MODULE}.fetch_rows_from_dataset", new=_mock_fetch(ds, rows, date_col="fecha")):
+            state = AgentState()
+            result = await analytics.compute_composition(
+                state=state, dataset_id="allocation_int_nac",
+                value_columns=["Nacional", "Extranjero"],
+            )
+        assert result["mode"] == "wide"
+        shares = {b["categoria"]: b["share_pct"] for b in result["breakdown"]}
+        assert shares["Extranjero"] == pytest.approx(53.57, abs=0.01)
+        assert state.series_used  # se registró la serie
+
+    @pytest.mark.asyncio
+    async def test_long_mode(self) -> None:
+        ds = _dataset("allocation", columns=[
+            ColumnSpec("Fecha", "TIMESTAMP"),
+            ColumnSpec("Tipo_instrumento", "VARCHAR"),
+            ColumnSpec("Monto_USD", "DOUBLE"),
+        ], unit="MM USD")
+        rows = [
+            {"Fecha": "2026-04-30", "Tipo_instrumento": "BTP", "Monto_USD": 70.0},
+            {"Fecha": "2026-04-30", "Tipo_instrumento": "BTU", "Monto_USD": 30.0},
+        ]
+        with patch(f"{_MODULE}.fetch_rows_from_dataset", new=_mock_fetch(ds, rows)):
+            state = AgentState()
+            result = await analytics.compute_composition(
+                state=state, dataset_id="allocation",
+                category_column="Tipo_instrumento", value_column="Monto_USD",
+            )
+        assert result["mode"] == "long"
+        shares = {b["categoria"]: b["share_pct"] for b in result["breakdown"]}
+        assert shares == {"BTP": 70.0, "BTU": 30.0}
+
+    @pytest.mark.asyncio
+    async def test_requires_a_mode(self) -> None:
+        state = AgentState()
+        result = await analytics.compute_composition(state=state, dataset_id="x")
+        assert "error" in result
+        assert "modo" in result["error"].lower()
+
+
+@pytest.mark.unit
+class TestComputeAggregate:
+    @pytest.mark.asyncio
+    async def test_grouped_total(self) -> None:
+        ds = _dataset("dv01_spc_afp", columns=[
+            ColumnSpec("fecha", "TIMESTAMP"),
+            ColumnSpec("moneda", "VARCHAR"),
+            ColumnSpec("dv01", "DOUBLE"),
+        ], unit="MM USD por bp")
+        rows = [
+            {"fecha": "2026-05-20", "moneda": "US$", "dv01": 96.0},
+            {"fecha": "2026-05-20", "moneda": "CLP", "dv01": 9.0},
+        ]
+        with patch(f"{_MODULE}.fetch_rows_from_dataset", new=_mock_fetch(ds, rows, date_col="fecha")):
+            state = AgentState()
+            r = await analytics.compute_aggregate(
+                state=state, dataset_id="dv01_spc_afp", value_column="dv01", group_by="moneda",
+            )
+        assert r["mode"] == "grouped"
+        assert r["total"] == pytest.approx(105.0)
+        grupos = {g["grupo"]: g["valor"] for g in r["por_grupo"]}
+        assert grupos == {"US$": 96.0, "CLP": 9.0}
+
+    @pytest.mark.asyncio
+    async def test_net_of_columns_with_sign(self) -> None:
+        ds = _dataset("flujo_cambiario", columns=[
+            ColumnSpec("Fecha", "VARCHAR"),
+            ColumnSpec("Grupo_Sector", "VARCHAR"),
+            ColumnSpec("Spot", "DOUBLE"),
+            ColumnSpec("Forward", "DOUBLE"),
+        ], unit="MM USD")
+        rows = [{"Fecha": "2026-05-19", "Grupo_Sector": "AFP", "Spot": 0.0, "Forward": -495.0}]
+        with patch(f"{_MODULE}.fetch_rows_from_dataset", new=_mock_fetch(ds, rows)):
+            state = AgentState()
+            r = await analytics.compute_aggregate(
+                state=state, dataset_id="flujo_cambiario",
+                value_columns=["Spot", "Forward"], filters={"Grupo_Sector": "AFP"},
+            )
+        assert r["mode"] == "net"
+        assert r["neto"] == pytest.approx(-495.0)  # neto con signo, no %
+        comps = {c["columna"]: c["valor"] for c in r["componentes"]}
+        assert comps == {"Spot": 0.0, "Forward": -495.0}
+
+    @pytest.mark.asyncio
+    async def test_plain_total(self) -> None:
+        ds = _dataset("x", columns=[
+            ColumnSpec("Fecha", "TIMESTAMP"),
+            ColumnSpec("Stock", "DOUBLE"),
+        ], unit="MM CLP")
+        rows = [
+            {"Fecha": "2026-05-19", "Stock": 100.0},
+            {"Fecha": "2026-05-19", "Stock": 50.0},
+        ]
+        with patch(f"{_MODULE}.fetch_rows_from_dataset", new=_mock_fetch(ds, rows)):
+            state = AgentState()
+            r = await analytics.compute_aggregate(
+                state=state, dataset_id="x", value_column="Stock",
+            )
+        assert r["mode"] == "total"
+        assert r["total"] == pytest.approx(150.0)
+
+    @pytest.mark.asyncio
+    async def test_requires_a_mode(self) -> None:
+        state = AgentState()
+        r = await analytics.compute_aggregate(state=state, dataset_id="x")
+        assert "error" in r

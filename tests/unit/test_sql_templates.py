@@ -34,6 +34,16 @@ class TestSchemaSql:
 
 
 @pytest.mark.unit
+class TestListDocumentsSql:
+    def test_uses_any_text_array(self) -> None:
+        # Comparar con = ANY(%s::text[]) evita el bug ``text = text[]`` cuando
+        # llega más de un doc_type (el caller pasa una lista).
+        s = sql.list_documents_sql("documents")
+        assert "= ANY(%s::text[])" in s
+        assert "%s::text IS NULL OR doc_type_category = %s" not in s
+
+
+@pytest.mark.unit
 class TestIndexStatements:
     def test_count(self) -> None:
         # 18 índices según diseño:

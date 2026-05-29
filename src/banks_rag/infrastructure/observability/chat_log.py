@@ -85,6 +85,7 @@ def build_turn_record(
         "total_tokens": result.total_tokens,
         "cited_refs": result.cited_refs,
         "invalid_refs": result.invalid_refs,
+        "ungrounded_numbers": getattr(result, "ungrounded_numbers", []),
         "tool_trace": result.tool_trace,
         "chunks_seen": result.chunks_seen,
         "series_used": result.series_used,

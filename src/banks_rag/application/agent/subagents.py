@@ -24,10 +24,14 @@ import banks_rag.application.agent.tools  # noqa: F401
 from banks_rag.application.agent.tools.registry import TOOL_SCHEMAS
 
 from .prompts import (
+    AFP_ANALYST_PROMPT,
     DOCUMENT_ANALYST_PROMPT,
-    MARKET_ANALYST_PROMPT,
+    FFMM_ANALYST_PROMPT,
+    FX_ANALYST_PROMPT,
+    LIQUIDEZ_ANALYST_PROMPT,
+    NR_ANALYST_PROMPT,
     POLICY_ANALYST_PROMPT,
-    QUANT_ANALYST_PROMPT,
+    RENTA_FIJA_ANALYST_PROMPT,
 )
 
 
@@ -36,7 +40,9 @@ class SubAgentSpec:
     """Especificación de un sub-agente especialista.
 
     Campos:
-        key: identificador corto, usado como etiqueta en la traza.
+        key: identificador corto, usado como etiqueta en la traza. Debe coincidir
+            con el valor que ``domain_knowledge.financial_aliases.specialist_for``
+            retorna para enrutar por vocabulario.
         display_name: nombre legible para la respuesta y los logs.
         delegate_tool: nombre de la tool ``delegate_to_*`` que lo invoca.
         delegate_description: descripción que ve el orquestador para decidir
@@ -44,6 +50,9 @@ class SubAgentSpec:
         system_prompt: prompt de sistema del sub-agente.
         tool_names: tools de dominio que el sub-agente puede usar (en el orden
             en que se le presentan).
+        default_segments: segmentos del parquet_catalog que cubre el especialista
+            (documentación + scoping de discover_query). Vacío si es transversal
+            (NR) o documental.
     """
 
     key: str
@@ -52,21 +61,117 @@ class SubAgentSpec:
     delegate_description: str
     system_prompt: str
     tool_names: tuple[str, ...]
+    default_segments: tuple[str, ...] = ()
 
 
 # Las series de tiempo se consultan exclusivamente vía el catálogo de parquets
 # (discover_query / execute_query / analytics). La extracción SQL en vivo del DW
 # fue eliminada del proyecto.
+#
+# Roster híbrido (Fase 1): especialistas POR MERCADO sobre el catálogo de
+# parquets + dos especialistas del corpus documental. Las `key` coinciden con
+# los valores de financial_aliases.specialist_for para enrutar por vocabulario.
+_QUANT_TOOLS = (
+    "discover_query",
+    "execute_query",
+    "compute_variation",
+    "compute_spread",
+    "compute_composition",
+    "compute_aggregate",
+    "get_series_stats",
+    "detect_anomaly",
+)
+
 SUBAGENTS: dict[str, SubAgentSpec] = {
+    # ── Especialistas de mercado (catálogo de parquets) ──────────────────────
+    "fx": SubAgentSpec(
+        key="fx",
+        display_name="Analista de Mercado Cambiario (FX)",
+        delegate_tool="delegate_to_fx_analyst",
+        delegate_description=(
+            "Delega al Analista de Mercado Cambiario (FX): tipo de cambio "
+            "spot/forward, flujos cambiarios por sector, puntos forward, "
+            "posiciones en derivados y commodities (cobre, petróleo, DXY). "
+            "Úsalo para el dólar, el mercado cambiario y los commodities."
+        ),
+        system_prompt=FX_ANALYST_PROMPT,
+        tool_names=(*_QUANT_TOOLS, "get_market_snapshot"),
+        default_segments=("mercado_cambiario", "posiciones_cambiarias"),
+    ),
+    "no_residentes": SubAgentSpec(
+        key="no_residentes",
+        display_name="Analista de No Residentes",
+        delegate_tool="delegate_to_nr_analyst",
+        delegate_description=(
+            "Delega al Analista de No Residentes (NR): posición y flujos de "
+            "inversionistas no residentes en instrumentos chilenos (renta fija "
+            "local, spot, forward, derivados). Úsalo para preguntas sobre NR."
+        ),
+        system_prompt=NR_ANALYST_PROMPT,
+        tool_names=_QUANT_TOOLS,
+    ),
+    "afp": SubAgentSpec(
+        key="afp",
+        display_name="Analista de Fondos de Pensiones (AFP)",
+        delegate_tool="delegate_to_afp_analyst",
+        delegate_description=(
+            "Delega al Analista de Fondos de Pensiones (AFP): cartera/allocation "
+            "nacional vs. internacional, stock por fondo, DV01, MTM, atribución "
+            "y posición cambiaria de las AFP. Úsalo para fondos de pensiones."
+        ),
+        system_prompt=AFP_ANALYST_PROMPT,
+        tool_names=_QUANT_TOOLS,
+        default_segments=("fondos_pension",),
+    ),
+    "fondos_mutuos": SubAgentSpec(
+        key="fondos_mutuos",
+        display_name="Analista de Fondos Mutuos (FFMM)",
+        delegate_tool="delegate_to_ffmm_analyst",
+        delegate_description=(
+            "Delega al Analista de Fondos Mutuos (FFMM): flujos, stock, "
+            "duración, DV01 y composición de los fondos mutuos. Úsalo para "
+            "preguntas sobre fondos mutuos."
+        ),
+        system_prompt=FFMM_ANALYST_PROMPT,
+        tool_names=_QUANT_TOOLS,
+        default_segments=("fondos_pension",),
+    ),
+    "renta_fija": SubAgentSpec(
+        key="renta_fija",
+        display_name="Analista de Renta Fija",
+        delegate_tool="delegate_to_renta_fija_analyst",
+        delegate_description=(
+            "Delega al Analista de Renta Fija: curvas soberanas (BTP/BTU/SPC/"
+            "OIS), break-evens, spreads, montos y volatilidad, PDBC e "
+            "instrumentos BCCh, spreads de crédito. Úsalo para bonos y tasas."
+        ),
+        system_prompt=RENTA_FIJA_ANALYST_PROMPT,
+        tool_names=_QUANT_TOOLS,
+        default_segments=("renta_fija_chile", "instrumentos_bcch", "spreads_credito"),
+    ),
+    "liquidez": SubAgentSpec(
+        key="liquidez",
+        display_name="Analista de Liquidez y Balance",
+        delegate_tool="delegate_to_liquidez_analyst",
+        delegate_description=(
+            "Delega al Analista de Liquidez y Balance: LCR, NSFR, caja, reserva "
+            "técnica, operaciones de liquidez, TIB y balance bancario "
+            "(activos/pasivos por banco). Úsalo para liquidez y balance bancario."
+        ),
+        system_prompt=LIQUIDEZ_ANALYST_PROMPT,
+        tool_names=_QUANT_TOOLS,
+        default_segments=("liquidez_bancaria", "balance_bancario"),
+    ),
+    # ── Especialistas del corpus documental ──────────────────────────────────
     "document": SubAgentSpec(
         key="document",
         display_name="Analista de Documentos",
         delegate_tool="delegate_to_document_analyst",
         delegate_description=(
             "Delega al Analista de Documentos: busca y sintetiza evidencia del "
-            "corpus del BCCh (Comunicados, Minutas, Fed Statements, research "
-            "JPMorgan, Monitor PM). Úsalo para preguntas sobre qué dicen los "
-            "documentos."
+            "corpus del BCCh (Comunicados, Minutas, IPoM, IEF, Fed Statements, "
+            "research JPMorgan, Monitor PM). Úsalo para preguntas sobre qué "
+            "dicen los documentos."
         ),
         system_prompt=DOCUMENT_ANALYST_PROMPT,
         tool_names=(
@@ -75,25 +180,6 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
             "list_documents",
             "get_document_chunks",
             "compare_meetings",
-        ),
-    ),
-    "quant": SubAgentSpec(
-        key="quant",
-        display_name="Analista Cuantitativo",
-        delegate_tool="delegate_to_quant_analyst",
-        delegate_description=(
-            "Delega al Analista Cuantitativo: consulta series del catálogo SQL "
-            "(tipo de cambio, tasas, bonos, liquidez, commodities) y las "
-            "interpreta — variaciones, spreads, estadística descriptiva. Úsalo "
-            "para preguntas sobre cifras y su lectura."
-        ),
-        system_prompt=QUANT_ANALYST_PROMPT,
-        tool_names=(
-            "discover_query",
-            "execute_query",
-            "compute_variation",
-            "compute_spread",
-            "get_series_stats",
         ),
     ),
     "policy": SubAgentSpec(
@@ -114,28 +200,6 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
             "get_recent_policy_decisions",
             "discover_query",
             "execute_query",
-        ),
-    ),
-    "market": SubAgentSpec(
-        key="market",
-        display_name="Analista de Mercados",
-        delegate_tool="delegate_to_market_analyst",
-        delegate_description=(
-            "Delega al Analista de Mercados: mercado cambiario, renta fija, "
-            "liquidez bancaria, commodities y mercados internacionales; detecta "
-            "anomalías y arma el panorama de mercado. Úsalo para preguntas "
-            "sobre el estado y los movimientos del mercado."
-        ),
-        system_prompt=MARKET_ANALYST_PROMPT,
-        tool_names=(
-            "get_market_snapshot",
-            "discover_query",
-            "execute_query",
-            "compute_variation",
-            "compute_spread",
-            "get_series_stats",
-            "detect_anomaly",
-            "search_documents",
         ),
     ),
 }

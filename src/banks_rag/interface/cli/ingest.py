@@ -225,9 +225,11 @@ def cmd_vectorize(
 ) -> None:
     """Vectoriza chunks enriquecidos con el embedder configurado.
 
-    Modelo según ``RAG_EMBEDDING_MODEL`` (default ``Qwen/Qwen3-Embedding``);
-    fallback automático a ``intfloat/multilingual-e5-small``. Modelos
-    pre-descargados se buscan en ``models/<owner>--<name>/`` (offline).
+    Modelo según ``RAG_EMBEDDING_MODEL`` (default ``Qwen3-VL-Embedding-8B``,
+    multimodal 4096-dim); fallback automático a ``intfloat/multilingual-e5-small``.
+    Modelos pre-descargados se buscan en ``models/<owner>--<name>/`` (offline).
+    Importante: el embedder de vectorización debe ser EL MISMO que se usa en
+    query-time (search/chat); cambiarlo exige re-vectorizar todo el corpus.
     """
     enriched_json = input_dir / "chunks_enriched.json"
     if not enriched_json.exists():

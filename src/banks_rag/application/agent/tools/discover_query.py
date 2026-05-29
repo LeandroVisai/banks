@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from banks_rag.domain_knowledge.financial_aliases import resolve_segment
+from banks_rag.infrastructure.sql.catalog_index import catalog_semantic_scores
 from banks_rag.infrastructure.sql.parquet_catalog_loader import (
     load_parquet_catalog,
     search_datasets,
@@ -83,20 +85,32 @@ async def discover_query(
     segment: str | None = None,
 ) -> dict[str, Any]:
     entries = load_parquet_catalog()
+    available_segments = {e.segment for e in entries}
 
+    segment_note: str | None = None
     if segment:
-        in_segment = [e for e in entries if e.segment == segment]
-        if not in_segment:
-            return {
-                "error": f"Segmento {segment!r} sin datasets en el catálogo.",
-                "segments_disponibles": sorted({e.segment for e in entries}),
-            }
-        entries = in_segment
+        # Resolver alias del LLM ("AFP" → "fondos_pension"); si no mapea, NO
+        # fallar: buscar en todo el catálogo y avisar (evita el error duro de
+        # los logs que dejaba al modelo sin datos → alucinación).
+        resolved = resolve_segment(segment, available_segments)
+        if resolved is not None:
+            entries = [e for e in entries if e.segment == resolved]
+            if resolved != segment:
+                segment_note = f"Segmento {segment!r} interpretado como {resolved!r}."
+        else:
+            segment_note = (
+                f"Segmento {segment!r} no reconocido; se buscó en todo el "
+                "catálogo. Segmentos válidos: "
+                f"{', '.join(sorted(available_segments))}."
+            )
 
     top_k = max(1, min(int(top_k), 20))
-    top = search_datasets(entries, query, top_k=top_k)
+    # Scoring semántico best-effort (embeddings del catálogo); {} si la feature
+    # está off o el modelo no está, en cuyo caso el ranking es léxico+alias.
+    semantic = catalog_semantic_scores(query, entries)
+    top = search_datasets(entries, query, top_k=top_k, extra_scores=semantic)
 
-    return {
+    result: dict[str, Any] = {
         "results": [e.to_dict() for e in top],
         "n_results": len(top),
         "hint": (
@@ -109,3 +123,13 @@ async def discover_query(
             "detect_anomaly con (dataset_id, column)."
         ),
     }
+    if segment_note:
+        result["segment_note"] = segment_note
+    if not top:
+        result["message"] = (
+            "Ningún dataset coincide. Reformula con términos del dominio "
+            "(p.ej. 'AFP', 'no residentes', 'curva BTP') o quita el filtro de "
+            "segmento. Si el dato no existe en el catálogo, NO lo inventes: "
+            "indica que no está disponible."
+        )
+    return result
