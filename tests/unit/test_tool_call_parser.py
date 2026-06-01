@@ -75,3 +75,66 @@ class TestParseToolCalls:
         calls, _ = parse_tool_calls(text)
         assert len(calls) == 2
         assert calls[0].id != calls[1].id
+
+
+@pytest.mark.unit
+class TestParseXmlToolCalls:
+    """Formato XML/Hermes que emite Qwen3 con la plantilla nativa del GGUF."""
+
+    def test_xml_single_param(self) -> None:
+        text = (
+            "Voy a buscar el dataset.\n"
+            "<tool_call>\n"
+            "<function=discover_query>\n"
+            "<parameter=query>\nspread BTP vs SPC a 10 años\n</parameter>\n"
+            "</function>\n"
+            "</tool_call>"
+        )
+        calls, cleaned = parse_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0].name == "discover_query"
+        assert calls[0].arguments == {"query": "spread BTP vs SPC a 10 años"}
+        assert cleaned == "Voy a buscar el dataset."
+
+    def test_xml_multiple_params(self) -> None:
+        text = (
+            "<tool_call><function=discover_query>"
+            "<parameter=query>LCR</parameter>"
+            "<parameter=segment>liquidez_bancaria</parameter>"
+            "</function></tool_call>"
+        )
+        calls, _ = parse_tool_calls(text)
+        assert calls[0].arguments == {"query": "LCR", "segment": "liquidez_bancaria"}
+
+    def test_xml_numeric_param_coerced(self) -> None:
+        # Un valor JSON-parseable se convierte a su tipo nativo (int, no str).
+        text = (
+            "<tool_call><function=execute_query>"
+            "<parameter=dataset_id>clp_monto</parameter>"
+            "<parameter=limit>5</parameter>"
+            "</function></tool_call>"
+        )
+        calls, _ = parse_tool_calls(text)
+        assert calls[0].arguments == {"dataset_id": "clp_monto", "limit": 5}
+        assert isinstance(calls[0].arguments["limit"], int)
+
+    def test_xml_truncated_no_closing_tags(self) -> None:
+        # Generación cortada por max_tokens: faltan </parameter></function></tool_call>.
+        text = "<tool_call>\n<function=discover_query>\n<parameter=query>\nLCR sistema bancario"
+        calls, _ = parse_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0].name == "discover_query"
+        assert calls[0].arguments == {"query": "LCR sistema bancario"}
+
+    def test_xml_no_params(self) -> None:
+        text = "<tool_call><function=list_documents></function></tool_call>"
+        calls, _ = parse_tool_calls(text)
+        assert calls[0].name == "list_documents"
+        assert calls[0].arguments == {}
+
+    def test_json_format_takes_precedence(self) -> None:
+        # Si viene JSON válido, no se intenta el parser XML.
+        text = '<tool_call>{"name": "search_documents", "arguments": {"query": "x"}}</tool_call>'
+        calls, _ = parse_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0].name == "search_documents"
