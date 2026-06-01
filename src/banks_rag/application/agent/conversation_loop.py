@@ -103,7 +103,10 @@ DEFAULT_MAX_ITERATIONS = 6
 # 5 = hasta 4 rondas de tools (discover → execute → compute → buffer) + la última
 # iteración reservada a la consolidación (FINAL_SYNTHESIS_NUDGE, sin tools).
 DEFAULT_SUBAGENT_MAX_ITERATIONS = 5
-DEFAULT_MAX_TOOL_RESULT_TOKENS = 1500
+# 3000 (antes 1500): con k=8 fragmentos de hasta ~1500 chars c/u, un resultado
+# de search_documents no debe perder la mitad de los chunks al recortarse. Da
+# al especialista documental el contexto completo para un análisis profundo.
+DEFAULT_MAX_TOOL_RESULT_TOKENS = 3000
 # Las "tool results" del orquestador son análisis completos de sus especialistas:
 # merecen más presupuesto que un resultado de tool crudo.
 DEFAULT_MAX_DELEGATE_RESULT_TOKENS = 4000

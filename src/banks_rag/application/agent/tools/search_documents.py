@@ -18,6 +18,7 @@ from banks_rag.application.retrieval import hybrid_search
 from banks_rag.domain.retrieval import SearchFilters
 from banks_rag.infrastructure.embeddings import build_default_embedder
 from banks_rag.infrastructure.persistence import PostgresRepo
+from banks_rag.infrastructure.reranker import build_default_reranker
 
 from ._doc_types import DOC_TYPE_VALUES, normalize_doc_types
 from .registry import register
@@ -54,10 +55,10 @@ SCHEMA = {
                 },
                 "k": {
                     "type": "integer",
-                    "description": "Cuántos fragmentos retornar (1–10). Default: 5.",
-                    "default": 5,
+                    "description": "Cuántos fragmentos retornar (1–12). Default: 8.",
+                    "default": 8,
                     "minimum": 1,
-                    "maximum": 10,
+                    "maximum": 12,
                 },
                 "doc_type": {
                     "type": "array",
@@ -138,10 +139,17 @@ def _build_filters(
     return filters
 
 
+# Tope de texto por fragmento entregado al especialista. Subido de 600 a 1500
+# para no cortar los chunks densos (decisión/riesgos de Comunicados llegan a
+# ~1500 chars); el chunk casi siempre cabe completo y el análisis no pierde
+# contexto. El recorte global por presupuesto sigue en _truncate_tool_result.
+_MAX_CHUNK_CHARS = 1500
+
+
 def _format_chunk(chunk: dict, ref: int) -> dict:
     text = (chunk.get("text") or "").strip()
-    if len(text) > 600:
-        text = text[:597] + "..."
+    if len(text) > _MAX_CHUNK_CHARS:
+        text = text[: _MAX_CHUNK_CHARS - 3] + "..."
     return {
         "ref": ref,
         "text": text,
@@ -159,7 +167,7 @@ def _format_chunk(chunk: dict, ref: int) -> dict:
 async def search_documents(
     state: "AgentState",
     query: str | None = None,
-    k: int = 5,
+    k: int = 8,
     doc_type: str | list[str] | None = None,
     year: int | None = None,
     date_from: str | None = None,
@@ -169,13 +177,20 @@ async def search_documents(
 
     ``query`` es opcional: sin él, ``hybrid_search`` cae a su ranking por
     importancia respetando los filtros (modo browse). Robusto ante modelos que
-    invocan la tool solo con filtros (doc_type/año) y omiten el texto."""
-    k = max(1, min(int(k), 10))
+    invocan la tool solo con filtros (doc_type/año) y omiten el texto.
+
+    Usa el cross-encoder reranker (si está habilitado) para que el top-k sean
+    los fragmentos MÁS relevantes a la query, no solo los de mayor importancia."""
+    k = max(1, min(int(k), 12))
     query = (query or "").strip()
     filters = _build_filters(doc_type, year, date_from, date_to)
 
     repo = PostgresRepo(prefix=os.getenv("RAG_TABLE_PREFIX", ""))
     embedder = build_default_embedder()
+    # Reranker best-effort: si está deshabilitado (BANKS_RERANK_ENABLED=false) o
+    # no carga, build_default_reranker devuelve None / hybrid_search lo ignora y
+    # cae al orden por importancia. Sin query no aporta (no hay con qué puntuar).
+    reranker = build_default_reranker() if query else None
 
     # hybrid_search es sync (psycopg2) — to_thread para no bloquear el event loop.
     search_result = await asyncio.to_thread(
@@ -186,6 +201,7 @@ async def search_documents(
         extra_filters=filters,
         k=k,
         use_mmr=True,
+        reranker=reranker,
     )
 
     if not search_result.hits:

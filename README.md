@@ -20,7 +20,7 @@ Documentos (PDFs + Excel Monitor PM)
                    │
           ┌────────▼────────┐
           │ hybrid_search   │ vector + BM25 → RRF → MMR → reranker
-          └────────┬────────┘  (bge-reranker-v2-m3, opcional)
+          └────────┬────────┘  (bge-reranker-v2-m3, activo por defecto)
                    │
       ┌────────────────────────────────────────────────────────┐
       │ Router determinista (router-v1)                        │
@@ -178,7 +178,7 @@ Parquets en `data_pipeline/parquet/`. Esquemas completos (id, columnas, tipos, e
 ## Tests
 
 ```bash
-PYTHONPATH=src pytest tests/unit/ -q    # 698 tests, <2s, sin BD ni modelos
+PYTHONPATH=src pytest tests/unit/ -q    # 722 tests, <2s, sin BD ni modelos
 PYTHONPATH=src pytest tests/ -q         # + integración (requiere PostgreSQL)
 ```
 
@@ -216,7 +216,7 @@ banks/
 │   ├── infrastructure/  # adaptadores (embeddings, llm, postgres, reranker, observability)
 │   └── interface/       # FastAPI + CLI
 ├── tests/
-│   ├── unit/            # 698 tests, sin BD ni modelos reales
+│   ├── unit/            # 722 tests, sin BD ni modelos reales
 │   └── integration/     # requieren PostgreSQL + pgvector
 ├── scripts/
 │   └── verify_subagents.py   # verificación e2e de los 8 sub-agentes

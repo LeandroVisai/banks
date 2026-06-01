@@ -18,6 +18,9 @@ from banks_rag.application.retrieval.query_router import RouteDecision, route_qu
 from banks_rag.infrastructure.reranker.cross_encoder_reranker import (
     CrossEncoderReranker,
     _extract_text,
+    build_default_reranker,
+    reranking_enabled,
+    reset_default_reranker,
 )
 
 
@@ -111,6 +114,39 @@ class TestCrossEncoderReranker:
     def test_extract_text_without_section(self) -> None:
         c = {"text": "hola"}
         assert _extract_text(c) == "hola"
+
+
+# ── Tests build_default_reranker (singleton + env vars) ───────────────────────
+
+@pytest.mark.unit
+class TestBuildDefaultReranker:
+    def setup_method(self) -> None:
+        reset_default_reranker()
+
+    def teardown_method(self) -> None:
+        reset_default_reranker()
+
+    def test_enabled_by_default(self, monkeypatch) -> None:
+        monkeypatch.delenv("BANKS_RERANK_ENABLED", raising=False)
+        assert reranking_enabled() is True
+        r = build_default_reranker()
+        assert isinstance(r, CrossEncoderReranker)
+        # No carga el modelo al construir (lazy en el primer rerank).
+        assert r.loaded is False
+
+    def test_disabled_returns_none(self, monkeypatch) -> None:
+        monkeypatch.setenv("BANKS_RERANK_ENABLED", "false")
+        assert reranking_enabled() is False
+        assert build_default_reranker() is None
+
+    def test_singleton_returns_same_instance(self, monkeypatch) -> None:
+        monkeypatch.delenv("BANKS_RERANK_ENABLED", raising=False)
+        assert build_default_reranker() is build_default_reranker()
+
+    def test_respects_custom_model_env(self, monkeypatch) -> None:
+        monkeypatch.delenv("BANKS_RERANK_ENABLED", raising=False)
+        monkeypatch.setenv("RAG_RERANK_MODEL", "custom/model")
+        assert build_default_reranker().name == "custom/model"
 
 
 # ── Tests QueryRouter ─────────────────────────────────────────────────────────

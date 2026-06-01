@@ -19,6 +19,8 @@ Protocol ``Reranker``:
 from __future__ import annotations
 
 import logging
+import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -174,3 +176,50 @@ def _extract_text(chunk: dict) -> str:
     if section:
         return f"[{section}] {text}"
     return text
+
+
+# ── Singleton compartido del proceso (análogo a build_default_embedder) ──────
+_DEFAULT_RERANKER: CrossEncoderReranker | None = None
+_DEFAULT_RERANKER_LOCK = threading.Lock()
+
+
+def reranking_enabled() -> bool:
+    """``True`` salvo que ``BANKS_RERANK_ENABLED`` se ponga en false/0/no/off.
+
+    Permite apagar el cross-encoder sin tocar código (p. ej. en una caja con
+    poca VRAM o para aislar latencia en debugging)."""
+    return os.getenv("BANKS_RERANK_ENABLED", "true").strip().lower() not in (
+        "false", "0", "no", "off",
+    )
+
+
+def build_default_reranker() -> CrossEncoderReranker | None:
+    """Factory memoizada del reranker compartido. ``None`` si está deshabilitado.
+
+    Respeta:
+      - ``BANKS_RERANK_ENABLED`` (default true) — apaga el reranker si es false.
+      - ``RAG_RERANK_MODEL`` (default ``BAAI/bge-reranker-v2-m3``) — resuelve a
+        ``models/<owner>--<name>/`` para deploy offline en H100.
+
+    No carga el modelo aquí (la carga es lazy en el primer ``rerank``). Es
+    independiente de la dimensión de los embeddings del corpus: el cross-encoder
+    puntúa pares ``(query, texto)`` crudos, así que sirve igual con el corpus
+    4096-dim de Qwen3-VL que con cualquier otro embedder."""
+    global _DEFAULT_RERANKER
+    if not reranking_enabled():
+        return None
+    if _DEFAULT_RERANKER is not None:
+        return _DEFAULT_RERANKER
+    with _DEFAULT_RERANKER_LOCK:
+        if _DEFAULT_RERANKER is not None:
+            return _DEFAULT_RERANKER
+        model_name = os.getenv("RAG_RERANK_MODEL", _DEFAULT_MODEL)
+        _DEFAULT_RERANKER = CrossEncoderReranker(model_name)
+        return _DEFAULT_RERANKER
+
+
+def reset_default_reranker() -> None:
+    """Limpia el singleton del reranker. Pensado para tests (re-leer env vars)."""
+    global _DEFAULT_RERANKER
+    with _DEFAULT_RERANKER_LOCK:
+        _DEFAULT_RERANKER = None

@@ -91,7 +91,7 @@ async def _run(only: str | None, max_iters: int) -> None:
         try:
             sub = await run_subagent(
                 spec, task, llm=eng, state=state,
-                max_iterations=max_iters, max_tool_result_tokens=900,
+                max_iterations=max_iters, max_tool_result_tokens=3000,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  EXCEPCIÓN: {type(exc).__name__}: {exc}", flush=True)
