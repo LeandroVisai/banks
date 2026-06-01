@@ -12,8 +12,10 @@ from .conversation_loop import (
 from .prompts import (
     MAX_ITERATIONS_FALLBACK_MESSAGE,
     PROMPT_VERSION,
+    REPORT_PROMPT,
     SYNTHESIS_PROMPT,
 )
+from .report import run_report
 from .router import select_specialists
 from .subagents import SUBAGENTS, SubAgentSpec
 
@@ -24,11 +26,13 @@ __all__ = [
     "DEFAULT_SUBAGENT_MAX_ITERATIONS",
     "MAX_ITERATIONS_FALLBACK_MESSAGE",
     "PROMPT_VERSION",
+    "REPORT_PROMPT",
     "SUBAGENTS",
     "SYNTHESIS_PROMPT",
     "SubAgentResult",
     "SubAgentSpec",
     "run_agent",
+    "run_report",
     "run_subagent",
     "select_specialists",
     "verify_citations",

@@ -39,6 +39,18 @@ class ChatRequest(BaseModel):
     max_tokens: int | None = Field(default=None, ge=1, le=8192)
 
 
+class ReportRequest(BaseModel):
+    """Solicitud de informe de mercado multi-sección (modo run_report)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    topic: str = Field(..., min_length=1, max_length=2000)
+    # 'auto' rutea por el tema; 'full' corre los 8 especialistas (informe integral).
+    scope: str = Field(default="auto", pattern="^(auto|full)$")
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: int | None = Field(default=None, ge=1, le=8192)
+
+
 class ChunkSeen(BaseModel):
     ref: int
     filename: str | None

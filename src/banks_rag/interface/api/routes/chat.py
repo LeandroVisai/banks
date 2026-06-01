@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from banks_rag.application.agent import (
     PROMPT_VERSION,
     run_agent,
+    run_report,
 )
 from banks_rag.config import get_settings
 from banks_rag.infrastructure.observability import log_chat_error, log_chat_turn
@@ -17,6 +18,7 @@ from banks_rag.interface.api.schemas import (
     ChatResponse,
     ChunkSeen,
     HistoricalSeriesRef,
+    ReportRequest,
     ToolTraceEntry,
 )
 
@@ -74,6 +76,11 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         model=model, prompt_version=PROMPT_VERSION, request_id=request_id,
     )
 
+    return _to_response(result, model)
+
+
+def _to_response(result, model: str) -> ChatResponse:
+    """Convierte un ``AgentResult`` en ``ChatResponse`` (compartido chat/report)."""
     return ChatResponse(
         response=result.response,
         iterations=result.iterations,
@@ -89,3 +96,43 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         model=model,
         prompt_version=PROMPT_VERSION,
     )
+
+
+@router.post("/v1/report", response_model=ChatResponse, tags=["chat"])
+async def report(request: Request, body: ReportRequest) -> ChatResponse:
+    """Genera un informe de mercado multi-sección (modo analista senior).
+
+    ``scope='auto'`` rutea por el tema; ``'full'`` corre los 8 especialistas.
+    """
+    settings = get_settings()
+    deps = getattr(request.app.state, "deps", None)
+    if deps is None or deps.llm is None:
+        raise HTTPException(status_code=503, detail="LLM no inicializado")
+    if not getattr(deps.llm, "loaded", False):
+        raise HTTPException(status_code=503, detail="LLM cargando — reintenta en breve")
+
+    model = getattr(deps.llm, "name", settings.llm_family)
+    request_id = getattr(request.state, "request_id", "")
+    try:
+        result = await run_report(
+            body.topic,
+            llm=deps.llm,
+            scope=body.scope,
+            temperature=body.temperature if body.temperature is not None else settings.llm_temperature,
+            max_tokens=body.max_tokens,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.exception("run_report falló en /v1/report")
+        log_chat_error(
+            body.topic, [], str(exc),
+            model=model, prompt_version=PROMPT_VERSION, request_id=request_id,
+        )
+        raise HTTPException(
+            status_code=502, detail=f"El informe no pudo completarse: {exc}",
+        ) from exc
+
+    log_chat_turn(
+        body.topic, [], result,
+        model=model, prompt_version=PROMPT_VERSION, request_id=request_id,
+    )
+    return _to_response(result, model)
