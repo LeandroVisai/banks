@@ -34,6 +34,7 @@ if _SRC.is_dir() and str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from banks_rag.application.agent.conversation_loop import run_subagent  # noqa: E402
+from banks_rag.application.agent.report import run_report  # noqa: E402
 from banks_rag.application.agent.subagents import SUBAGENTS  # noqa: E402
 from banks_rag.config import get_settings  # noqa: E402
 from banks_rag.domain.agent import AgentState  # noqa: E402
@@ -52,31 +53,56 @@ TASKS: dict[str, str] = {
 }
 
 
-async def _run(only: str | None, max_iters: int) -> None:
+async def _load_engine():
+    """Construye, carga y precalienta el engine (o None si la config es mock)."""
     settings = get_settings()
     print(
         f"LLM: {settings.llm_family} {settings.llm_model_path} "
-        f"(n_ctx={settings.llm_n_ctx}, gpu_layers={settings.llm_n_gpu_layers})",
+        f"(n_ctx={settings.llm_n_ctx}, gpu_layers={settings.llm_n_gpu_layers}, "
+        f"vision={'sí' if settings.llm_mmproj_path else 'no'})",
         flush=True,
     )
     if settings.llm_family in ("mock", ""):
         print("⚠️  BANKS_LLM_FAMILY es 'mock'/vacío: configura qwen + BANKS_LLM_MODEL_PATH en .env.")
-        return
-
+        return None
     t0 = time.time()
     eng = LlamaCppEngine.from_settings(settings)
     print("cargando modelo...", flush=True)
     await eng.load()
     print(f"modelo listo en {time.time() - t0:.0f}s", flush=True)
-
-    # Pre-carga del embedder (document/policy lo usan; evita el timeout de tool
-    # por la carga en frío en la primera búsqueda).
     try:
         from banks_rag.infrastructure.embeddings import build_default_embedder
         await asyncio.to_thread(build_default_embedder().encode_text, ["warmup"])
         print("embedder pre-cargado\n", flush=True)
     except Exception as exc:  # noqa: BLE001
         print(f"warmup embedder falló (document/policy puede tardar): {exc}\n", flush=True)
+    return eng
+
+
+async def _run_report(topic: str, scope: str) -> None:
+    """Genera un informe completo (run_report) y reporta su forma."""
+    eng = await _load_engine()
+    if eng is None:
+        return
+    t1 = time.time()
+    res = await run_report(topic, llm=eng, scope=scope)
+    print("=" * 80)
+    print(f"INFORME (scope={scope}, {time.time() - t1:.0f}s, {res.iterations} iters):\n")
+    print(res.response)
+    print("\n" + "-" * 80)
+    print(f"gráficos generados: {len(res.charts)}", flush=True)
+    for c in res.charts:
+        print(f"  - gráfico {c['id']}: {c.get('title')} ({c.get('dataset_id')}, {c.get('chart_type')})")
+    print(f"series usadas: {len(res.series_used)} | chunks: {len(res.chunks_seen)} "
+          f"| citas: {res.cited_refs} | tool calls: {len(res.tool_trace)}")
+    if res.ungrounded_numbers:
+        print(f"⚠️ cifras sin fundar: {res.ungrounded_numbers}")
+
+
+async def _run(only: str | None, max_iters: int) -> None:
+    eng = await _load_engine()
+    if eng is None:
+        return
 
     keys = [only] if only else list(SUBAGENTS)
     summary: list[tuple] = []
@@ -122,11 +148,28 @@ async def _run(only: str | None, max_iters: int) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Verifica los 8 subagentes contra el LLM configurado.")
+    ap = argparse.ArgumentParser(
+        description="Verifica los subagentes (y opcionalmente un informe) contra el LLM del .env.",
+    )
     ap.add_argument("--subagent", default=None, choices=sorted(SUBAGENTS), help="Correr solo este.")
     ap.add_argument("--max-iters", type=int, default=5, help="Techo de iteraciones por subagente.")
+    ap.add_argument(
+        "--report", action="store_true",
+        help="En vez de los subagentes, genera un INFORME completo (run_report).",
+    )
+    ap.add_argument(
+        "--topic", default="condiciones financieras recientes del mercado chileno",
+        help="Tema del informe (con --report).",
+    )
+    ap.add_argument(
+        "--scope", default="auto", choices=["auto", "full"],
+        help="Alcance del informe: 'auto' rutea por el tema, 'full' corre los 8.",
+    )
     args = ap.parse_args()
-    asyncio.run(_run(args.subagent, args.max_iters))
+    if args.report:
+        asyncio.run(_run_report(args.topic, args.scope))
+    else:
+        asyncio.run(_run(args.subagent, args.max_iters))
 
 
 if __name__ == "__main__":

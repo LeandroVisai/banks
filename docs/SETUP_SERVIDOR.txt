@@ -118,9 +118,14 @@ Pasos (PowerShell, copy-paste en el servidor):
   # Si NO instalaste el paquete (pip install -e .), agrega:  $env:PYTHONPATH="src"
 
   # Correr:
-  python scripts/verify_subagents.py                 # los 8
+  python scripts/verify_subagents.py                 # los 8 subagentes
   python scripts/verify_subagents.py --subagent fx   # solo uno
   python scripts/verify_subagents.py --max-iters 6   # techo de iteraciones
+
+  # INFORME completo (run_report) — la capacidad estrella para la gerencia:
+  python scripts/verify_subagents.py --report --scope full
+  python scripts/verify_subagents.py --report --topic "mercado de renta fija en mayo 2026"
+  #   imprime el informe, los gráficos generados (plot_series) y las citas.
 
 Cómo leer el RESUMEN:
   - "OK"   = el subagente corrió tools de evidencia (execute_query / compute_* /
