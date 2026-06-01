@@ -1,25 +1,23 @@
-"""Loop agentic multi-agente — orquestador ↔ sub-agentes ↔ tools.
+"""Agente multi-especialista — router determinista + especialistas + síntesis.
 
-Arquitectura (Fase B):
+Arquitectura router-v1 (reemplaza el loop LLM de orquestación, que con Qwen
+inventaba delegados, re-delegaba y nunca sintetizaba):
 
-    run_agent  =  ORQUESTADOR
-      · ve solo las tools delegate_to_* (una por especialista)
-      · descompone la pregunta y delega al especialista de mercado correcto
-      · sintetiza la respuesta final con citas [N]
-        │
-        ├─ delegate_to_fx_analyst ──────────┐  (especialistas de mercado)
-        ├─ delegate_to_nr_analyst ──────────┤
-        ├─ delegate_to_afp_analyst ─────────┤
-        ├─ delegate_to_ffmm_analyst ────────┤  run_subagent  =  ESPECIALISTA
-        ├─ delegate_to_renta_fija_analyst ──┤    · ve solo sus tools de dominio
-        ├─ delegate_to_liquidez_analyst ────┤    · ejecuta su propio loop LLM↔tools
-        ├─ delegate_to_document_analyst ────┤    · devuelve un análisis al orquestador
-        └─ delegate_to_policy_analyst ──────┘  (especialistas del corpus)
+    run_agent
+      1. select_specialists(pregunta, history)   ← DETERMINISTA, sin LLM (router.py)
+         → 1-3 SubAgentSpec (fx, afp, no_residentes, ffmm, renta_fija,
+           liquidez, document, policy), o [] para saludos/capacidades.
+      2. asyncio.gather(run_subagent(spec, pregunta) …)   ← EN PARALELO
+         · cada especialista corre su loop LLM↔tools (``_run_tool_loop``);
+         · comparten un único ``AgentState`` (citas [N], series y grounding
+           globalmente consistentes).
+      3. síntesis: UNA llamada al LLM **sin tools** (SYNTHESIS_PROMPT)
+         · compone la respuesta final; al no ofrecer tools, termina siempre
+           en una llamada — imposible loopear.
 
-Tanto el orquestador como cada sub-agente corren el mismo loop genérico
-``_run_tool_loop``; lo que cambia es el system prompt, el set de tools y la
-función de dispatch. Todos comparten un único ``AgentState`` para que las
-citas ``[N]`` sean globalmente consistentes.
+``_run_tool_loop`` lo usan solo los especialistas; su dedup cross-iteración y
+el guard anti-alucinación numérica siguen vigentes. ``verify_citations`` y
+``verify_numbers`` se aplican sobre la síntesis final.
 """
 
 from __future__ import annotations
@@ -37,14 +35,9 @@ from banks_rag.domain.agent import AgentResult, AgentState
 
 from .citation_verifier import verify_citations
 from .numeric_grounding import extract_numbers, has_financial_numbers, verify_numbers
-from .prompts import MAX_ITERATIONS_FALLBACK_MESSAGE, ORCHESTRATOR_SYSTEM_PROMPT
-from .subagents import (
-    DELEGATE_SCHEMAS,
-    SUBAGENTS,
-    SubAgentSpec,
-    subagent_for_delegate,
-    tool_schemas_for,
-)
+from .prompts import MAX_ITERATIONS_FALLBACK_MESSAGE, SYNTHESIS_PROMPT
+from .router import select_specialists
+from .subagents import SubAgentSpec, tool_schemas_for
 from .tools.registry import dispatch
 
 log = logging.getLogger(__name__)
@@ -315,6 +308,10 @@ async def _run_tool_loop(
     total_tokens = 0
     final_text = ""
     finish_reason = "stop"
+    # Llamadas (tool, args) ya ejecutadas en este loop. Si el modelo repite una
+    # idéntica en una iteración posterior, NO se re-ejecuta: se devuelve un
+    # nudge para que sintetice. Rompe los loops "llamo la misma tool 4 veces".
+    executed_calls: set[tuple] = set()
 
     while iteration < max_iterations:
         iteration += 1
@@ -403,8 +400,26 @@ async def _run_tool_loop(
         # Ejecutar tools en paralelo, cada una con timeout propio. _run_one
         # nunca lanza: captura timeout y excepciones devolviéndolas como dict
         # de error, de modo que una tool defectuosa no aborta el gather.
+        def _call_key(tc) -> tuple:
+            return (tc.name, json.dumps(tc.arguments, sort_keys=True, default=str))
+
         async def _run_one(tc):
             t0_tool = time.perf_counter()
+            # Repetición exacta de una iteración anterior: no re-ejecutar, nudge.
+            if _call_key(tc) in executed_calls:
+                log.info(
+                    "[%s] tool %s repetida (mismos args) — se omite y se pide síntesis",
+                    agent_label, tc.name,
+                )
+                return tc, {
+                    "note": (
+                        f"Ya ejecutaste '{tc.name}' con esos mismos argumentos en "
+                        "una iteración anterior; el resultado no cambia. NO la "
+                        "repitas. Si ya tienes evidencia suficiente, responde "
+                        "AHORA sin más tool calls; si no, prueba otra tool o "
+                        "argumentos distintos."
+                    ),
+                }, 0
             try:
                 tool_result, duration_ms = await asyncio.wait_for(
                     dispatch_fn(state, tc.name, tc.arguments),
@@ -427,6 +442,9 @@ async def _run_tool_loop(
                 return tc, {"error": f"Error inesperado en '{tc.name}': {exc}"}, duration_ms
 
         executions = await asyncio.gather(*(_run_one(tc) for tc in unique_calls))
+        # Registra las llamadas de esta iteración para detectar repeticiones futuras.
+        for tc in unique_calls:
+            executed_calls.add(_call_key(tc))
 
         for tc, tool_result, duration_ms in executions:
             content_str = _truncate_tool_result(
@@ -546,6 +564,31 @@ async def run_subagent(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _build_synthesis_user_message(
+    user_message: str, subs: list[SubAgentResult],
+) -> str:
+    """Mensaje de usuario para la síntesis: la pregunta + los análisis etiquetados."""
+    if not subs:
+        # Saludo / pregunta sobre capacidades: no se consultó a especialistas.
+        return (
+            f"Pregunta del usuario:\n{user_message}\n\n"
+            "No se consultó a ningún especialista (es un saludo o una pregunta "
+            "sobre tus capacidades). Responde directamente, con cordialidad y "
+            "brevedad, qué puedes hacer: consultar datos de mercado del catálogo "
+            "(FX, no residentes, AFP, fondos mutuos, renta fija, liquidez) y el "
+            "corpus documental del BCCh (Comunicados, Minutas, IPoM, IEF, Fed, "
+            "research). NO uses citas [N] ni inventes cifras."
+        )
+    parts = [f"Pregunta del usuario:\n{user_message}", "", "Análisis de tus especialistas:"]
+    for sub in subs:
+        parts.append(f"\n## {sub.display_name}\n{sub.analysis.strip()}")
+    parts.append(
+        "\nRedacta ahora la respuesta final para el usuario siguiendo tus reglas "
+        "(conclusión primero, conserva las citas [N], no inventes cifras)."
+    )
+    return "\n".join(parts)
+
+
 async def run_agent(
     user_message: str,
     history: list[dict],
@@ -556,98 +599,77 @@ async def run_agent(
     tool_timeout_s: float = DEFAULT_DELEGATE_TIMEOUT_S,
     temperature: float | None = None,
     max_tokens: int | None = None,
-    system_prompt: str = ORCHESTRATOR_SYSTEM_PROMPT,
+    system_prompt: str = SYNTHESIS_PROMPT,
 ) -> AgentResult:
-    """Ejecuta un turno completo del agente orquestador.
+    """Ejecuta un turno completo del agente (arquitectura router-v1).
 
-    El orquestador descompone la pregunta, delega en los especialistas vía las
-    tools ``delegate_to_*`` y sintetiza la respuesta final. Los sub-agentes
-    corren dentro del dispatch de cada delegación, compartiendo el ``AgentState``.
+    Tres pasos DETERMINISTAS (sin loop LLM de orquestación, que con Qwen
+    inventaba delegados y nunca sintetizaba):
+
+      1. ``select_specialists`` rutea (sin LLM) a 1-3 especialistas;
+      2. los especialistas corren EN PARALELO (``run_subagent``), compartiendo
+         un único ``AgentState`` (citas/series/grounding globales);
+      3. una ÚNICA llamada al LLM **sin herramientas** sintetiza la respuesta
+         final → termina siempre, sin posibilidad de loop.
 
     Args:
         user_message: pregunta del usuario.
         history: turnos previos de la conversación.
         llm: motor LLM (Protocol ``LLMEngine``).
-        max_iterations: hard cap de iteraciones del orquestador.
-        max_tool_result_tokens: cap de los resultados de tool **de los
-            sub-agentes** (sus datos crudos). El análisis que cada sub-agente
-            devuelve al orquestador usa un cap mayor.
-        tool_timeout_s: tiempo límite por delegación (un sub-agente entero).
+        max_iterations: techo de iteraciones de CADA especialista (subagente).
+        max_tool_result_tokens: cap de los resultados de tool de los especialistas.
+        tool_timeout_s: tiempo límite por especialista completo.
         temperature, max_tokens: overrides del LLM.
-        system_prompt: override del prompt del orquestador.
+        system_prompt: prompt de síntesis (override para tests).
     """
     state = AgentState()
     t0 = time.perf_counter()
 
-    messages: list[dict] = [
-        {"role": "system", "content": _with_today(system_prompt)},
-        *history,
-        {"role": "user", "content": user_message},
-    ]
+    specs = select_specialists(user_message, history)
+    log.info("router → especialistas: %s", [s.key for s in specs])
 
-    async def _dispatch_delegate(
-        st: AgentState, name: str, arguments: dict,
-    ) -> tuple[dict, int]:
-        """Dispatcher del orquestador: una tool ``delegate_to_*`` → un sub-agente."""
-        spec = subagent_for_delegate(name)
-        if spec is None:
-            return {
-                "error": f"Especialista no disponible: {name!r}.",
-                "available": [s.delegate_tool for s in SUBAGENTS.values()],
-            }, 0
+    # 1+2. Especialistas en paralelo. Cada uno recibe la pregunta como task
+    # autocontenida; comparten el AgentState (refs [N] y grounding globales).
+    sub_max_iters = min(max_iterations, DEFAULT_SUBAGENT_MAX_ITERATIONS)
 
-        task = (arguments or {}).get("task", "")
-        if not isinstance(task, str) or not task.strip():
-            return {
-                "error": (
-                    "El argumento 'task' es obligatorio: describe la consulta "
-                    "concreta y autocontenida para el especialista."
-                ),
-            }, 0
-
-        t0_delegate = time.perf_counter()
-        sub = await run_subagent(
+    async def _run(spec: SubAgentSpec) -> SubAgentResult:
+        return await run_subagent(
             spec,
-            task.strip(),
+            user_message,
             llm=llm,
-            state=st,
+            state=state,
+            max_iterations=sub_max_iters,
             max_tool_result_tokens=max_tool_result_tokens,
             tool_timeout_s=DEFAULT_TOOL_TIMEOUT_S,
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        duration_ms = int((time.perf_counter() - t0_delegate) * 1000)
-        return {
-            "analyst": sub.display_name,
-            "analysis": sub.analysis,
-            "iterations": sub.iterations,
-            "finish_reason": sub.finish_reason,
-        }, duration_ms
 
-    outcome = await _run_tool_loop(
-        messages,
-        llm=llm,
-        tool_schemas=DELEGATE_SCHEMAS,
-        dispatch_fn=_dispatch_delegate,
-        state=state,
-        agent_label="orquestador",
-        max_iterations=max_iterations,
-        max_tool_result_tokens=DEFAULT_MAX_DELEGATE_RESULT_TOKENS,
-        tool_timeout_s=tool_timeout_s,
-        temperature=temperature,
-        max_tokens=max_tokens,
+    subs: list[SubAgentResult] = list(await asyncio.gather(*(_run(s) for s in specs)))
+    total_tokens = sum(s.total_tokens for s in subs)
+
+    # 3. Síntesis: una sola llamada al LLM, SIN tools (no puede entrar en loop).
+    synth_messages: list[dict] = [
+        {"role": "system", "content": _with_today(system_prompt)},
+        *history,
+        {"role": "user", "content": _build_synthesis_user_message(user_message, subs)},
+    ]
+    synth = await llm.generate(
+        synth_messages, tools=None, temperature=temperature, max_tokens=max_tokens,
     )
+    total_tokens += synth.n_tokens
+    final_text = synth.text or MAX_ITERATIONS_FALLBACK_MESSAGE
+    finish_reason = synth.finish_reason
 
-    cleaned_response, cited_refs, invalid_refs = verify_citations(outcome.final_text, state)
+    cleaned_response, cited_refs, invalid_refs = verify_citations(final_text, state)
     if invalid_refs:
         log.warning(
-            "el orquestador citó %d ref(s) inválida(s) %s — posible alucinación",
+            "la síntesis citó %d ref(s) inválida(s) %s — posible alucinación",
             len(invalid_refs), invalid_refs,
         )
 
-    # Grounding numérico de la síntesis final: cifras que no provienen de
-    # ninguna herramienta de este turno. Se reportan (no se ocultan) para que
-    # la evaluación de faithfulness pueda medirlas; el frontend puede marcarlas.
+    # Grounding numérico de la síntesis final: cifras sin respaldo de ninguna
+    # herramienta del turno. Se reportan (no se ocultan) para evaluación/UI.
     ungrounded_numbers, _ = verify_numbers(cleaned_response, state.grounded_numbers)
     if ungrounded_numbers:
         log.warning(
@@ -657,13 +679,14 @@ async def run_agent(
 
     return AgentResult(
         response=cleaned_response,
-        iterations=outcome.iterations,
+        # "iteraciones" informativas: la del especialista más activo + 1 (síntesis).
+        iterations=max((s.iterations for s in subs), default=0) + 1,
         tool_trace=list(state.tool_trace),
         chunks_seen=_format_chunks_seen(state),
         series_used=list(state.series_used.values()),
         cited_refs=cited_refs,
-        finish_reason=outcome.finish_reason,
-        total_tokens=outcome.total_tokens,
+        finish_reason=finish_reason,
+        total_tokens=total_tokens,
         latency_ms=int((time.perf_counter() - t0) * 1000),
         invalid_refs=invalid_refs,
         ungrounded_numbers=ungrounded_numbers,

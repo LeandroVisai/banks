@@ -208,11 +208,43 @@ _DELEGATE_TO_KEY: dict[str, str] = {
     spec.delegate_tool: key for key, spec in SUBAGENTS.items()
 }
 
+# Resolución fuzzy: el LLM a veces no emite el nombre EXACTO de la tool de
+# delegación (p.ej. `delegate_to_fx` en vez de `delegate_to_fx_analyst`, o
+# traduce a `delegate_to_analista_politica_monetaria`). Cada tupla mapea
+# subcadenas-señal → key del especialista; el primer match gana. El orden
+# importa: señales específicas (no_residentes) antes que genéricas.
+_FUZZY_SIGNALS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("no_resident", "noresident", "nr_", "_nr", "residente"), "no_residentes"),
+    (("fondos_mutuo", "ffmm", "mutuo"), "fondos_mutuos"),
+    (("afp", "pension"), "afp"),
+    (("renta_fija", "rentafija", "renta", "bono", "_rf_", "fija"), "renta_fija"),
+    (("liquidez", "balance"), "liquidez"),
+    (("fx", "cambiari", "divisa", "dolar"), "fx"),
+    (("policy", "politica", "monetar", "tpm"), "policy"),
+    (("document", "documento", "corpus"), "document"),
+)
+
+
+def _normalize_delegate(name: str) -> str:
+    return name.lower().replace(" ", "").replace("-", "")
+
 
 def subagent_for_delegate(delegate_tool: str) -> SubAgentSpec | None:
-    """Resuelve la tool ``delegate_to_*`` a su ``SubAgentSpec`` (o ``None``)."""
+    """Resuelve la tool ``delegate_to_*`` a su ``SubAgentSpec`` (o ``None``).
+
+    Primero exacto; si falla, fuzzy por subcadenas-señal (tolera que el LLM
+    abrevie o traduzca el nombre). Devuelve ``None`` solo si nada coincide.
+    """
     key = _DELEGATE_TO_KEY.get(delegate_tool)
-    return SUBAGENTS[key] if key is not None else None
+    if key is not None:
+        return SUBAGENTS[key]
+    norm = _normalize_delegate(delegate_tool)
+    if "delegate" not in norm:
+        return None  # ni siquiera parece una delegación
+    for signals, spec_key in _FUZZY_SIGNALS:
+        if any(sig in norm for sig in signals):
+            return SUBAGENTS[spec_key]
+    return None
 
 
 def tool_schemas_for(spec: SubAgentSpec) -> list[dict]:

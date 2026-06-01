@@ -117,147 +117,88 @@ def clean_registry():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Orquestador
+# run_agent — router determinista + especialistas en paralelo + síntesis única
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.unit
-class TestOrchestrator:
+class TestRunAgent:
     @pytest.mark.asyncio
-    async def test_answers_trivial_question_directly(self) -> None:
-        """Sin delegar: un saludo se responde directo en una iteración."""
+    async def test_greeting_answered_directly_no_specialists(self) -> None:
+        """Saludo: router → sin especialistas → síntesis directa en 1 llamada."""
         llm = _MockLLM(responses=[
             GenerationResult(text="Hola, soy el asistente del BCCh.", n_tokens=10),
         ])
         result = await run_agent("Hola", history=[], llm=llm)
         assert result.response == "Hola, soy el asistente del BCCh."
-        assert result.iterations == 1
-        assert result.tool_trace == []
-        assert result.finish_reason == "stop"
+        assert result.tool_trace == []        # no corrió ningún especialista
+        assert len(llm.calls) == 1            # solo la síntesis
+        assert llm.calls[0]["tools"] is None  # síntesis SIN tools → no puede loopear
 
     @pytest.mark.asyncio
-    async def test_delegates_to_subagent_and_synthesizes(self) -> None:
+    async def test_single_domain_routes_runs_specialist_then_synthesizes(self) -> None:
+        """'DV01 de las AFP' → router=[afp] → subagente AFP → síntesis."""
         llm = _MockLLM(responses=[
-            # Orquestador iter 1: delega al analista AFP.
-            _delegate("c1", "delegate_to_afp_analyst", "¿DV01 de los fondos de pensiones?"),
-            # Sub-agente AFP: responde directo (sin tools, sin cifras → se conserva).
-            GenerationResult(text="No tengo el detalle aún.", n_tokens=20),
-            # Orquestador iter 2: sintetiza.
-            GenerationResult(text="El especialista no entregó el detalle.", n_tokens=15),
+            GenerationResult(text="El DV01 no está disponible aún.", n_tokens=10),  # subagente afp
+            GenerationResult(text="Respuesta final del coordinador.", n_tokens=8),  # síntesis
         ])
         result = await run_agent("¿DV01 de las AFP?", history=[], llm=llm)
 
-        assert result.response == "El especialista no entregó el detalle."
-        assert result.iterations == 2
-        assert result.total_tokens == 25  # solo cuentan las llamadas del orquestador
-
-        # La traza registra la delegación, etiquetada como del orquestador.
-        assert len(result.tool_trace) == 1
-        entry = result.tool_trace[0]
-        assert entry["tool"] == "delegate_to_afp_analyst"
-        assert entry["agent"] == "orquestador"
-        assert "Fondos de Pensiones" in entry["result_summary"]
-
-        # El sub-agente recibió su system prompt y el task — no la conversación.
-        # _with_today() antepone la fecha, así que el prompt está contenido.
-        sub_call = llm.calls[1]
-        assert sub_call["n_messages"] == 2
-        assert AFP_ANALYST_PROMPT in sub_call["messages"][0]["content"]
-        assert sub_call["messages"][1]["content"] == "¿DV01 de los fondos de pensiones?"
-        assert len(llm.calls) == 3
+        assert result.response == "Respuesta final del coordinador."
+        assert len(llm.calls) == 2
+        # Llamada 0 = subagente AFP: su system prompt + la pregunta como task.
+        assert AFP_ANALYST_PROMPT in llm.calls[0]["messages"][0]["content"]
+        assert llm.calls[0]["messages"][1]["content"] == "¿DV01 de las AFP?"
+        # Llamada 1 = síntesis: SIN tools.
+        assert llm.calls[1]["tools"] is None
 
     @pytest.mark.asyncio
-    async def test_concurrent_delegation_to_two_subagents(self) -> None:
-        """El orquestador delega a dos especialistas en un mismo turno.
-
-        Determinista pese al interleaving de asyncio: cada agente sigue su
-        propio guion en _RoutedLLM, ruteado por system prompt.
-        """
+    async def test_multi_domain_runs_specialists_in_parallel(self) -> None:
+        """Cross-dominio → varios especialistas en paralelo + una síntesis."""
         llm = _RoutedLLM(scripts={
-            "orchestrator": [
-                GenerationResult(text="", tool_calls=[
-                    ToolCall(id="o1", name="delegate_to_fx_analyst",
-                             arguments={"task": "panorama cambiario"}),
-                    ToolCall(id="o2", name="delegate_to_renta_fija_analyst",
-                             arguments={"task": "curva BTP"}),
-                ], n_tokens=15),
-                GenerationResult(text="Cambiario estable; curva al alza.", n_tokens=12),
-            ],
-            "fx": [GenerationResult(text="El mercado cambiario está estable.", n_tokens=8)],
             "renta_fija": [GenerationResult(text="La curva BTP subió.", n_tokens=8)],
+            "policy": [GenerationResult(text="El Consejo mantuvo la TPM.", n_tokens=8)],
+            "orchestrator": [GenerationResult(text="Curva al alza; TPM sin cambios.", n_tokens=12)],
         })
-        result = await run_agent("cambiario y curva", history=[], llm=llm)
-
-        assert result.response == "Cambiario estable; curva al alza."
-        assert result.iterations == 2
-        # Ambas delegaciones quedan en la traza, tagueadas al orquestador.
-        delegations = [t for t in result.tool_trace if t["tool"].startswith("delegate_")]
-        assert {t["tool"] for t in delegations} == {
-            "delegate_to_fx_analyst", "delegate_to_renta_fija_analyst",
-        }
-        assert all(t["agent"] == "orquestador" for t in delegations)
-        # Cada especialista corrió exactamente una vez.
-        assert llm.calls.count("fx") == 1
+        # "postura del Consejo" → policy; "curva BTP" → renta_fija.
+        result = await run_agent(
+            "compara la postura del Consejo con la curva BTP", history=[], llm=llm,
+        )
+        assert result.response == "Curva al alza; TPM sin cambios."
         assert llm.calls.count("renta_fija") == 1
-
-    @pytest.mark.asyncio
-    async def test_unknown_delegate_returns_structured_error(self) -> None:
-        """Si el LLM inventa un especialista, el dispatch responde con error."""
-        llm = _MockLLM(responses=[
-            GenerationResult(
-                text="",
-                tool_calls=[ToolCall(id="c1", name="delegate_to_ghost", arguments={"task": "x"})],
-                n_tokens=5,
-            ),
-            GenerationResult(text="No pude completar la consulta.", n_tokens=10),
-        ])
-        result = await run_agent("pregunta", history=[], llm=llm)
-        assert result.response == "No pude completar la consulta."
-        assert result.tool_trace[0]["result_summary"].startswith("ERROR")
-
-    @pytest.mark.asyncio
-    async def test_max_iterations_fallback(self) -> None:
-        llm = _MockLLM(responses=[
-            _delegate("c1", "delegate_to_afp_analyst", "tarea 1"),
-            GenerationResult(text="análisis del sub-agente", n_tokens=5),
-            _delegate("c2", "delegate_to_afp_analyst", "tarea 2"),
-        ])
-        result = await run_agent("loop", history=[], llm=llm, max_iterations=2)
-        assert result.iterations == 2
-        assert result.finish_reason == "max_iterations"
-        assert "iteraciones" in result.response.lower()
+        assert llm.calls.count("policy") == 1
+        assert llm.calls.count("orchestrator") == 1   # una sola síntesis
 
     @pytest.mark.asyncio
     async def test_invalid_citations_cleaned(self) -> None:
+        # Saludo → sin especialistas → chunks_seen vacío → [5] es inválida.
         llm = _MockLLM(responses=[
             GenerationResult(text="La TPM bajó [5] según fuentes.", n_tokens=10),
         ])
-        result = await run_agent("?", history=[], llm=llm)
+        result = await run_agent("hola", history=[], llm=llm)
         assert "[5]" not in result.response
         assert result.cited_refs == []
         assert result.invalid_refs == [5]
 
     @pytest.mark.asyncio
-    async def test_flags_ungrounded_figures_in_final_answer(self) -> None:
-        """Anti-alucinación (orquestador): cifras sin respaldo de tool quedan
-        reportadas en ungrounded_numbers — red de seguridad para gerentes."""
+    async def test_flags_ungrounded_figures_in_synthesis(self) -> None:
+        """Si la síntesis emite cifras sin respaldo de tool, se reportan."""
         llm = _MockLLM(responses=[
             GenerationResult(text="La TPM está en 5,25% y el dólar en 942.", n_tokens=10),
         ])
-        result = await run_agent("nivel de la TPM", history=[], llm=llm)
-        # Ninguna tool de evidencia corrió → ambas cifras son no fundadas.
+        result = await run_agent("hola", history=[], llm=llm)  # sin especialistas → 0 evidencia
         assert 5.25 in result.ungrounded_numbers
         assert 942.0 in result.ungrounded_numbers
 
     @pytest.mark.asyncio
-    async def test_history_is_passed_to_orchestrator(self) -> None:
+    async def test_history_is_passed_to_synthesis(self) -> None:
         llm = _MockLLM(responses=[GenerationResult(text="ok", n_tokens=1)])
         history = [
             {"role": "user", "content": "Pregunta previa"},
             {"role": "assistant", "content": "Respuesta previa"},
         ]
-        await run_agent("Nueva pregunta", history=history, llm=llm)
-        # System + 2 history + user = 4 mensajes.
+        await run_agent("Hola", history=history, llm=llm)
+        # Saludo → única llamada = síntesis: system + 2 history + user = 4 mensajes.
         assert llm.calls[0]["n_messages"] == 4
 
 
@@ -386,6 +327,39 @@ class TestFormatChunksSeen:
         out = _format_chunks_seen(state)[0]
         assert out["kind"] == "VISUAL"
         assert out["image_url"] == "/v1/images/v9"
+
+    @pytest.mark.asyncio
+    async def test_repeated_identical_tool_call_runs_once(self, clean_registry) -> None:
+        """Anti-loop: si el modelo repite la MISMA tool con los MISMOS args en
+        iteraciones distintas, se ejecuta una sola vez (la 2ª es un nudge)."""
+        calls = {"n": 0}
+
+        @register("fake_tool", {
+            "type": "function",
+            "function": {"name": "fake_tool", "description": "x",
+                         "parameters": {"type": "object", "properties": {}}},
+        })
+        async def fake_tool(state):
+            calls["n"] += 1
+            return {"n_results": 1}
+
+        spec = SubAgentSpec(
+            key="afp", display_name="X", delegate_tool="delegate_to_afp_analyst",
+            delegate_description="x", system_prompt="Eres un analista de prueba.",
+            tool_names=("fake_tool",),
+        )
+        llm = _MockLLM(responses=[
+            GenerationResult(text="", tool_calls=[
+                ToolCall(id="c1", name="fake_tool", arguments={})], n_tokens=5),
+            GenerationResult(text="", tool_calls=[
+                ToolCall(id="c2", name="fake_tool", arguments={})], n_tokens=5),
+            GenerationResult(text="Listo, sin más datos.", n_tokens=5),
+        ])
+        state = AgentState()
+        sub = await run_subagent(spec, "tarea", llm=llm, state=state, max_iterations=4)
+
+        assert calls["n"] == 1            # dispatch real solo la primera vez
+        assert sub.analysis == "Listo, sin más datos."
 
     @pytest.mark.asyncio
     async def test_subagent_figures_without_evidence_are_discarded(self, clean_registry) -> None:

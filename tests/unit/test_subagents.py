@@ -74,6 +74,23 @@ class TestSubagentForDelegate:
 
     def test_unknown_delegate_returns_none(self) -> None:
         assert subagent_for_delegate("delegate_to_nobody") is None
+        assert subagent_for_delegate("delegate_to_ghost") is None
+
+    @pytest.mark.parametrize(
+        "invented,expected",
+        [
+            # El LLM abrevia o traduce el nombre exacto (visto en logs reales).
+            ("delegate_to_fx", "fx"),
+            ("delegate_to_analista_politica_monetaria", "policy"),
+            ("delegate_to_monetary_policy_analyst", "policy"),
+            ("delegate_to_nr", "no_residentes"),
+            ("delegate_to_pensiones", "afp"),
+            ("delegate_to_fondos_mutuos_analyst", "fondos_mutuos"),
+        ],
+    )
+    def test_fuzzy_resolves_invented_delegate_names(self, invented, expected) -> None:
+        spec = subagent_for_delegate(invented)
+        assert spec is not None and spec.key == expected
 
 
 @pytest.mark.unit
