@@ -29,14 +29,18 @@ multimodal reciente y muy capaz).
 - [ ] **Fase 3 — Modo informe.** `run_report`: outline → síntesis por sección
   (mercado por segmento, política, riesgos) → ensamble con gráficos embebidos y
   citas. El "analista senior" que lee el gerente. (FinRobot-style CoT.)
-- [ ] **Fase 4 — Catálogo más coherente.** Índice semántico del catálogo
-  siempre activo + ranking de `discover` mejorado (4/107 no eran descubribles por
-  su nombre).
-- [ ] **Fase 5 — Visión (mtmd).** Qwen3.6 es multimodal (`mtmd.dll` presente);
-  cablear entrada de imágenes para que el modelo LEA los gráficos del IPoM
-  (`search_visuals`), no solo el caption.
-- [ ] **Fase 6 — Evaluación.** Golden set de generación de informes + smoke
-  reproducible.
+- [~] **Fase 4 — discover ranking. DIFERIDA.** Se probó ponderar id/name e IDF
+  para que los 4/107 fueran descubribles por su nombre exacto, pero rompía casos
+  golden reales (p.ej. "LCR del sistema bancario" sacaba `lcr` del top-3). Los
+  golden (queries reales) priman sobre el 4/107-por-nombre-exacto, y `get_series`
+  ya mitiga la incertidumbre devolviendo alternativas. Revertido.
+- [~] **Fase 5 — Visión (mtmd). FUNDACIÓN.** Qwen3.6 es multimodal. Se deja la
+  base SEGURA y testeable: `BANKS_LLM_MMPROJ_PATH` (config), builder de bloques
+  de imagen (base64 data-URL) y `LlamaCppEngine.supports_vision` — todo guardado:
+  con mmproj vacío (default) el camino de texto NO cambia. La carga del chat
+  handler mtmd y el cableado tool→imagen→generate se validan en la H100 (necesita
+  el archivo mmproj del modelo). Ver `_image_content.py`.
+- [ ] **Fase 6 — CLI banks-report.** Generar informes desde la terminal.
 
 ## Notas de ejecución
 

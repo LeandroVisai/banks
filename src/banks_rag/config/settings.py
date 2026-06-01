@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # ── LLM ──────────────────────────────────────────────────────────────────
     llm_family: Literal["qwen", "gemma", "mock"] = "mock"
     llm_model_path: str = ""
+    # Proyector multimodal (mtmd) para visión: si se entrega, el modelo puede
+    # 'ver' imágenes (gráficos de IPoM). Vacío = solo texto. Relativo a MODELS_DIR.
+    llm_mmproj_path: str = ""
     llm_n_ctx: int = 16384
     llm_n_gpu_layers: int = -1  # todo a GPU
     llm_temperature: float = 0.2
@@ -89,6 +92,14 @@ class Settings(BaseSettings):
         if p.is_absolute():
             return p
         return MODELS_DIR / self.llm_model_path
+
+    @property
+    def mmproj_path_resolved(self) -> Path | None:
+        """Resuelve ``llm_mmproj_path`` (proyector mtmd) contra ``MODELS_DIR``."""
+        if not self.llm_mmproj_path:
+            return None
+        p = Path(self.llm_mmproj_path)
+        return p if p.is_absolute() else MODELS_DIR / self.llm_mmproj_path
 
     @property
     def chat_log_dir_resolved(self) -> Path:

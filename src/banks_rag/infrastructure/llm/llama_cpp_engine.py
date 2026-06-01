@@ -178,8 +178,13 @@ class LlamaCppEngine:
         max_tokens: int = 2_048,
         chat_format: str | None = None,
         n_threads: int = 1,
+        mmproj_path: str | None = None,
     ) -> None:
         self.model_path = model_path
+        # Proyector mtmd para visión (Qwen3.6 multimodal). Si se entrega y existe,
+        # `vision_configured` es True; el cableado del chat handler mtmd en
+        # _sync_load se valida en la H100 (depende del archivo mmproj del modelo).
+        self._mmproj_path = str(mmproj_path) if mmproj_path else ""
         self.name = Path(model_path).stem
         self._n_ctx = n_ctx
         self._n_gpu_layers = n_gpu_layers
@@ -198,6 +203,15 @@ class LlamaCppEngine:
             thread_name_prefix="llama_cpp",
         )
         self.loaded = False
+
+    @property
+    def vision_configured(self) -> bool:
+        """True si hay un proyector mtmd configurado y presente en disco.
+
+        Señala que el modelo PUEDE recibir imágenes (úsese ``build_image_content``
+        para armar el mensaje). El cableado del chat handler mtmd en la carga se
+        valida en la H100 con el mmproj real del modelo."""
+        return bool(self._mmproj_path) and Path(self._mmproj_path).is_file()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -442,6 +456,7 @@ class LlamaCppEngine:
             ``llm_temperature``, ``llm_top_p``, ``llm_max_tokens``.
         """
         model_path = getattr(settings, "model_path_resolved", None) or settings.llm_model_path
+        mmproj = getattr(settings, "mmproj_path_resolved", None)
         return cls(
             str(model_path),
             n_ctx=settings.llm_n_ctx,
@@ -449,4 +464,5 @@ class LlamaCppEngine:
             temperature=settings.llm_temperature,
             top_p=settings.llm_top_p,
             max_tokens=settings.llm_max_tokens,
+            mmproj_path=str(mmproj) if mmproj else None,
         )
