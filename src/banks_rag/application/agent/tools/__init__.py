@@ -25,6 +25,7 @@ from . import (  # noqa: F401
     discover_query,
     document_lookup,
     execute_query,
+    get_series,
     list_parquets,
     meeting_lookup,
     plot_series,

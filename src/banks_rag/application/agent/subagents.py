@@ -66,6 +66,7 @@ class SubAgentSpec:
 # especialistas del corpus documental. Las `key` coinciden con los valores de
 # financial_aliases (`.specialist`) para enrutar por vocabulario.
 _QUANT_TOOLS = (
+    "get_series",      # atajo preferido: descubre + trae filas en 1 paso
     "discover_query",
     "execute_query",
     "compute_variation",

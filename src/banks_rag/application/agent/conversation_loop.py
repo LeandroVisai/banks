@@ -72,6 +72,7 @@ def _with_today(system_prompt: str) -> str:
 # datasets no es lo mismo que tener sus valores. Si un especialista emite cifras
 # con 0 de estas tools, la respuesta es alucinada.
 EVIDENCE_TOOLS: frozenset[str] = frozenset({
+    "get_series",
     "execute_query",
     "compute_variation",
     "compute_spread",
