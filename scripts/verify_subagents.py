@@ -28,6 +28,14 @@ import pathlib
 import sys
 import time
 
+# Windows: el stdout por defecto es cp1252 y revienta con acentos/emojis del
+# informe (UnicodeEncodeError). Forzar utf-8 para que el informe se imprima bien.
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # Permite ejecutar sin instalar el paquete (resuelve banks_rag desde src/).
 _SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 if _SRC.is_dir() and str(_SRC) not in sys.path:
