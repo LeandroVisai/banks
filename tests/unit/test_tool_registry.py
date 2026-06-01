@@ -104,6 +104,36 @@ class TestDispatch:
         assert "expected_signature" in result
 
     @pytest.mark.asyncio
+    async def test_missing_required_args_gives_directive_message(self, clean_registry) -> None:
+        """Faltan args requeridos → mensaje directivo (no el TypeError crudo de
+        Python), para que el modelo reintente con los args en vez de repetir vacío."""
+        schema = {
+            "type": "function",
+            "function": {
+                "name": "execute_query", "description": "trae filas",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"dataset_id": {"type": "string"}, "column": {"type": "string"}},
+                    "required": ["dataset_id", "column"],
+                },
+            },
+        }
+
+        @register("execute_query", schema)
+        async def execute_query(state, dataset_id: str, column: str):
+            return {"rows": []}
+
+        state = AgentState()
+        result, _ = await dispatch(state, "execute_query", {})
+        assert "error" in result
+        # Nombra los argumentos faltantes y da una instrucción accionable.
+        assert "dataset_id" in result["error"]
+        assert "column" in result["error"]
+        assert "Faltan argumentos requeridos" in result["error"]
+        # Ya no expone el TypeError crudo de Python.
+        assert "positional argument" not in result["error"]
+
+    @pytest.mark.asyncio
     async def test_dispatch_runtime_error_captured(self, clean_registry) -> None:
         schema = {
             "type": "function",

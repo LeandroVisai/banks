@@ -350,6 +350,61 @@ class TestFormatChunksSeen:
         assert sub.analysis == "Listo, sin más datos."
 
     @pytest.mark.asyncio
+    async def test_last_iteration_injects_synthesis_nudge(self, clean_registry) -> None:
+        """Consolidación: en la última iteración se inyecta el nudge (sin tools) y
+        el especialista redacta con la evidencia reunida en vez de agotar sin
+        concluir (caso cobre: tenía stats pero entregaba un 'plan')."""
+        from banks_rag.application.agent.prompts import FINAL_SYNTHESIS_NUDGE
+
+        @register("get_series_stats", {
+            "type": "function",
+            "function": {"name": "get_series_stats", "description": "x",
+                         "parameters": {"type": "object", "properties": {}}},
+        })
+        async def _stats(state, **kw):
+            return {"mean": 1.73, "max": 2.08, "last": 1.76}
+
+        spec = SubAgentSpec(
+            key="liquidez", display_name="Analista de Liquidez y Balance",
+            system_prompt="Eres un analista de prueba.",
+            tool_names=("get_series_stats",),
+        )
+        llm = _MockLLM(responses=[
+            GenerationResult(text="", tool_calls=[
+                ToolCall(id="c1", name="get_series_stats", arguments={"q": "a"})], n_tokens=5),
+            GenerationResult(text="", tool_calls=[
+                ToolCall(id="c2", name="get_series_stats", arguments={"q": "b"})], n_tokens=5),
+            GenerationResult(text="El LCR más reciente es 1,76 (al 12-may-2026).", n_tokens=10),
+        ])
+        state = AgentState()
+        sub = await run_subagent(spec, "LCR del sistema", llm=llm, state=state, max_iterations=3)
+
+        # Consolidó con la evidencia (no es el fallback de max_iterations).
+        assert "1,76" in sub.analysis
+        assert sub.finish_reason != "max_iterations"
+        # El nudge se inyectó en la última llamada, que NO ofreció tools.
+        last_msgs = llm.calls[-1]["messages"]
+        assert any(FINAL_SYNTHESIS_NUDGE in (m.get("content") or "") for m in last_msgs)
+        assert llm.calls[-1]["tools"] is None
+
+    @pytest.mark.asyncio
+    async def test_synthesis_nudge_not_injected_on_single_iteration(self, clean_registry) -> None:
+        """Con max_iterations=1 (is_last en la iter 1) NO se inyecta el nudge:
+        no hubo ronda de tools previa que consolidar."""
+        from banks_rag.application.agent.prompts import FINAL_SYNTHESIS_NUDGE
+
+        spec = SubAgentSpec(
+            key="afp", display_name="X",
+            system_prompt="Eres un analista de prueba.",
+            tool_names=(),
+        )
+        llm = _MockLLM(responses=[GenerationResult(text="Respuesta directa.", n_tokens=5)])
+        await run_subagent(spec, "tarea", llm=llm, state=AgentState(), max_iterations=1)
+
+        first_msgs = llm.calls[0]["messages"]
+        assert not any(FINAL_SYNTHESIS_NUDGE in (m.get("content") or "") for m in first_msgs)
+
+    @pytest.mark.asyncio
     async def test_subagent_figures_without_evidence_are_discarded(self, clean_registry) -> None:
         """Anti-alucinación: cifras sin tool de evidencia → análisis descartado.
 

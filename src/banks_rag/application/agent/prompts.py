@@ -362,3 +362,16 @@ MAX_ITERATIONS_FALLBACK_MESSAGE = (
     "Los datos que pude reunir hasta ahora aparecen en la traza, pero no logré "
     "sintetizar una respuesta final. Por favor reformula la pregunta más específica."
 )
+
+
+# Se inyecta en la ÚLTIMA iteración de un especialista para forzar la
+# consolidación: en vez de gastar el turno intentando otra herramienta (y dejar
+# el análisis en "plan", perdiendo la evidencia ya reunida), debe redactar.
+FINAL_SYNTHESIS_NUDGE = (
+    "Alcanzaste el límite de herramientas para esta tarea. Con la evidencia que "
+    "YA obtuviste de las herramientas en esta conversación (aparece en los "
+    "resultados anteriores), redacta AHORA tu análisis final para el coordinador: "
+    "nivel, variación y contexto, indicando fecha, unidad y fuente. NO llames más "
+    "herramientas; responde solo con texto. Si la evidencia reunida es realmente "
+    "insuficiente, dilo con claridad en vez de improvisar cifras."
+)

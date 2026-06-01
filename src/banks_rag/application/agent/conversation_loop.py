@@ -35,7 +35,11 @@ from banks_rag.domain.agent import AgentResult, AgentState
 
 from .citation_verifier import verify_citations
 from .numeric_grounding import extract_numbers, has_financial_numbers, verify_numbers
-from .prompts import MAX_ITERATIONS_FALLBACK_MESSAGE, SYNTHESIS_PROMPT
+from .prompts import (
+    FINAL_SYNTHESIS_NUDGE,
+    MAX_ITERATIONS_FALLBACK_MESSAGE,
+    SYNTHESIS_PROMPT,
+)
 from .router import select_specialists
 from .subagents import SubAgentSpec, tool_schemas_for
 from .tools.registry import dispatch
@@ -96,7 +100,9 @@ _UNGROUNDED_SUBAGENT_MESSAGE = (
 )
 
 DEFAULT_MAX_ITERATIONS = 6
-DEFAULT_SUBAGENT_MAX_ITERATIONS = 4
+# 5 = hasta 4 rondas de tools (discover → execute → compute → buffer) + la última
+# iteración reservada a la consolidación (FINAL_SYNTHESIS_NUDGE, sin tools).
+DEFAULT_SUBAGENT_MAX_ITERATIONS = 5
 DEFAULT_MAX_TOOL_RESULT_TOKENS = 1500
 # Las "tool results" del orquestador son análisis completos de sus especialistas:
 # merecen más presupuesto que un resultado de tool crudo.
@@ -319,6 +325,13 @@ async def _run_tool_loop(
         # final con la evidencia ya reunida.
         is_last = iteration == max_iterations
         tools_arg = None if is_last else tool_schemas
+
+        # Empujón de consolidación: si ya hubo al menos una ronda de tools y esta
+        # es la última, instruir explícitamente a redactar con lo reunido. Sin
+        # esto, el modelo gastaba el turno intentando otra tool y dejaba el
+        # análisis como un "plan" (la evidencia ya obtenida se perdía en síntesis).
+        if is_last and iteration > 1:
+            messages = messages + [{"role": "user", "content": FINAL_SYNTHESIS_NUDGE}]
 
         prompt_tokens = (
             llm.count_tokens(messages, tools_arg)
