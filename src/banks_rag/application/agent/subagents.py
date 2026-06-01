@@ -49,6 +49,10 @@ class SubAgentSpec:
         default_segments: segmentos del parquet_catalog que cubre el especialista
             (documentación + scoping de discover_query). Vacío si es transversal
             (NR) o documental.
+        multi_step: True si su flujo de tools es multi-paso (discover → execute →
+            compute), donde el razonamiento más rinde. En ``thinking_mode=adaptive``
+            estos especialistas usan thinking; los demás (documentales) no. Ver
+            ``conversation_loop._should_think`` y el diagnóstico de literatura.
     """
 
     key: str
@@ -56,6 +60,7 @@ class SubAgentSpec:
     system_prompt: str
     tool_names: tuple[str, ...]
     default_segments: tuple[str, ...] = ()
+    multi_step: bool = False
 
 
 # Las series de tiempo se consultan exclusivamente vía el catálogo de parquets
@@ -84,12 +89,14 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
         system_prompt=FX_ANALYST_PROMPT,
         tool_names=(*_QUANT_TOOLS, "get_market_snapshot"),
         default_segments=("mercado_cambiario", "posiciones_cambiarias"),
+        multi_step=True,
     ),
     "no_residentes": SubAgentSpec(
         key="no_residentes",
         display_name="Analista de No Residentes",
         system_prompt=NR_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
+        multi_step=True,
     ),
     "afp": SubAgentSpec(
         key="afp",
@@ -97,6 +104,7 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
         system_prompt=AFP_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
         default_segments=("fondos_pension",),
+        multi_step=True,
     ),
     "fondos_mutuos": SubAgentSpec(
         key="fondos_mutuos",
@@ -104,6 +112,7 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
         system_prompt=FFMM_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
         default_segments=("fondos_pension",),
+        multi_step=True,
     ),
     "renta_fija": SubAgentSpec(
         key="renta_fija",
@@ -111,6 +120,7 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
         system_prompt=RENTA_FIJA_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
         default_segments=("renta_fija_chile", "instrumentos_bcch", "spreads_credito"),
+        multi_step=True,
     ),
     "liquidez": SubAgentSpec(
         key="liquidez",
@@ -118,6 +128,7 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
         system_prompt=LIQUIDEZ_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
         default_segments=("liquidez_bancaria", "balance_bancario"),
+        multi_step=True,
     ),
     # ── Especialistas del corpus documental ──────────────────────────────────
     "document": SubAgentSpec(

@@ -57,6 +57,7 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
             max_tool_result_tokens=settings.max_tool_result_tokens,
             temperature=body.temperature if body.temperature is not None else settings.llm_temperature,
             max_tokens=body.max_tokens if body.max_tokens is not None else settings.llm_max_tokens,
+            thinking_mode=settings.thinking_mode,
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("run_agent falló en /v1/chat")

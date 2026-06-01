@@ -15,6 +15,22 @@ from __future__ import annotations
 
 PROMPT_VERSION = "router-v1"
 
+# Soft switch de Qwen3 para desactivar el modo "thinking" en un turno: el modelo
+# está entrenado para reconocer /no_think en el prompt y NO emitir el bloque
+# <think>. Se anexa al system prompt según `thinking_mode` (ver settings y
+# conversation_loop._should_think). Si el modelo no lo soporta, es inofensivo.
+NO_THINK_DIRECTIVE = "/no_think"
+
+
+def apply_thinking(system_prompt: str, *, think: bool) -> str:
+    """Devuelve el system prompt con o sin el soft switch de thinking.
+
+    ``think=False`` anexa ``/no_think`` (Qwen3 no razona, responde directo);
+    ``think=True`` lo deja intacto (thinking por defecto de la plantilla)."""
+    if think:
+        return system_prompt
+    return f"{system_prompt}\n\n{NO_THINK_DIRECTIVE}"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Bloques compartidos

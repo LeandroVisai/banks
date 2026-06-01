@@ -52,11 +52,14 @@ TASKS: dict[str, str] = {
 }
 
 
-async def _run(only: str | None, max_iters: int) -> None:
+async def _run(only: str | None, max_iters: int, thinking_mode: str) -> None:
+    from banks_rag.application.agent.conversation_loop import _should_think
+
     settings = get_settings()
     print(
         f"LLM: {settings.llm_family} {settings.llm_model_path} "
-        f"(n_ctx={settings.llm_n_ctx}, gpu_layers={settings.llm_n_gpu_layers})",
+        f"(n_ctx={settings.llm_n_ctx}, gpu_layers={settings.llm_n_gpu_layers}, "
+        f"thinking_mode={thinking_mode})",
         flush=True,
     )
     if settings.llm_family in ("mock", ""):
@@ -88,10 +91,11 @@ async def _run(only: str | None, max_iters: int) -> None:
         print(f"SUBAGENTE [{key}] — {spec.display_name}")
         print(f"tarea: {task}", flush=True)
         t1 = time.time()
+        think = _should_think(thinking_mode, "quant" if spec.multi_step else "doc")
         try:
             sub = await run_subagent(
                 spec, task, llm=eng, state=state,
-                max_iterations=max_iters, max_tool_result_tokens=3000,
+                max_iterations=max_iters, max_tool_result_tokens=3000, think=think,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  EXCEPCIÓN: {type(exc).__name__}: {exc}", flush=True)
@@ -125,8 +129,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Verifica los 8 subagentes contra el LLM configurado.")
     ap.add_argument("--subagent", default=None, choices=sorted(SUBAGENTS), help="Correr solo este.")
     ap.add_argument("--max-iters", type=int, default=5, help="Techo de iteraciones por subagente.")
+    ap.add_argument(
+        "--thinking", default="adaptive", choices=("off", "adaptive", "on"),
+        help="Modo thinking de Qwen3 (default adaptive: think solo en cuantitativos).",
+    )
     args = ap.parse_args()
-    asyncio.run(_run(args.subagent, args.max_iters))
+    asyncio.run(_run(args.subagent, args.max_iters, args.thinking))
 
 
 if __name__ == "__main__":

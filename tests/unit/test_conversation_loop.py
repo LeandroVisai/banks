@@ -145,6 +145,31 @@ class TestRunAgent:
         assert llm.calls[1]["tools"] is None
 
     @pytest.mark.asyncio
+    async def test_thinking_mode_adaptive_quant_thinks_synthesis_does_not(self) -> None:
+        """adaptive: el especialista cuantitativo (afp) razona (sin /no_think);
+        la síntesis no (con /no_think)."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="DV01 reciente.", n_tokens=8),    # subagente afp
+            GenerationResult(text="Respuesta final.", n_tokens=6),  # síntesis
+        ])
+        await run_agent("¿DV01 de las AFP?", history=[], llm=llm, thinking_mode="adaptive")
+        afp_system = llm.calls[0]["messages"][0]["content"]
+        synth_system = llm.calls[1]["messages"][0]["content"]
+        assert "/no_think" not in afp_system     # cuant razona
+        assert synth_system.endswith("/no_think")  # síntesis no
+
+    @pytest.mark.asyncio
+    async def test_thinking_mode_off_everywhere(self) -> None:
+        """off: ni el especialista ni la síntesis razonan."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="DV01 reciente.", n_tokens=8),
+            GenerationResult(text="Respuesta final.", n_tokens=6),
+        ])
+        await run_agent("¿DV01 de las AFP?", history=[], llm=llm, thinking_mode="off")
+        assert llm.calls[0]["messages"][0]["content"].endswith("/no_think")
+        assert llm.calls[1]["messages"][0]["content"].endswith("/no_think")
+
+    @pytest.mark.asyncio
     async def test_multi_domain_runs_specialists_in_parallel(self) -> None:
         """Cross-dominio → varios especialistas en paralelo + una síntesis."""
         llm = _RoutedLLM(scripts={
@@ -270,6 +295,28 @@ class TestRunSubagent:
         assert sub.analysis == "Respuesta directa."
         assert sub.iterations == 1
         assert state.tool_trace == []
+
+    @pytest.mark.asyncio
+    async def test_think_false_injects_no_think(self, clean_registry) -> None:
+        """think=False anexa /no_think al system prompt del especialista."""
+        spec = SubAgentSpec(
+            key="tester", display_name="X",
+            system_prompt="Eres un analista de prueba.", tool_names=(),
+        )
+        llm = _MockLLM(responses=[GenerationResult(text="ok", n_tokens=3)])
+        await run_subagent(spec, "t", llm=llm, state=AgentState(), think=False)
+        system_msg = llm.calls[0]["messages"][0]["content"]
+        assert system_msg.endswith("/no_think")
+
+    @pytest.mark.asyncio
+    async def test_think_true_no_directive(self, clean_registry) -> None:
+        spec = SubAgentSpec(
+            key="tester", display_name="X",
+            system_prompt="Eres un analista de prueba.", tool_names=(),
+        )
+        llm = _MockLLM(responses=[GenerationResult(text="ok", n_tokens=3)])
+        await run_subagent(spec, "t", llm=llm, state=AgentState(), think=True)
+        assert "/no_think" not in llm.calls[0]["messages"][0]["content"]
 
 
 @pytest.mark.unit

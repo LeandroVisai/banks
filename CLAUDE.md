@@ -148,6 +148,7 @@ chunks    (chunk_id PK, document_id FK,
 | `PGUSER` / `PGPASSWORD` | SO / vacío | Servidor con auth |
 | `BANKS_LLM_FAMILY` | `mock` | `qwen` o `gemma` en producción |
 | `BANKS_LLM_MODEL_PATH` | `` | Ruta al `.gguf` |
+| `BANKS_THINKING_MODE` | `adaptive` | `off`/`adaptive`/`on`: thinking de Qwen3. `adaptive` = razona solo en especialistas cuantitativos (multi-paso); no en documentales ni síntesis |
 | `RAG_EMBEDDING_MODEL` | `Qwen3-VL-Embedding-8B` | Modelo de embeddings (resuelve a `models/<name>/`) |
 | `BANKS_CATALOG_SEMANTIC` | `false` | `true` para activar descubrimiento semántico del catálogo (requiere el embedder cargado) |
 | `BANKS_API_KEYS` | `` | CSV de API keys (vacío = sin auth) |

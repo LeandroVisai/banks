@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     max_agent_iterations: int = 6
     max_tool_result_tokens: int = 1500
     history_max_turns: int = 10
+    # Control del modo "thinking" de Qwen3 (soft switch /no_think):
+    #   off      → sin thinking en ningún componente (mínima latencia).
+    #   adaptive → thinking SOLO en especialistas multi-paso (cuantitativos),
+    #              donde el razonamiento más rinde; sin thinking en documentales
+    #              ni en la síntesis. Default (mejor balance latencia/calidad).
+    #   on       → thinking en todo (máxima calidad, máxima latencia).
+    thinking_mode: Literal["off", "adaptive", "on"] = "adaptive"
 
     # ── API ──────────────────────────────────────────────────────────────────
     api_host: str = "0.0.0.0"

@@ -39,12 +39,30 @@ from .prompts import (
     FINAL_SYNTHESIS_NUDGE,
     MAX_ITERATIONS_FALLBACK_MESSAGE,
     SYNTHESIS_PROMPT,
+    apply_thinking,
 )
 from .router import select_specialists
 from .subagents import SubAgentSpec, tool_schemas_for
 from .tools.registry import dispatch
 
 log = logging.getLogger(__name__)
+
+
+DEFAULT_THINKING_MODE = "adaptive"
+
+
+def _should_think(thinking_mode: str, component: str) -> bool:
+    """Decide si un componente usa thinking según el modo global.
+
+    ``component``: ``"quant"`` (especialista multi-paso), ``"doc"`` (especialista
+    documental) o ``"synthesis"``. En ``adaptive`` solo razonan los cuantitativos
+    (donde el razonamiento más rinde, según la literatura de CoT/function-calling);
+    ``on`` razona en todo, ``off`` en nada."""
+    if thinking_mode == "on":
+        return True
+    if thinking_mode == "off":
+        return False
+    return component == "quant"  # adaptive
 
 
 def _with_today(system_prompt: str) -> str:
@@ -525,15 +543,19 @@ async def run_subagent(
     tool_timeout_s: float = DEFAULT_TOOL_TIMEOUT_S,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    think: bool = True,
 ) -> SubAgentResult:
     """Ejecuta un especialista sobre una tarea concreta delegada por el orquestador.
 
     El sub-agente solo ve sus tools de dominio (``spec.tool_names``) y no recibe
     el historial de la conversación: el ``task`` debe ser autocontenido. El
     ``state`` se comparte con el orquestador para que las citas sean globales.
+
+    ``think``: si False, anexa ``/no_think`` al system prompt (Qwen3 responde sin
+    razonar). Lo decide ``run_agent`` según ``thinking_mode`` y ``spec.multi_step``.
     """
     messages: list[dict] = [
-        {"role": "system", "content": _with_today(spec.system_prompt)},
+        {"role": "system", "content": apply_thinking(_with_today(spec.system_prompt), think=think)},
         {"role": "user", "content": task},
     ]
     outcome = await _run_tool_loop(
@@ -616,6 +638,7 @@ async def run_agent(
     temperature: float | None = None,
     max_tokens: int | None = None,
     system_prompt: str = SYNTHESIS_PROMPT,
+    thinking_mode: str = DEFAULT_THINKING_MODE,
 ) -> AgentResult:
     """Ejecuta un turno completo del agente (arquitectura router-v1).
 
@@ -637,18 +660,22 @@ async def run_agent(
         tool_timeout_s: tiempo límite por especialista completo.
         temperature, max_tokens: overrides del LLM.
         system_prompt: prompt de síntesis (override para tests).
+        thinking_mode: ``off`` | ``adaptive`` | ``on`` — controla el thinking de
+            Qwen3 por componente (ver ``_should_think``).
     """
     state = AgentState()
     t0 = time.perf_counter()
 
     specs = select_specialists(user_message, history)
-    log.info("router → especialistas: %s", [s.key for s in specs])
+    log.info("router → especialistas: %s (thinking_mode=%s)",
+             [s.key for s in specs], thinking_mode)
 
     # 1+2. Especialistas en paralelo. Cada uno recibe la pregunta como task
     # autocontenida; comparten el AgentState (refs [N] y grounding globales).
     sub_max_iters = min(max_iterations, DEFAULT_SUBAGENT_MAX_ITERATIONS)
 
     async def _run(spec: SubAgentSpec) -> SubAgentResult:
+        think = _should_think(thinking_mode, "quant" if spec.multi_step else "doc")
         return await run_subagent(
             spec,
             user_message,
@@ -659,14 +686,16 @@ async def run_agent(
             tool_timeout_s=DEFAULT_TOOL_TIMEOUT_S,
             temperature=temperature,
             max_tokens=max_tokens,
+            think=think,
         )
 
     subs: list[SubAgentResult] = list(await asyncio.gather(*(_run(s) for s in specs)))
     total_tokens = sum(s.total_tokens for s in subs)
 
     # 3. Síntesis: una sola llamada al LLM, SIN tools (no puede entrar en loop).
+    synth_think = _should_think(thinking_mode, "synthesis")
     synth_messages: list[dict] = [
-        {"role": "system", "content": _with_today(system_prompt)},
+        {"role": "system", "content": apply_thinking(_with_today(system_prompt), think=synth_think)},
         *history,
         {"role": "user", "content": _build_synthesis_user_message(user_message, subs)},
     ]
