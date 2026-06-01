@@ -21,6 +21,8 @@ from banks_rag.application.agent.tools._parquet_query import (
     build_fetch_sql,
     date_column,
     find_date_column,
+    resolve_columns,
+    resolve_dataset_id,
 )
 from banks_rag.domain.agent import AgentState
 from banks_rag.infrastructure.sql.parquet_catalog_loader import (
@@ -177,12 +179,61 @@ class TestDateColumn:
 
 
 @pytest.mark.unit
+class TestResolveDatasetId:
+    """Fase 1: resuelve dataset_id alucinado al id real más cercano."""
+
+    def _entries(self):
+        return [
+            _dataset("spread_btp_spc"),
+            _dataset("btp_curva"),
+            _dataset("clp_monto"),
+        ]
+
+    def test_exact_match_no_note(self) -> None:
+        rid, note = resolve_dataset_id(self._entries(), "btp_curva")
+        assert rid == "btp_curva" and note is None
+
+    def test_case_insensitive(self) -> None:
+        rid, note = resolve_dataset_id(self._entries(), "BTP_Curva")
+        assert rid == "btp_curva" and note is not None
+
+    def test_hallucinated_suffix_resolves(self) -> None:
+        # Caso real visto en los logs del 7B/27B-IQ2.
+        rid, note = resolve_dataset_id(self._entries(), "spread_btp_spc_plazo")
+        assert rid == "spread_btp_spc" and "no existe" in note
+
+    def test_unrelated_returns_none(self) -> None:
+        rid, note = resolve_dataset_id(self._entries(), "xyz_totalmente_otro")
+        assert rid is None and note is None
+
+
+@pytest.mark.unit
+class TestResolveColumns:
+    def test_case_insensitive_and_fuzzy(self) -> None:
+        ds = _dataset("clp", [
+            ColumnSpec("Fecha", "TIMESTAMP"),
+            ColumnSpec("CLP", "DOUBLE"),
+            ColumnSpec("Monto transado", "BIGINT"),
+        ])
+        # 'fecha' (case) y 'usdclp' (fuzzy -> CLP).
+        resolved, notes = resolve_columns(ds, ["fecha", "usdclp"])
+        assert resolved[0] == "Fecha"
+        assert resolved[1] == "CLP"
+        assert len(notes) == 2
+
+    def test_unresolvable_passes_through(self) -> None:
+        ds = _dataset("x", [ColumnSpec("Fecha", "TIMESTAMP"), ColumnSpec("Valor", "DOUBLE")])
+        resolved, notes = resolve_columns(ds, ["columna_inventada_zzz"])
+        assert resolved == ["columna_inventada_zzz"]  # _validate_columns dará el error
+
+
+@pytest.mark.unit
 class TestBuildFetchSql:
     PARQUET_DIR = Path("/data/parquet")
 
     def test_basic_select_all(self) -> None:
         ds = _dataset("usdclp_test")
-        sql, date_col, cols = build_fetch_sql(ds, parquet_dir=self.PARQUET_DIR)
+        sql, date_col, cols, _ = build_fetch_sql(ds, parquet_dir=self.PARQUET_DIR)
         assert date_col == "Fecha"
         assert cols == ["Fecha", "Valor"]
         assert 'SELECT "Fecha", "Valor"' in sql
@@ -193,7 +244,7 @@ class TestBuildFetchSql:
 
     def test_date_range_quoted(self) -> None:
         ds = _dataset("x")
-        sql, _, _ = build_fetch_sql(
+        sql, _, _, _ = build_fetch_sql(
             ds, parquet_dir=self.PARQUET_DIR,
             fecha_inicio="2024-01-01", fecha_fin="2024-12-31",
         )
@@ -206,7 +257,7 @@ class TestBuildFetchSql:
             ColumnSpec("Bucket", "VARCHAR"),
             ColumnSpec("MM_USD", "DOUBLE"),
         ])
-        sql, date_col, cols = build_fetch_sql(ds, parquet_dir=self.PARQUET_DIR)
+        sql, date_col, cols, _ = build_fetch_sql(ds, parquet_dir=self.PARQUET_DIR)
         assert date_col is None
         assert cols == ["Bucket", "MM_USD"]
         assert "ORDER BY" not in sql
@@ -223,7 +274,7 @@ class TestBuildFetchSql:
             ColumnSpec("Tenor", "VARCHAR", values=["2Y", "10Y"]),
             ColumnSpec("Valor", "DOUBLE"),
         ])
-        sql, _, _ = build_fetch_sql(
+        sql, _, _, _ = build_fetch_sql(
             ds, parquet_dir=self.PARQUET_DIR,
             columns=["Valor"], filters={"Tenor": "10Y"},
         )
@@ -235,7 +286,7 @@ class TestBuildFetchSql:
             ColumnSpec("Tenor", "VARCHAR", values=["2Y", "5Y", "10Y"]),
             ColumnSpec("Valor", "DOUBLE"),
         ])
-        sql, _, _ = build_fetch_sql(
+        sql, _, _, _ = build_fetch_sql(
             ds, parquet_dir=self.PARQUET_DIR,
             filters={"Tenor": ["2Y", "10Y"]},
         )
@@ -243,7 +294,7 @@ class TestBuildFetchSql:
 
     def test_limit_capped_at_max(self) -> None:
         ds = _dataset("x")
-        sql, _, _ = build_fetch_sql(
+        sql, _, _, _ = build_fetch_sql(
             ds, parquet_dir=self.PARQUET_DIR, limit=9999,
         )
         assert "LIMIT 500" in sql
@@ -289,7 +340,7 @@ class TestBuildFetchSql:
             ColumnSpec("Fecha", "TIMESTAMP"),
             ColumnSpec("Spread TIB-TPM", "DOUBLE"),
         ])
-        sql, _, _ = build_fetch_sql(
+        sql, _, _, _ = build_fetch_sql(
             ds, parquet_dir=self.PARQUET_DIR,
             columns=["Spread TIB-TPM"],
         )
@@ -301,7 +352,7 @@ class TestBuildFetchSql:
             ColumnSpec("Banco", "VARCHAR"),
             ColumnSpec("Valor", "DOUBLE"),
         ])
-        sql, _, _ = build_fetch_sql(
+        sql, _, _, _ = build_fetch_sql(
             ds, parquet_dir=self.PARQUET_DIR,
             filters={"Banco": "O'Higgins"},
         )
@@ -424,7 +475,7 @@ class TestExecuteQuery:
         state = AgentState()
         with patch(
             f"{_EXEC_MODULE}.fetch_rows_from_dataset",
-            new=AsyncMock(return_value=(ds, rows, "Fecha", ["Fecha", "Valor"])),
+            new=AsyncMock(return_value=(ds, rows, "Fecha", ["Fecha", "Valor"], [])),
         ):
             result = await execute_query(
                 state=state, dataset_id="usdclp_test", columns=["Valor"],
@@ -449,7 +500,7 @@ class TestExecuteQuery:
                 for i in range(1, _MAX_ROWS + 1)]
         with patch(
             f"{_EXEC_MODULE}.fetch_rows_from_dataset",
-            new=AsyncMock(return_value=(ds, rows, "Fecha", ["Fecha", "Valor"])),
+            new=AsyncMock(return_value=(ds, rows, "Fecha", ["Fecha", "Valor"], [])),
         ):
             result = await execute_query(state=AgentState(), dataset_id="x")
         assert result["truncated"] is True

@@ -147,7 +147,7 @@ async def plot_series(
     title: str | None = None,
 ) -> dict[str, Any]:
     try:
-        dataset, rows, date_col, select_cols = await fetch_rows_from_dataset(
+        dataset, rows, date_col, select_cols, notes = await fetch_rows_from_dataset(
             dataset_id,
             columns=columns,
             fecha_inicio=fecha_inicio,
@@ -204,6 +204,7 @@ async def plot_series(
     last_row = rows[0]  # fetch viene ordenado por fecha DESC
     last_values = {c: last_row.get(c) for c in numeric}
     return {
+        **({"resolution_notes": notes} if notes else {}),
         "chart_id": chart_id,
         "dataset_id": dataset.id,
         "name": dataset.name,

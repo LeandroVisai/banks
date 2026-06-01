@@ -124,7 +124,7 @@ async def execute_query(
     limit: int | None = None,
 ) -> dict[str, Any]:
     try:
-        dataset, rows, date_col, select_cols = await fetch_rows_from_dataset(
+        dataset, rows, date_col, select_cols, notes = await fetch_rows_from_dataset(
             dataset_id,
             columns=columns,
             fecha_inicio=fecha_inicio,
@@ -148,7 +148,9 @@ async def execute_query(
 
     last_date = _last_date(rows)
     truncated = len(rows) >= _MAX_ROWS
+    result_extra = {"resolution_notes": notes} if notes else {}
     return {
+        **result_extra,
         "dataset_id": dataset.id,
         "name": dataset.name,
         "unit": dataset.unit,

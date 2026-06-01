@@ -96,7 +96,7 @@ async def _fetch_rows_from_dataset(
     except ValueError as exc:
         return None, {"error": str(exc)}
     try:
-        dataset, rows, date_col, _ = await fetch_rows_from_dataset(
+        dataset, rows, date_col, _, _ = await fetch_rows_from_dataset(
             dataset_id,
             columns=[column],
             fecha_inicio=fi,
@@ -536,7 +536,7 @@ async def compute_composition(
     except ValueError as exc:
         return {"error": str(exc)}
     try:
-        dataset, rows, date_col, _ = await fetch_rows_from_dataset(
+        dataset, rows, date_col, _, _ = await fetch_rows_from_dataset(
             dataset_id,
             columns=fetch_cols,
             fecha_inicio=fi,
@@ -677,7 +677,7 @@ async def compute_aggregate(
     except ValueError as exc:
         return {"error": str(exc)}
     try:
-        dataset, rows, date_col, _ = await fetch_rows_from_dataset(
+        dataset, rows, date_col, _, _ = await fetch_rows_from_dataset(
             dataset_id,
             columns=fetch_cols,
             fecha_inicio=fi,

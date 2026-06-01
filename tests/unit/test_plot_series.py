@@ -26,7 +26,7 @@ def _dataset(id_: str, columns: list[ColumnSpec]) -> ParquetDataset:
 def _patch_fetch(dataset, rows, date_col, select_cols):
     """Parchea fetch_rows_from_dataset (async) para devolver datos fijos."""
     async def _fake(dataset_id, **kwargs):
-        return dataset, rows, date_col, select_cols
+        return dataset, rows, date_col, select_cols, []
     return patch(
         "banks_rag.application.agent.tools.plot_series.fetch_rows_from_dataset",
         side_effect=_fake,

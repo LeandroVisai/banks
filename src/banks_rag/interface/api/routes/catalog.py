@@ -68,7 +68,7 @@ async def execute_catalog_query(
 ) -> QueryResponse:
     """Fetch parametrizado del dataset. La SQL la arma el helper safe."""
     try:
-        dataset, rows, date_col, select_cols = await fetch_rows_from_dataset(
+        dataset, rows, date_col, select_cols, _ = await fetch_rows_from_dataset(
             dataset_id,
             fecha_inicio=fecha_inicio,
             fecha_fin=fecha_fin,

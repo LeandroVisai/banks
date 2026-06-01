@@ -188,7 +188,7 @@ def _mock_fetch(
 ) -> AsyncMock:
     """AsyncMock que retorna la tupla esperada por las analytics."""
     select_cols = [date_col] + [c.name for c in dataset.columns if c.name != date_col]
-    return AsyncMock(return_value=(dataset, rows, date_col, select_cols))
+    return AsyncMock(return_value=(dataset, rows, date_col, select_cols, []))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -290,8 +290,8 @@ class TestComputeSpread:
         rows_b = [{"Fecha": "2024-02-01", "Valor": 2.0},
                   {"Fecha": "2024-01-01", "Valor": 1.5}]
         fetched = AsyncMock(side_effect=[
-            (ds_a, rows_a, "Fecha", ["Fecha", "Valor"]),
-            (ds_b, rows_b, "Fecha", ["Fecha", "Valor"]),
+            (ds_a, rows_a, "Fecha", ["Fecha", "Valor"], []),
+            (ds_b, rows_b, "Fecha", ["Fecha", "Valor"], []),
         ])
         with patch(f"{_MODULE}.fetch_rows_from_dataset", new=fetched):
             result = await analytics.compute_spread(
@@ -443,7 +443,7 @@ class TestGetMarketSnapshot:
             cols = [ColumnSpec("Fecha", "TIMESTAMP"), ColumnSpec(column, "DOUBLE")]
             ds = _dataset(ds_id, columns=cols)
             row = {"Fecha": "2026-05-15", column: last_values[clave]}
-            return (ds, [row], "Fecha", ["Fecha", column])
+            return (ds, [row], "Fecha", ["Fecha", column], [])
 
         fetched = AsyncMock(
             side_effect=[_build_return(ind) for ind in snapshot_indicators],

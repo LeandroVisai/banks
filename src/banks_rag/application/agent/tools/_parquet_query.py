@@ -18,6 +18,8 @@ Filosofía:
 from __future__ import annotations
 
 import asyncio
+import difflib
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -30,7 +32,88 @@ from banks_rag.infrastructure.sql.parquet_catalog_loader import (
     load_parquet_catalog,
 )
 
+log = logging.getLogger(__name__)
+
 DEFAULT_LIMIT = 200
+
+# Umbrales de similitud para resolver identificadores que el LLM alucina
+# (p.ej. 'spread_btp_spc_plazo' → 'spread_btp_spc', 'usdclp' → 'CLP'). El de
+# dataset es más estricto (nombres largos, menos falsos positivos); el de
+# columna algo más laxo (nombres cortos).
+_DATASET_FUZZY_CUTOFF = 0.85  # estricto: evita resolver a un dataset equivocado
+_COLUMN_FUZZY_CUTOFF = 0.6
+
+
+def resolve_dataset_id(
+    entries: list[ParquetDataset], dataset_id: str,
+) -> tuple[str | None, str | None]:
+    """Resuelve un ``dataset_id`` al id real más cercano.
+
+    Returns ``(resolved_id, note)``: exacto → ``(id, None)``; case-insensitive o
+    fuzzy → ``(id_real, nota)``; sin match razonable → ``(None, None)``. Hace que
+    un id alucinado por el LLM (sufijo inventado, mayúsculas) no rompa el fetch.
+    """
+    ids = [e.id for e in entries]
+    if dataset_id in ids:
+        return dataset_id, None
+    lower = {i.lower(): i for i in ids}
+    key = dataset_id.lower().strip()
+    if key in lower:
+        return lower[key], f"dataset_id {dataset_id!r} interpretado como {lower[key]!r}."
+    # Prefijo: el LLM suele AÑADIR un sufijo inventado ('_plazo', '_10y'). El id
+    # real más largo que sea prefijo del pedido es el match correcto y seguro
+    # (mucho más fiable que difflib, que no es semántico).
+    prefix_hits = [real for low, real in lower.items() if key.startswith(low + "_")]
+    if prefix_hits:
+        real = max(prefix_hits, key=len)
+        return real, f"dataset_id {dataset_id!r} no existe; se usó {real!r} (prefijo)."
+    # difflib ESTRICTO como último recurso (typos), no para sufijos espurios.
+    match = difflib.get_close_matches(key, list(lower), n=1, cutoff=_DATASET_FUZZY_CUTOFF)
+    if match:
+        real = lower[match[0]]
+        return real, f"dataset_id {dataset_id!r} no existe; se usó el más cercano {real!r}."
+    return None, None
+
+
+def resolve_columns(
+    dataset: ParquetDataset, columns: list[str],
+) -> tuple[list[str], list[str]]:
+    """Resuelve columnas pedidas a las reales del esquema (case-insensitive +
+    fuzzy). Returns ``(columnas_resueltas, notas)``. Las que no tengan match
+    razonable se devuelven tal cual (``_validate_columns`` luego levanta con la
+    lista válida)."""
+    valid = [c.name for c in dataset.columns]
+    lower = {c.lower(): c for c in valid}
+    resolved: list[str] = []
+    notes: list[str] = []
+    for col in columns:
+        if col in valid:
+            resolved.append(col)
+            continue
+        key = col.lower().strip()
+        if key in lower:
+            resolved.append(lower[key])
+            notes.append(f"columna {col!r} → {lower[key]!r}")
+            continue
+        # Substring: 'usdclp' ⊃ 'clp'; 'monto' ⊂ 'monto transado'. Más fiable
+        # que difflib para nombres compuestos. Se exige len ≥ 3 para evitar
+        # matches triviales.
+        subs = [
+            real for low, real in lower.items()
+            if len(low) >= 3 and len(key) >= 3 and (low in key or key in low)
+        ]
+        if subs:
+            real = max(subs, key=len)
+            resolved.append(real)
+            notes.append(f"columna {col!r} no existe; se usó {real!r}")
+            continue
+        match = difflib.get_close_matches(key, list(lower), n=1, cutoff=_COLUMN_FUZZY_CUTOFF)
+        if match:
+            resolved.append(lower[match[0]])
+            notes.append(f"columna {col!r} no existe; se usó {lower[match[0]]!r}")
+        else:
+            resolved.append(col)  # sin match → _validate_columns dará el error útil
+    return resolved, notes
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DATE_FALLBACK_NAMES = ("Fecha", "fecha", "date", "Date")
@@ -144,20 +227,23 @@ def build_fetch_sql(
     fecha_fin: str | None = None,
     filters: dict[str, Any] | None = None,
     limit: int | None = None,
-) -> tuple[str, str | None, list[str]]:
+) -> tuple[str, str | None, list[str], list[str]]:
     """Construye SQL safe para leer del parquet del dataset.
 
     Returns:
-        ``(sql, date_col, select_cols)``. ``date_col`` es ``None`` para
-        datasets *snapshot* sin columna temporal: en ese caso no hay ``ORDER
-        BY`` por fecha y los filtros ``fecha_inicio/fecha_fin`` no se admiten.
+        ``(sql, date_col, select_cols, notes)``. ``date_col`` es ``None`` para
+        datasets *snapshot* sin columna temporal (sin ``ORDER BY`` ni filtro de
+        fecha). ``notes`` lista correcciones de columnas resueltas por similitud.
     """
     date_col = find_date_column(dataset)
+    notes: list[str] = []
 
     # Columnas a seleccionar: si hay fecha, va primero; si no se pidieron
     # columnas, vuelca todas (útil para descubrimiento). Los snapshots sin
-    # fecha se leen igual con las columnas pedidas.
+    # fecha se leen igual con las columnas pedidas. Las columnas se resuelven
+    # por similitud antes de validar (tolera nombres alucinados por el LLM).
     if columns:
+        columns, notes = resolve_columns(dataset, columns)
         _validate_columns(dataset, columns)
         if date_col:
             select_cols = [date_col] + [c for c in columns if c != date_col]
@@ -205,7 +291,7 @@ def build_fetch_sql(
 
     lim = min(int(limit), MAX_ROWS) if limit is not None else DEFAULT_LIMIT
     sql_parts.append(f"LIMIT {lim}")
-    return " ".join(sql_parts), date_col, select_cols
+    return " ".join(sql_parts), date_col, select_cols, notes
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -220,18 +306,30 @@ async def fetch_rows_from_dataset(
     fecha_fin: str | None = None,
     filters: dict[str, Any] | None = None,
     limit: int | None = None,
-) -> tuple[ParquetDataset, list[dict], str, list[str]]:
+) -> tuple[ParquetDataset, list[dict], str | None, list[str], list[str]]:
     """Resuelve el dataset, arma SQL safe y la ejecuta.
 
+    Resuelve por similitud el ``dataset_id`` (y las columnas, dentro de
+    ``build_fetch_sql``) cuando el LLM alucina un nombre que no existe.
+
     Returns:
-        ``(dataset, rows, date_col, select_cols)``.
+        ``(dataset, rows, date_col, select_cols, notes)`` — ``notes`` lista las
+        correcciones de identificadores aplicadas (para reportarlas al modelo).
 
     Raises:
-        ValueError: dataset desconocido o validación de columnas/filters/fechas.
+        ValueError: dataset irresoluble o validación de columnas/filters/fechas.
         FileNotFoundError: el archivo parquet declarado no existe en disco.
     """
     entries = await asyncio.to_thread(load_parquet_catalog)
+    notes: list[str] = []
     dataset = get_dataset(entries, dataset_id)
+    if dataset is None:
+        resolved, note = resolve_dataset_id(entries, dataset_id)
+        if resolved is not None:
+            dataset = get_dataset(entries, resolved)
+            if note:
+                log.info("plot/exec: %s", note)
+                notes.append(note)
     if dataset is None:
         raise ValueError(
             f"dataset_id desconocido: {dataset_id!r} "
@@ -245,7 +343,7 @@ async def fetch_rows_from_dataset(
             f"Dataset {dataset_id!r}: archivo parquet no existe en {parquet_path}"
         )
 
-    sql, date_col, select_cols = build_fetch_sql(
+    sql, date_col, select_cols, col_notes = build_fetch_sql(
         dataset,
         parquet_dir=parquet_dir,
         columns=columns,
@@ -254,5 +352,6 @@ async def fetch_rows_from_dataset(
         filters=filters,
         limit=limit,
     )
+    notes.extend(col_notes)
     rows = await asyncio.to_thread(run_duckdb, sql)
-    return dataset, rows, date_col, select_cols
+    return dataset, rows, date_col, select_cols, notes
