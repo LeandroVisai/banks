@@ -185,7 +185,7 @@ class QueryResponse(BaseModel):
     name: str
     unit: str
     segment: str
-    date_column: str
+    date_column: str | None = None  # None para datasets snapshot sin fecha
     columns: list[str]
     rows: list[dict]
     n_rows: int

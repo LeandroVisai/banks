@@ -20,6 +20,7 @@ import pytest
 from banks_rag.application.agent.tools._parquet_query import (
     build_fetch_sql,
     date_column,
+    find_date_column,
 )
 from banks_rag.domain.agent import AgentState
 from banks_rag.infrastructure.sql.parquet_catalog_loader import (
@@ -66,7 +67,10 @@ datasets:
       - {name: Valor, type: DOUBLE}
 """
     p = tmp_path / "parquet_catalog.yaml"
-    p.write_text(content)
+    # encoding utf-8 explícito: en Windows el default es cp1252 y los acentos
+    # del contenido (ó, í…) se escribirían en cp1252, pero load_parquet_catalog
+    # lee utf-8 → UnicodeDecodeError. En POSIX el default ya es utf-8.
+    p.write_text(content, encoding="utf-8")
     return p
 
 
@@ -163,6 +167,14 @@ class TestDateColumn:
         with pytest.raises(ValueError, match="columna de fecha"):
             date_column(ds)
 
+    def test_find_date_column_returns_none_for_snapshot(self) -> None:
+        # Snapshot transversal (sin columna temporal): find_ NO lanza, retorna None.
+        ds = _dataset("snap", [
+            ColumnSpec("Bucket", "VARCHAR"),
+            ColumnSpec("MM_USD", "DOUBLE"),
+        ])
+        assert find_date_column(ds) is None
+
 
 @pytest.mark.unit
 class TestBuildFetchSql:
@@ -174,7 +186,8 @@ class TestBuildFetchSql:
         assert date_col == "Fecha"
         assert cols == ["Fecha", "Valor"]
         assert 'SELECT "Fecha", "Valor"' in sql
-        assert "/data/parquet/usdclp_test.parquet" in sql
+        # Nombre de archivo, sin asumir separador (Windows usa '\', POSIX '/').
+        assert "usdclp_test.parquet" in sql
         assert "ORDER BY \"Fecha\" DESC" in sql
         assert "LIMIT 200" in sql
 
@@ -186,6 +199,23 @@ class TestBuildFetchSql:
         )
         assert "\"Fecha\" >= '2024-01-01'" in sql
         assert "\"Fecha\" <= '2024-12-31'" in sql
+
+    def test_snapshot_without_date_no_order_by(self) -> None:
+        # Dataset snapshot (sin fecha): date_col None, sin ORDER BY, lee igual.
+        ds = _dataset("snap", [
+            ColumnSpec("Bucket", "VARCHAR"),
+            ColumnSpec("MM_USD", "DOUBLE"),
+        ])
+        sql, date_col, cols = build_fetch_sql(ds, parquet_dir=self.PARQUET_DIR)
+        assert date_col is None
+        assert cols == ["Bucket", "MM_USD"]
+        assert "ORDER BY" not in sql
+        assert "LIMIT 200" in sql
+
+    def test_snapshot_rejects_date_filter(self) -> None:
+        ds = _dataset("snap", [ColumnSpec("Bucket", "VARCHAR"), ColumnSpec("MM_USD", "DOUBLE")])
+        with pytest.raises(ValueError, match="no admite filtro temporal"):
+            build_fetch_sql(ds, parquet_dir=self.PARQUET_DIR, fecha_inicio="2024-01-01")
 
     def test_filter_equality_for_enum_column(self) -> None:
         ds = _dataset("btp_test", [

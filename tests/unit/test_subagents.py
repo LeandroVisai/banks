@@ -1,14 +1,12 @@
-"""Tests del wiring de sub-agentes (Fase B): specs, delegación y filtrado de tools."""
+"""Tests del wiring de sub-agentes (router-v1): specs y filtrado de tools."""
 
 from __future__ import annotations
 
 import pytest
 
 from banks_rag.application.agent.subagents import (
-    DELEGATE_SCHEMAS,
     SUBAGENTS,
     SubAgentSpec,
-    subagent_for_delegate,
     tool_schemas_for,
 )
 
@@ -27,7 +25,6 @@ class TestSubagentSpecs:
     def test_each_spec_is_self_consistent(self) -> None:
         for key, spec in SUBAGENTS.items():
             assert spec.key == key
-            assert spec.delegate_tool.startswith("delegate_to_")
             assert spec.system_prompt
             assert spec.tool_names  # ningún especialista sin tools
 
@@ -45,52 +42,10 @@ class TestSubagentSpecs:
         assert "Renta Fija" in SUBAGENTS["renta_fija"].system_prompt
 
     def test_keys_match_specialist_router(self) -> None:
-        """Las keys deben coincidir con financial_aliases.specialist_for."""
+        """Las keys deben coincidir con financial_aliases.specialist."""
         from banks_rag.domain_knowledge.financial_aliases import CONCEPTS
         router_keys = {c.specialist for c in CONCEPTS if c.specialist}
         assert router_keys <= set(SUBAGENTS)
-
-
-@pytest.mark.unit
-class TestDelegateSchemas:
-    def test_one_schema_per_subagent(self) -> None:
-        names = [s["function"]["name"] for s in DELEGATE_SCHEMAS]
-        assert len(names) == len(SUBAGENTS)
-        assert set(names) == {spec.delegate_tool for spec in SUBAGENTS.values()}
-
-    def test_every_delegate_requires_task(self) -> None:
-        for schema in DELEGATE_SCHEMAS:
-            params = schema["function"]["parameters"]
-            assert params["required"] == ["task"]
-            assert "task" in params["properties"]
-
-
-@pytest.mark.unit
-class TestSubagentForDelegate:
-    def test_resolves_known_delegate(self) -> None:
-        spec = subagent_for_delegate("delegate_to_fx_analyst")
-        assert spec is not None
-        assert spec.key == "fx"
-
-    def test_unknown_delegate_returns_none(self) -> None:
-        assert subagent_for_delegate("delegate_to_nobody") is None
-        assert subagent_for_delegate("delegate_to_ghost") is None
-
-    @pytest.mark.parametrize(
-        "invented,expected",
-        [
-            # El LLM abrevia o traduce el nombre exacto (visto en logs reales).
-            ("delegate_to_fx", "fx"),
-            ("delegate_to_analista_politica_monetaria", "policy"),
-            ("delegate_to_monetary_policy_analyst", "policy"),
-            ("delegate_to_nr", "no_residentes"),
-            ("delegate_to_pensiones", "afp"),
-            ("delegate_to_fondos_mutuos_analyst", "fondos_mutuos"),
-        ],
-    )
-    def test_fuzzy_resolves_invented_delegate_names(self, invented, expected) -> None:
-        spec = subagent_for_delegate(invented)
-        assert spec is not None and spec.key == expected
 
 
 @pytest.mark.unit
@@ -110,8 +65,6 @@ class TestToolSchemasFor:
         bad = SubAgentSpec(
             key="bad",
             display_name="Bad",
-            delegate_tool="delegate_to_bad",
-            delegate_description="x",
             system_prompt="x",
             tool_names=("herramienta_inexistente",),
         )

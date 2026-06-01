@@ -125,6 +125,124 @@ class TestDispatch:
 
 
 @pytest.mark.unit
+class TestArgumentNormalization:
+    """dispatch tolera alias de args (modelos que inventan nombres) y descarta
+    kwargs no aceptados en vez de fallar con TypeError."""
+
+    @staticmethod
+    def _register_query_tool() -> None:
+        schema = {
+            "type": "function",
+            "function": {
+                "name": "qtool",
+                "description": "needs query",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}, "top_k": {"type": "integer"}},
+                    "required": ["query"],
+                },
+            },
+        }
+
+        @register("qtool", schema)
+        async def qtool(state, query: str, top_k: int = 5):
+            return {"query": query, "top_k": top_k}
+
+    @pytest.mark.asyncio
+    async def test_alias_maps_to_canonical(self, clean_registry) -> None:
+        self._register_query_tool()
+        state = AgentState()
+        result, _ = await dispatch(state, "qtool", {"keywords": "tasa de interés"})
+        assert result == {"query": "tasa de interés", "top_k": 5}
+
+    @pytest.mark.asyncio
+    async def test_query_list_coerced_to_string(self, clean_registry) -> None:
+        self._register_query_tool()
+        state = AgentState()
+        result, _ = await dispatch(state, "qtool", {"search_term": ["spread", "btp", "spc"]})
+        assert result["query"] == "spread btp spc"
+
+    @pytest.mark.asyncio
+    async def test_unknown_kwarg_dropped_not_error(self, clean_registry) -> None:
+        self._register_query_tool()
+        state = AgentState()
+        # `bogus` no es alias ni parámetro: se descarta y la tool corre igual.
+        result, _ = await dispatch(state, "qtool", {"query": "x", "bogus": 123})
+        assert result == {"query": "x", "top_k": 5}
+
+    @pytest.mark.asyncio
+    async def test_explicit_canonical_not_overwritten_by_alias(self, clean_registry) -> None:
+        self._register_query_tool()
+        state = AgentState()
+        result, _ = await dispatch(state, "qtool", {"query": "real", "q": "alias"})
+        assert result["query"] == "real"
+
+    @pytest.mark.asyncio
+    async def test_series_split_into_dataset_and_column(self, clean_registry) -> None:
+        schema = {
+            "type": "function",
+            "function": {
+                "name": "ctool",
+                "description": "needs dataset_id+column",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"dataset_id": {"type": "string"}, "column": {"type": "string"}},
+                    "required": ["dataset_id", "column"],
+                },
+            },
+        }
+
+        @register("ctool", schema)
+        async def ctool(state, dataset_id: str, column: str):
+            return {"dataset_id": dataset_id, "column": column}
+
+        state = AgentState()
+        # El modelo empaqueta "dataset.columna" en `series`.
+        result, _ = await dispatch(state, "ctool", {"series": "clp_monto.usdclp"})
+        assert result == {"dataset_id": "clp_monto", "column": "usdclp"}
+
+    @pytest.mark.asyncio
+    async def test_varkw_tool_passthrough_untouched(self, clean_registry) -> None:
+        schema = {
+            "type": "function",
+            "function": {
+                "name": "anytool",
+                "description": "accepts anything",
+                "parameters": {"type": "object"},
+            },
+        }
+
+        @register("anytool", schema)
+        async def anytool(state, **kwargs):
+            return {"got": kwargs}
+
+        state = AgentState()
+        # Con **kwargs no se remapea ni descarta nada.
+        result, _ = await dispatch(state, "anytool", {"keywords": ["a"], "bogus": 1})
+        assert result == {"got": {"keywords": ["a"], "bogus": 1}}
+
+    @pytest.mark.asyncio
+    async def test_query_optional_omitted_is_ok(self, clean_registry) -> None:
+        # query opcional: si la tool lo declara con default, omitirlo no es error.
+        schema = {
+            "type": "function",
+            "function": {
+                "name": "browsetool",
+                "description": "query opcional",
+                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+            },
+        }
+
+        @register("browsetool", schema)
+        async def browsetool(state, query: str | None = None):
+            return {"query": query}
+
+        state = AgentState()
+        result, _ = await dispatch(state, "browsetool", {"segment_bogus": "x"})
+        assert result == {"query": None}
+
+
+@pytest.mark.unit
 def test_signature_hint(clean_registry) -> None:
     schema = {
         "type": "function",

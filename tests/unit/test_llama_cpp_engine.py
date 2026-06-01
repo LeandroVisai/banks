@@ -110,7 +110,10 @@ class TestHelpers:
 @pytest.mark.unit
 class TestGenerate:
     def _run(self, coro) -> object:
-        return asyncio.get_event_loop().run_until_complete(coro)
+        # asyncio.run crea y cierra un loop propio: en Python 3.12
+        # get_event_loop() ya no crea uno implícito en el MainThread y lanzaría
+        # RuntimeError ("no current event loop").
+        return asyncio.run(coro)
 
     def test_plain_text_response(self, tmp_path: Path) -> None:
         engine, mock_llama = _make_engine(tmp_path)
@@ -224,7 +227,7 @@ class TestGenerate:
         gguf.write_bytes(b"x")
         engine = LlamaCppEngine(str(gguf))
         with pytest.raises(RuntimeError, match="no cargado"):
-            asyncio.get_event_loop().run_until_complete(engine.generate(MESSAGES))
+            asyncio.run(engine.generate(MESSAGES))
 
 
 # ── Tests de tokenización ─────────────────────────────────────────────────────
@@ -268,7 +271,7 @@ class TestLoadAndInfo:
     def test_load_idempotent(self, tmp_path: Path) -> None:
         engine, mock_llama = _make_engine(tmp_path)
         with patch("banks_rag.infrastructure.llm.llama_cpp_engine.LlamaCppEngine._sync_load") as m:
-            asyncio.get_event_loop().run_until_complete(engine.load())
+            asyncio.run(engine.load())
             m.assert_not_called()  # ya estaba loaded=True
 
     def test_info_fields(self, tmp_path: Path) -> None:

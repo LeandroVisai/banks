@@ -51,7 +51,9 @@ _SCHEMA = {
                         "Pregunta o descripción en lenguaje natural de los "
                         "datos que necesitas (ej. 'curva de bonos BTP en "
                         "pesos', 'tipo de cambio dólar último mes', "
-                        "'activos del banco BCI en pesos')."
+                        "'activos del banco BCI en pesos'). OPCIONAL: si lo "
+                        "omites, lista los datasets disponibles (filtrados por "
+                        "`segment` si lo entregas) para que elijas uno."
                     ),
                 },
                 "top_k": {
@@ -71,7 +73,7 @@ _SCHEMA = {
                     ),
                 },
             },
-            "required": ["query"],
+            "required": [],
         },
     },
 }
@@ -80,7 +82,7 @@ _SCHEMA = {
 @register("discover_query", _SCHEMA)
 async def discover_query(
     state: AgentState,
-    query: str,
+    query: str | None = None,
     top_k: int = 5,
     segment: str | None = None,
 ) -> dict[str, Any]:
@@ -105,10 +107,17 @@ async def discover_query(
             )
 
     top_k = max(1, min(int(top_k), 20))
-    # Scoring semántico best-effort (embeddings del catálogo); {} si la feature
-    # está off o el modelo no está, en cuyo caso el ranking es léxico+alias.
-    semantic = catalog_semantic_scores(query, entries)
-    top = search_datasets(entries, query, top_k=top_k, extra_scores=semantic)
+    query = (query or "").strip()
+    if not query:
+        # Modo browse: sin texto de búsqueda, lista los datasets disponibles
+        # (ya filtrados por segment si se entregó). Robusto ante modelos que
+        # llaman discover_query solo con `segment` esperando un listado.
+        top = entries[:top_k]
+    else:
+        # Scoring semántico best-effort (embeddings del catálogo); {} si la
+        # feature está off o el modelo no está → ranking léxico+alias.
+        semantic = catalog_semantic_scores(query, entries)
+        top = search_datasets(entries, query, top_k=top_k, extra_scores=semantic)
 
     result: dict[str, Any] = {
         "results": [e.to_dict() for e in top],

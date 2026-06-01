@@ -47,7 +47,9 @@ SCHEMA = {
                         "Consulta semántica en español. Sé específico: "
                         "incluye nombres de variables (TPM, IPC, USD/CLP), "
                         "períodos (2024, último trimestre), o secciones "
-                        "(decisión, votación, riesgos)."
+                        "(decisión, votación, riesgos). OPCIONAL: si lo omites, "
+                        "trae los fragmentos más relevantes que cumplan los "
+                        "filtros (doc_type/año/fecha)."
                     ),
                 },
                 "k": {
@@ -83,7 +85,7 @@ SCHEMA = {
                     "description": "Fecha hasta (ISO YYYY-MM-DD).",
                 },
             },
-            "required": ["query"],
+            "required": [],
         },
     },
 }
@@ -156,15 +158,20 @@ def _format_chunk(chunk: dict, ref: int) -> dict:
 @register("search_documents", SCHEMA)
 async def search_documents(
     state: "AgentState",
-    query: str,
+    query: str | None = None,
     k: int = 5,
     doc_type: str | list[str] | None = None,
     year: int | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> dict[str, Any]:
-    """Ejecuta hybrid_search y registra cada chunk en el ``AgentState``."""
+    """Ejecuta hybrid_search y registra cada chunk en el ``AgentState``.
+
+    ``query`` es opcional: sin él, ``hybrid_search`` cae a su ranking por
+    importancia respetando los filtros (modo browse). Robusto ante modelos que
+    invocan la tool solo con filtros (doc_type/año) y omiten el texto."""
     k = max(1, min(int(k), 10))
+    query = (query or "").strip()
     filters = _build_filters(doc_type, year, date_from, date_to)
 
     repo = PostgresRepo(prefix=os.getenv("RAG_TABLE_PREFIX", ""))

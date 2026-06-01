@@ -41,11 +41,15 @@ _DATE_TYPES = frozenset({"TIMESTAMP", "DATE", "TIMESTAMP_NS", "TIMESTAMP_S", "TI
 # Resolución / validación
 # ─────────────────────────────────────────────────────────────────────────────
 
-def date_column(dataset: ParquetDataset) -> str:
-    """Devuelve el nombre de la columna fecha del dataset.
+def find_date_column(dataset: ParquetDataset) -> str | None:
+    """Nombre de la columna fecha del dataset, o ``None`` si no tiene.
 
     Prefiere la primera columna de tipo TIMESTAMP/DATE; fallback a nombres
-    comunes (``Fecha``, ``fecha``, ``date``, ``Date``)."""
+    comunes (``Fecha``, ``fecha``, ``date``, ``Date``). Muchos datasets son
+    *snapshots* transversales (posición/composición por categoría, p. ej.
+    ``posicion_rfl_afp``, ``attribution``, ``cambiario_afp``) y NO tienen
+    columna temporal: para esos retorna ``None`` (se leen igual con
+    ``execute_query``, sin orden ni filtro por fecha)."""
     for col in dataset.columns:
         if col.type.upper() in _DATE_TYPES:
             return col.name
@@ -53,10 +57,21 @@ def date_column(dataset: ParquetDataset) -> str:
         for col in dataset.columns:
             if col.name == name:
                 return col.name
-    raise ValueError(
-        f"Dataset {dataset.id!r}: no se identificó columna de fecha "
-        f"(tipos {sorted(_DATE_TYPES)} o nombres {_DATE_FALLBACK_NAMES})."
-    )
+    return None
+
+
+def date_column(dataset: ParquetDataset) -> str:
+    """Como :func:`find_date_column` pero LANZA si el dataset no tiene fecha.
+
+    Para código que exige una serie temporal (analytics de variación/spread/
+    estadística/anomalía); ``execute_query`` usa ``find_date_column``."""
+    col = find_date_column(dataset)
+    if col is None:
+        raise ValueError(
+            f"Dataset {dataset.id!r}: no se identificó columna de fecha "
+            f"(tipos {sorted(_DATE_TYPES)} o nombres {_DATE_FALLBACK_NAMES})."
+        )
+    return col
 
 
 def _validate_columns(dataset: ParquetDataset, columns: list[str]) -> None:
@@ -129,21 +144,25 @@ def build_fetch_sql(
     fecha_fin: str | None = None,
     filters: dict[str, Any] | None = None,
     limit: int | None = None,
-) -> tuple[str, str, list[str]]:
+) -> tuple[str, str | None, list[str]]:
     """Construye SQL safe para leer del parquet del dataset.
 
     Returns:
-        ``(sql, date_col, select_cols)`` — el caller puede usar ``date_col``
-        para saber qué columna de fecha viene en las filas y ``select_cols``
-        para registrar cada serie por nombre.
+        ``(sql, date_col, select_cols)``. ``date_col`` es ``None`` para
+        datasets *snapshot* sin columna temporal: en ese caso no hay ``ORDER
+        BY`` por fecha y los filtros ``fecha_inicio/fecha_fin`` no se admiten.
     """
-    date_col = date_column(dataset)
+    date_col = find_date_column(dataset)
 
-    # Columnas a seleccionar: siempre incluye la fecha primero; si no se
-    # pidieron columnas, vuelca todas (útil para descubrimiento).
+    # Columnas a seleccionar: si hay fecha, va primero; si no se pidieron
+    # columnas, vuelca todas (útil para descubrimiento). Los snapshots sin
+    # fecha se leen igual con las columnas pedidas.
     if columns:
         _validate_columns(dataset, columns)
-        select_cols = [date_col] + [c for c in columns if c != date_col]
+        if date_col:
+            select_cols = [date_col] + [c for c in columns if c != date_col]
+        else:
+            select_cols = list(columns)
     else:
         select_cols = [c.name for c in dataset.columns]
 
@@ -153,6 +172,12 @@ def build_fetch_sql(
         f"SELECT {select_clause}",
         f"FROM read_parquet({_quote_string(str(parquet_path))})",
     ]
+
+    if (fecha_inicio or fecha_fin) and date_col is None:
+        raise ValueError(
+            f"Dataset {dataset.id!r} no tiene columna de fecha (es un snapshot "
+            "transversal); no admite filtro temporal fecha_inicio/fecha_fin."
+        )
 
     where: list[str] = []
     if fecha_inicio:
@@ -174,7 +199,9 @@ def build_fetch_sql(
     if where:
         sql_parts.append("WHERE " + " AND ".join(where))
 
-    sql_parts.append(f"ORDER BY {_quote_ident(date_col)} DESC")
+    # ORDER BY solo si hay columna de fecha; los snapshots no tienen orden temporal.
+    if date_col:
+        sql_parts.append(f"ORDER BY {_quote_ident(date_col)} DESC")
 
     lim = min(int(limit), MAX_ROWS) if limit is not None else DEFAULT_LIMIT
     sql_parts.append(f"LIMIT {lim}")

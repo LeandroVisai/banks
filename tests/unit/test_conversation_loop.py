@@ -44,14 +44,6 @@ class _MockLLM:
         return len(text) // 4
 
 
-def _delegate(call_id: str, delegate_tool: str, task: str) -> GenerationResult:
-    return GenerationResult(
-        text="",
-        tool_calls=[ToolCall(id=call_id, name=delegate_tool, arguments={"task": task})],
-        n_tokens=10,
-    )
-
-
 @dataclass
 class _RoutedLLM:
     """LLM mock que responde según qué agente lo llama y el turno de ese agente.
@@ -236,8 +228,6 @@ class TestRunSubagent:
         spec = SubAgentSpec(
             key="tester",
             display_name="Analista de Prueba",
-            delegate_tool="delegate_to_tester",
-            delegate_description="x",
             system_prompt="Eres un analista de prueba.",
             tool_names=("fake_tool",),
         )
@@ -270,8 +260,6 @@ class TestRunSubagent:
         spec = SubAgentSpec(
             key="tester",
             display_name="Analista de Prueba",
-            delegate_tool="delegate_to_tester",
-            delegate_description="x",
             system_prompt="Eres un analista de prueba.",
             tool_names=(),
         )
@@ -344,8 +332,8 @@ class TestFormatChunksSeen:
             return {"n_results": 1}
 
         spec = SubAgentSpec(
-            key="afp", display_name="X", delegate_tool="delegate_to_afp_analyst",
-            delegate_description="x", system_prompt="Eres un analista de prueba.",
+            key="afp", display_name="X",
+            system_prompt="Eres un analista de prueba.",
             tool_names=("fake_tool",),
         )
         llm = _MockLLM(responses=[
@@ -371,8 +359,6 @@ class TestFormatChunksSeen:
         spec = SubAgentSpec(
             key="afp",
             display_name="Analista de Fondos de Pensiones (AFP)",
-            delegate_tool="delegate_to_afp_analyst",
-            delegate_description="x",
             system_prompt="Eres un analista de prueba.",
             tool_names=(),
         )
@@ -406,8 +392,6 @@ class TestFormatChunksSeen:
         spec = SubAgentSpec(
             key="afp",
             display_name="Analista de Fondos de Pensiones (AFP)",
-            delegate_tool="delegate_to_afp_analyst",
-            delegate_description="x",
             system_prompt="Eres un analista de prueba.",
             tool_names=("get_series_stats",),
         )

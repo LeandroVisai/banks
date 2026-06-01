@@ -112,6 +112,15 @@ async def _fetch_rows_from_dataset(
         return None, {
             "error": f"Error ejecutando dataset {dataset_id!r}: {exc}",
         }
+    if date_col is None:
+        return None, {
+            "error": (
+                f"Dataset {dataset_id!r} es un snapshot sin columna de fecha: "
+                "no admite análisis de serie temporal (variación, spread, "
+                "estadística, anomalía). Usa execute_query para ver sus filas."
+            ),
+            "dataset_id": dataset_id,
+        }
     return (dataset, rows, date_col), None
 
 

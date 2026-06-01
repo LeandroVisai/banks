@@ -334,8 +334,8 @@ async def get_recent_policy_decisions(
     # y COMUNICADO (tipo legacy de documentos ingresados antes de la
     # migración a Datos_prueba/RPM/Comunicados_RPM/).
     docs_rpm, docs_legacy = await asyncio.gather(
-        asyncio.to_thread(repo.list_documents, doc_type="COMUNICADO_RPM", limit=50),
-        asyncio.to_thread(repo.list_documents, doc_type="COMUNICADO", limit=50),
+        asyncio.to_thread(repo.list_documents, doc_types=["COMUNICADO_RPM"], limit=50),
+        asyncio.to_thread(repo.list_documents, doc_types=["COMUNICADO"], limit=50),
     )
     seen: set[str] = set()
     docs: list[dict] = []

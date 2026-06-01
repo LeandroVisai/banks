@@ -1,16 +1,15 @@
-"""Definición de los sub-agentes especializados y el wiring de delegación.
+"""Definición de los sub-agentes especializados (arquitectura router-v1).
 
-La Fase B convierte el agente único en un orquestador que delega en cuatro
-especialistas. Cada uno tiene:
+Cada especialista tiene:
 
   - un **system prompt** propio (cómo razona ese tipo de analista) — en ``prompts.py``;
-  - un **subconjunto de las tools** registradas (qué dominio puede tocar);
-  - una **tool de delegación** ``delegate_to_*`` que el orquestador usa para invocarlo.
+  - un **subconjunto de las tools** registradas (qué dominio puede tocar).
 
-El orquestador NO ve las tools de dominio: solo ve las cuatro ``delegate_to_*``.
-Esa es la única interfaz entre el orquestador y los especialistas, lo que
-mantiene a cada capa con un contexto acotado y evita recursión (un especialista
-no puede delegar).
+El ruteo a los especialistas es DETERMINISTA (``router.select_specialists``): no
+hay un LLM orquestador que decida a quién delegar — eso, con Qwen, inventaba
+delegados, re-delegaba y nunca sintetizaba. ``run_agent`` corre los
+especialistas seleccionados y luego sintetiza UNA sola vez. Un especialista no
+invoca a otro: no hay recursión ni tools de delegación.
 """
 
 from __future__ import annotations
@@ -41,12 +40,9 @@ class SubAgentSpec:
 
     Campos:
         key: identificador corto, usado como etiqueta en la traza. Debe coincidir
-            con el valor que ``domain_knowledge.financial_aliases.specialist_for``
-            retorna para enrutar por vocabulario.
+            con el valor que ``domain_knowledge.financial_aliases`` retorna en
+            ``.specialist`` para enrutar por vocabulario.
         display_name: nombre legible para la respuesta y los logs.
-        delegate_tool: nombre de la tool ``delegate_to_*`` que lo invoca.
-        delegate_description: descripción que ve el orquestador para decidir
-            cuándo delegar a este especialista.
         system_prompt: prompt de sistema del sub-agente.
         tool_names: tools de dominio que el sub-agente puede usar (en el orden
             en que se le presentan).
@@ -57,8 +53,6 @@ class SubAgentSpec:
 
     key: str
     display_name: str
-    delegate_tool: str
-    delegate_description: str
     system_prompt: str
     tool_names: tuple[str, ...]
     default_segments: tuple[str, ...] = ()
@@ -68,9 +62,9 @@ class SubAgentSpec:
 # (discover_query / execute_query / analytics). La extracción SQL en vivo del DW
 # fue eliminada del proyecto.
 #
-# Roster híbrido (Fase 1): especialistas POR MERCADO sobre el catálogo de
-# parquets + dos especialistas del corpus documental. Las `key` coinciden con
-# los valores de financial_aliases.specialist_for para enrutar por vocabulario.
+# Roster híbrido: especialistas POR MERCADO sobre el catálogo de parquets + dos
+# especialistas del corpus documental. Las `key` coinciden con los valores de
+# financial_aliases (`.specialist`) para enrutar por vocabulario.
 _QUANT_TOOLS = (
     "discover_query",
     "execute_query",
@@ -87,13 +81,6 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
     "fx": SubAgentSpec(
         key="fx",
         display_name="Analista de Mercado Cambiario (FX)",
-        delegate_tool="delegate_to_fx_analyst",
-        delegate_description=(
-            "Delega al Analista de Mercado Cambiario (FX): tipo de cambio "
-            "spot/forward, flujos cambiarios por sector, puntos forward, "
-            "posiciones en derivados y commodities (cobre, petróleo, DXY). "
-            "Úsalo para el dólar, el mercado cambiario y los commodities."
-        ),
         system_prompt=FX_ANALYST_PROMPT,
         tool_names=(*_QUANT_TOOLS, "get_market_snapshot"),
         default_segments=("mercado_cambiario", "posiciones_cambiarias"),
@@ -101,24 +88,12 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
     "no_residentes": SubAgentSpec(
         key="no_residentes",
         display_name="Analista de No Residentes",
-        delegate_tool="delegate_to_nr_analyst",
-        delegate_description=(
-            "Delega al Analista de No Residentes (NR): posición y flujos de "
-            "inversionistas no residentes en instrumentos chilenos (renta fija "
-            "local, spot, forward, derivados). Úsalo para preguntas sobre NR."
-        ),
         system_prompt=NR_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
     ),
     "afp": SubAgentSpec(
         key="afp",
         display_name="Analista de Fondos de Pensiones (AFP)",
-        delegate_tool="delegate_to_afp_analyst",
-        delegate_description=(
-            "Delega al Analista de Fondos de Pensiones (AFP): cartera/allocation "
-            "nacional vs. internacional, stock por fondo, DV01, MTM, atribución "
-            "y posición cambiaria de las AFP. Úsalo para fondos de pensiones."
-        ),
         system_prompt=AFP_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
         default_segments=("fondos_pension",),
@@ -126,12 +101,6 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
     "fondos_mutuos": SubAgentSpec(
         key="fondos_mutuos",
         display_name="Analista de Fondos Mutuos (FFMM)",
-        delegate_tool="delegate_to_ffmm_analyst",
-        delegate_description=(
-            "Delega al Analista de Fondos Mutuos (FFMM): flujos, stock, "
-            "duración, DV01 y composición de los fondos mutuos. Úsalo para "
-            "preguntas sobre fondos mutuos."
-        ),
         system_prompt=FFMM_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
         default_segments=("fondos_pension",),
@@ -139,12 +108,6 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
     "renta_fija": SubAgentSpec(
         key="renta_fija",
         display_name="Analista de Renta Fija",
-        delegate_tool="delegate_to_renta_fija_analyst",
-        delegate_description=(
-            "Delega al Analista de Renta Fija: curvas soberanas (BTP/BTU/SPC/"
-            "OIS), break-evens, spreads, montos y volatilidad, PDBC e "
-            "instrumentos BCCh, spreads de crédito. Úsalo para bonos y tasas."
-        ),
         system_prompt=RENTA_FIJA_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
         default_segments=("renta_fija_chile", "instrumentos_bcch", "spreads_credito"),
@@ -152,12 +115,6 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
     "liquidez": SubAgentSpec(
         key="liquidez",
         display_name="Analista de Liquidez y Balance",
-        delegate_tool="delegate_to_liquidez_analyst",
-        delegate_description=(
-            "Delega al Analista de Liquidez y Balance: LCR, NSFR, caja, reserva "
-            "técnica, operaciones de liquidez, TIB y balance bancario "
-            "(activos/pasivos por banco). Úsalo para liquidez y balance bancario."
-        ),
         system_prompt=LIQUIDEZ_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
         default_segments=("liquidez_bancaria", "balance_bancario"),
@@ -166,13 +123,6 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
     "document": SubAgentSpec(
         key="document",
         display_name="Analista de Documentos",
-        delegate_tool="delegate_to_document_analyst",
-        delegate_description=(
-            "Delega al Analista de Documentos: busca y sintetiza evidencia del "
-            "corpus del BCCh (Comunicados, Minutas, IPoM, IEF, Fed Statements, "
-            "research JPMorgan, Monitor PM). Úsalo para preguntas sobre qué "
-            "dicen los documentos."
-        ),
         system_prompt=DOCUMENT_ANALYST_PROMPT,
         tool_names=(
             "search_documents",
@@ -185,13 +135,6 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
     "policy": SubAgentSpec(
         key="policy",
         display_name="Analista de Política Monetaria",
-        delegate_tool="delegate_to_policy_analyst",
-        delegate_description=(
-            "Delega al Analista de Política Monetaria: decisiones de TPM, "
-            "razonamiento y votaciones del Consejo, trayectoria de la política "
-            "y expectativas de mercado. Úsalo para preguntas sobre política "
-            "monetaria del BCCh."
-        ),
         system_prompt=POLICY_ANALYST_PROMPT,
         tool_names=(
             "search_documents",
@@ -203,48 +146,6 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
         ),
     ),
 }
-
-_DELEGATE_TO_KEY: dict[str, str] = {
-    spec.delegate_tool: key for key, spec in SUBAGENTS.items()
-}
-
-# Resolución fuzzy: el LLM a veces no emite el nombre EXACTO de la tool de
-# delegación (p.ej. `delegate_to_fx` en vez de `delegate_to_fx_analyst`, o
-# traduce a `delegate_to_analista_politica_monetaria`). Cada tupla mapea
-# subcadenas-señal → key del especialista; el primer match gana. El orden
-# importa: señales específicas (no_residentes) antes que genéricas.
-_FUZZY_SIGNALS: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("no_resident", "noresident", "nr_", "_nr", "residente"), "no_residentes"),
-    (("fondos_mutuo", "ffmm", "mutuo"), "fondos_mutuos"),
-    (("afp", "pension"), "afp"),
-    (("renta_fija", "rentafija", "renta", "bono", "_rf_", "fija"), "renta_fija"),
-    (("liquidez", "balance"), "liquidez"),
-    (("fx", "cambiari", "divisa", "dolar"), "fx"),
-    (("policy", "politica", "monetar", "tpm"), "policy"),
-    (("document", "documento", "corpus"), "document"),
-)
-
-
-def _normalize_delegate(name: str) -> str:
-    return name.lower().replace(" ", "").replace("-", "")
-
-
-def subagent_for_delegate(delegate_tool: str) -> SubAgentSpec | None:
-    """Resuelve la tool ``delegate_to_*`` a su ``SubAgentSpec`` (o ``None``).
-
-    Primero exacto; si falla, fuzzy por subcadenas-señal (tolera que el LLM
-    abrevie o traduzca el nombre). Devuelve ``None`` solo si nada coincide.
-    """
-    key = _DELEGATE_TO_KEY.get(delegate_tool)
-    if key is not None:
-        return SUBAGENTS[key]
-    norm = _normalize_delegate(delegate_tool)
-    if "delegate" not in norm:
-        return None  # ni siquiera parece una delegación
-    for signals, spec_key in _FUZZY_SIGNALS:
-        if any(sig in norm for sig in signals):
-            return SUBAGENTS[spec_key]
-    return None
 
 
 def tool_schemas_for(spec: SubAgentSpec) -> list[dict]:
@@ -262,35 +163,6 @@ def tool_schemas_for(spec: SubAgentSpec) -> list[dict]:
         )
     return [by_name[name] for name in spec.tool_names]
 
-
-def _delegate_schema(spec: SubAgentSpec) -> dict:
-    """Schema OpenAI-compatible de la tool ``delegate_to_*`` de un especialista."""
-    return {
-        "type": "function",
-        "function": {
-            "name": spec.delegate_tool,
-            "description": spec.delegate_description,
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task": {
-                        "type": "string",
-                        "description": (
-                            "Instrucción concreta y autocontenida para el "
-                            "especialista. Incluye variables, fechas y el "
-                            "contexto necesario: el especialista no ve la "
-                            "conversación, solo este texto."
-                        ),
-                    },
-                },
-                "required": ["task"],
-            },
-        },
-    }
-
-
-# Las cuatro tools de delegación que ve el orquestador.
-DELEGATE_SCHEMAS: list[dict] = [_delegate_schema(spec) for spec in SUBAGENTS.values()]
 
 # Validación temprana: al importar este módulo, cada sub-agente debe referir
 # solo tools efectivamente registradas. Falla rápido si el catálogo de tools

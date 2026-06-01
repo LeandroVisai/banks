@@ -1,0 +1,101 @@
+==============================================================================
+ SETUP DEL RUNTIME — banks_rag (agente LLM + verificación de subagentes)
+ Notas para reproducir el entorno en el SERVIDOR (Windows H100) y en el PC dev.
+ NO se commitean .env ni .venv (están en .gitignore); de ahí este instructivo.
+==============================================================================
+
+------------------------------------------------------------------------------
+ 1) ARCHIVO .env  (crear en la RAÍZ del repo: e:\Lea\banks\.env)
+------------------------------------------------------------------------------
+El loader (config/settings.py) lee del .env SOLO las claves con prefijo BANKS_.
+Las claves PG* y RAG_EMBEDDING_MODEL se leen del ENTORNO DEL PROCESO (os.getenv),
+NO del .env  ->  fijarlas en PowerShell o en run_local_cpu.ps1 (ver sección 4).
+
+# ---- .env para el SERVIDOR H100 (modelo de producción 27B-Q4) -------------
+BANKS_LLM_FAMILY=qwen
+BANKS_LLM_MODEL_PATH=unsloth--Qwen3.6-27B-GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
+BANKS_LLM_N_CTX=16384
+BANKS_LLM_N_GPU_LAYERS=-1
+BANKS_LLM_TEMPERATURE=0.2
+BANKS_LLM_MAX_TOKENS=2048
+BANKS_MAX_AGENT_ITERATIONS=6
+BANKS_LOG_LEVEL=INFO
+
+# ---- .env para el PC DEV (RTX 3080 10GB; el 27B-Q4 NO cabe -> 7B) ---------
+# BANKS_LLM_FAMILY=qwen
+# BANKS_LLM_MODEL_PATH=Qwen2.5-7B-Instruct-GGUF/Qwen2.5-7B-Instruct-Q4_K_M.gguf
+# BANKS_LLM_N_CTX=8192
+# BANKS_LLM_N_GPU_LAYERS=-1
+# BANKS_LLM_MAX_TOKENS=768
+# BANKS_MAX_AGENT_ITERATIONS=5
+
+BANKS_LLM_MODEL_PATH es relativo a models/ (models/<owner>--<name>/archivo.gguf).
+
+------------------------------------------------------------------------------
+ 2) VARIABLES DE ENTORNO DEL PROCESO  (PG* y RAG_EMBEDDING_MODEL)
+------------------------------------------------------------------------------
+Se fijan en la SESIÓN de PowerShell antes de arrancar (o ver run_local_cpu.ps1):
+
+  $env:PGHOST     = "localhost"
+  $env:PGPORT     = "5432"
+  $env:PGDATABASE = "rag_banco"
+  $env:PGUSER     = "postgres"
+  $env:PGPASSWORD = "postgres"
+  $env:RAG_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
+
+IMPORTANTE — embeddings: el corpus actual en Postgres está embebido con
+e5-small (384-dim), NO con Qwen3-VL-8B (4096-dim). Mientras NO se re-ingeste,
+RAG_EMBEDDING_MODEL DEBE ser intfloat/multilingual-e5-small (mismo modelo que
+el corpus). Si re-ingestas en la H100 con el modelo grande, recién ahí:
+  $env:RAG_EMBEDDING_MODEL = "Qwen3-VL-Embedding-8B"
+
+------------------------------------------------------------------------------
+ 3) VENV  (PowerShell)  — NO copiar el activate.ps1 de otra máquina (rutas
+    absolutas propias); crear uno fresco en el servidor:
+------------------------------------------------------------------------------
+  cd e:\Lea\banks
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1        # activa el venv (prompt muestra (.venv))
+  python -m pip install --upgrade pip
+
+  # Si PowerShell bloquea el script de activación:
+  #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+------------------------------------------------------------------------------
+ 4) DEPENDENCIAS
+------------------------------------------------------------------------------
+  pip install -e .            # instala banks_rag + deps de pyproject.toml
+
+  # ---- llama-cpp-python con CUDA (driver soporta hasta CUDA 12.6 -> cu124) --
+  pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+
+  # DLLs del runtime CUDA que necesita ggml-cuda.dll (cudart/cublas/NVRTC):
+  #  - En la H100, si instalas torch-CUDA (cu124/cu126), torch ya las trae y
+  #    LlamaCppEngine las encuentra (agrega torch/lib al search path).
+  #  - En el PC dev (torch CPU-only) hacen falta estos paquetes (el dep clave
+  #    es NVRTC). El engine ya agrega site-packages/nvidia/*/bin al DLL path:
+  pip install nvidia-cuda-runtime-cu12 nvidia-cublas-cu12 nvidia-cuda-nvrtc-cu12
+
+  # OJO: el wheel CPU de abetlen trae AVX-512 y crashea (0xc000001d) en CPUs
+  # sin AVX-512 (p.ej. i7-12700F del PC dev). Por eso se usa el build CUDA.
+
+------------------------------------------------------------------------------
+ 5) CÓMO CORRER
+------------------------------------------------------------------------------
+  # API del agente:
+  python -m uvicorn banks_rag.interface.api.main:create_app --factory --port 8080
+  #   (atajo en el PC dev: .\run_local_cpu.ps1  — fija el entorno y levanta)
+
+  # VERIFICACIÓN DE LOS 8 SUBAGENTES (usa el modelo del .env):
+  python scripts/verify_subagents.py                 # los 8
+  python scripts/verify_subagents.py --subagent fx   # uno solo
+  python scripts/verify_subagents.py --max-iters 6
+  #   -> imprime, por subagente: tools usadas, evidencia, finish_reason y un
+  #      extracto del análisis, más un RESUMEN OK/WARN al final.
+  #   En la H100 con el 27B-Q4 deberían completar los de mercado (en el PC dev
+  #   con el 7B solo document/policy completan limpio; el resto lo limita el
+  #   tamaño del modelo, no la infra — los 107 parquets son consultables).
+
+  # Tests unitarios (sin BD ni modelos, con mocks):
+  $env:PYTHONPATH = "src"; python -m pytest tests/unit/ -q
+==============================================================================

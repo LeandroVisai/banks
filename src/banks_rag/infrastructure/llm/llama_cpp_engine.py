@@ -226,6 +226,26 @@ class LlamaCppEngine:
                     os.add_dll_directory(os.path.dirname(spec.origin))
             except Exception:
                 pass
+            # DLLs del runtime CUDA cuando el wheel es CUDA pero torch es CPU-only:
+            # los paquetes nvidia-*-cu12 (cuda_runtime, cublas, cuda_nvrtc) traen
+            # cudart64_12 / cublas64_12 / nvrtc64 que ggml-cuda.dll necesita. En la
+            # H100 los aporta torch-CUDA; en un box con torch-CPU + wheel CUDA hay
+            # que exponerlos. Se añaden al search path de DLLs y al PATH (deps
+            # transitivas). Inofensivo si los paquetes no están instalados.
+            try:
+                import glob
+                nv_spec = importlib.util.find_spec("nvidia")
+                if nv_spec and nv_spec.submodule_search_locations:
+                    nv_base = os.path.dirname(nv_spec.submodule_search_locations[0])
+                    nv_bins = glob.glob(os.path.join(nv_base, "nvidia", "*", "bin"))
+                    for binp in nv_bins:
+                        os.add_dll_directory(binp)
+                    if nv_bins:
+                        os.environ["PATH"] = (
+                            os.pathsep.join(nv_bins) + os.pathsep + os.environ.get("PATH", "")
+                        )
+            except Exception:
+                pass
 
         from llama_cpp import Llama  # importación lazy para tests sin el binario
 
@@ -316,7 +336,14 @@ class LlamaCppEngine:
         }
         if effective_tools:
             kwargs["tools"] = effective_tools
-            kwargs["tool_choice"] = "required"
+            # "auto" (NO "required"): el modelo decide si llama una tool o ya
+            # responde. En el loop del subagente esto permite TERMINAR en cuanto
+            # reúne evidencia — con "required" estaba forzado a emitir un tool
+            # call en cada iteración no-final, agotando siempre el presupuesto y
+            # disparando llamadas espurias. El guard anti-alucinación de
+            # conversation_loop ya descarta cifras sin evidencia, así que "auto"
+            # es a la vez más rápido y seguro.
+            kwargs["tool_choice"] = "auto"
 
         response = self._model.create_chat_completion(**kwargs)
         choice = response["choices"][0]
