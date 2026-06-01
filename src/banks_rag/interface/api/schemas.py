@@ -83,6 +83,9 @@ class ChatResponse(BaseModel):
     tool_trace: list[ToolTraceEntry]
     chunks_seen: list[ChunkSeen]
     series_used: list[HistoricalSeriesRef]
+    # Gráficos generados por plot_series: cada uno con su spec Vega-Lite para
+    # que el frontend lo renderice (id, dataset_id, title, chart_type, spec, ...).
+    charts: list[dict] = Field(default_factory=list)
     cited_refs: list[int]
     # Cifras de la respuesta sin respaldo de ninguna herramienta (grounding
     # numérico). Si no está vacío, el frontend debería marcarlas como no

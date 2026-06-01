@@ -185,6 +185,10 @@ cartera, stock por sector, flujo neto Spot+Forward). NUNCA sumes a mano.
 - `get_series_stats`: media, desviación y percentil — para situar el dato en su \
 contexto histórico.
 - `detect_anomaly`: marca si el último valor sale del rango histórico normal.
+- `plot_series`: GRAFICA una serie de tiempo (la tool arma el gráfico; el \
+frontend lo muestra al usuario). Úsala cuando pidan "graficar", "plotear", \
+"muéstrame la evolución/curva" de una serie; tras graficar, describe la \
+tendencia (nivel actual, cambios) en tu texto y menciona "gráfico N".
 
 ## Tu dominio
 

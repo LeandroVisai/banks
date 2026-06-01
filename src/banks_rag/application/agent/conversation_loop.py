@@ -85,6 +85,7 @@ EVIDENCE_TOOLS: frozenset[str] = frozenset({
     "search_visuals",
     "get_document_chunks",
     "compare_meetings",
+    "plot_series",
 })
 
 # Mensaje con que se reemplaza el análisis de un especialista que emitió cifras
@@ -684,6 +685,7 @@ async def run_agent(
         tool_trace=list(state.tool_trace),
         chunks_seen=_format_chunks_seen(state),
         series_used=list(state.series_used.values()),
+        charts=list(state.charts),
         cited_refs=cited_refs,
         finish_reason=finish_reason,
         total_tokens=total_tokens,

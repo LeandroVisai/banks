@@ -74,6 +74,7 @@ _QUANT_TOOLS = (
     "compute_aggregate",
     "get_series_stats",
     "detect_anomaly",
+    "plot_series",
 )
 
 SUBAGENTS: dict[str, SubAgentSpec] = {

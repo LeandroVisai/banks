@@ -51,3 +51,6 @@ class AgentResult:
     # herramienta de este turno (grounding numérico). Señal de alucinación de
     # valores; se reportan para evaluación y para que el frontend las marque.
     ungrounded_numbers: list[float] = field(default_factory=list)
+    # Gráficos (specs Vega-Lite) generados por plot_series; el frontend los
+    # renderiza junto a la respuesta.
+    charts: list[dict] = field(default_factory=list)

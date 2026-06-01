@@ -16,6 +16,8 @@ Tools registradas:
     SQL — interpretan los datos en vez de devolverlos crudos (Fase A multi-agente).
   - ``compare_meetings`` / ``get_recent_policy_decisions``: tools de reuniones
     de política monetaria a nivel de documento (Fase C multi-agente).
+  - ``plot_series``: grafica series de tiempo del catálogo de parquets como
+    spec Vega-Lite (la tool arma el spec; el frontend lo renderiza).
 """
 
 from . import (  # noqa: F401
@@ -25,6 +27,7 @@ from . import (  # noqa: F401
     execute_query,
     list_parquets,
     meeting_lookup,
+    plot_series,
     query_parquet,
     search_documents,
     search_visuals,

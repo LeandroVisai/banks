@@ -42,6 +42,9 @@ _ARG_ALIASES: dict[str, str] = {
     "dataset": "dataset_id", "id": "dataset_id", "table": "dataset_id",
     "table_id": "dataset_id", "series_id": "dataset_id", "dataset_name": "dataset_id",
     "datasetid": "dataset_id", "dataset_ids": "dataset_id",
+    # `series`/`serie` -> dataset_id SOLO como fallback: si traen "ds.columna"
+    # (con punto) y la tool acepta `column`, el split de abajo tiene precedencia.
+    "series": "dataset_id", "serie": "dataset_id",
     "col": "column", "columna": "column", "field": "column", "columns_name": "column",
 }
 

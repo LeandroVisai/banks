@@ -17,6 +17,10 @@ class AgentState:
     chunks_seen: list[dict] = field(default_factory=list)        # con refs [1], [2], ...
     chunk_id_to_ref: dict[str, int] = field(default_factory=dict)
     series_used: dict[str, dict] = field(default_factory=dict)
+    # Gráficos generados por plot_series (specs Vega-Lite) para que el frontend
+    # los renderice. Espacio de ids propio (gráfico 1, 2, ...), separado de las
+    # citas [N] de chunks para no romper la verificación de citas.
+    charts: list[dict] = field(default_factory=list)
     tool_trace: list[dict] = field(default_factory=list)
     # Grounding numérico: todos los números que las herramientas entregaron en
     # este turno. Una cifra de la respuesta solo es válida si matchea aquí
@@ -50,6 +54,16 @@ class AgentState:
         ref = len(self.chunks_seen)
         self.chunk_id_to_ref[cid] = ref
         return ref
+
+    def add_chart(self, chart: dict) -> int:
+        """Registra un gráfico (spec Vega-Lite + metadata) y retorna su id 1-based.
+
+        El frontend renderiza ``chart['spec']``; el LLM describe el gráfico en
+        prosa. No comparte el espacio de refs [N] de los chunks.
+        """
+        chart_id = len(self.charts) + 1
+        self.charts.append({"id": chart_id, **chart})
+        return chart_id
 
     def add_series(self, series_id: str, meta: dict, rows: list[dict]) -> None:
         """Registra una serie consultada. ``rows`` debe tener key ``date`` por fila."""
