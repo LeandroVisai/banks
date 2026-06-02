@@ -73,6 +73,46 @@ def _should_think(thinking_mode: str, component: str) -> bool:
     return component == "quant"  # adaptive
 
 
+@dataclass(frozen=True)
+class ModeProfile:
+    """Perfil completo velocidad↔profundidad asociado a cada ``thinking_mode``.
+
+    El toggle del frontend (Rápido/Análisis/Profundo) ya no controla solo el
+    thinking: selecciona un perfil que ajusta nº de especialistas, iteraciones y
+    el sampling. Así "Rápido" es rápido de punta a punta, no solo sin <think>.
+
+    El sampling sigue la model card de Qwen3:
+      - thinking ON  → temperature 0.6, top_p 0.95 (Qwen3: NO usar greedy/temperatura
+        baja en thinking — provoca repeticiones infinitas y degradación).
+      - thinking OFF → temperature 0.4, top_p 0.8 (modo no-thinking; bajado del
+        0.7 que sugiere Qwen3 por el dominio financiero: más determinista).
+    El nº de iteraciones/especialistas sigue la práctica de agentes (ReAct/
+    function-calling): la mayoría de tareas se resuelven en 2-4 pasos y hay
+    rendimientos decrecientes; en "Rápido" recortamos a lo mínimo útil.
+    """
+
+    max_specialists: int
+    subagent_iterations: int
+    temperature: float
+    top_p: float
+
+
+MODE_PROFILES: dict[str, ModeProfile] = {
+    "off":      ModeProfile(max_specialists=1, subagent_iterations=3, temperature=0.4, top_p=0.80),
+    "adaptive": ModeProfile(max_specialists=2, subagent_iterations=4, temperature=0.6, top_p=0.95),
+    "on":       ModeProfile(max_specialists=3, subagent_iterations=5, temperature=0.6, top_p=0.95),
+}
+
+# La síntesis (respuesta final) no razona y debe ser fiel/determinista: sampling
+# bajo, independiente del perfil. (Qwen3 no-thinking, conservador para citar.)
+_SYNTHESIS_TEMPERATURE = 0.3
+_SYNTHESIS_TOP_P = 0.8
+
+
+def _profile_for(thinking_mode: str) -> ModeProfile:
+    return MODE_PROFILES.get(thinking_mode, MODE_PROFILES["adaptive"])
+
+
 def _with_today(system_prompt: str) -> str:
     """Antepone la fecha actual al system prompt.
 
@@ -314,6 +354,7 @@ async def _run_tool_loop(
     tool_timeout_s: float,
     temperature: float | None,
     max_tokens: int | None,
+    top_p: float | None = None,
     nudge_tool_use: bool = False,
 ) -> _LoopOutcome:
     """Ejecuta el loop iterativo LLM↔tools hasta una respuesta final.
@@ -375,6 +416,7 @@ async def _run_tool_loop(
             messages,
             tools=tools_arg,
             temperature=temperature,
+            top_p=top_p,
             max_tokens=max_tokens,
         )
         total_tokens += result.n_tokens
@@ -551,6 +593,7 @@ async def run_subagent(
     tool_timeout_s: float = DEFAULT_TOOL_TIMEOUT_S,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    top_p: float | None = None,
     think: bool = True,
 ) -> SubAgentResult:
     """Ejecuta un especialista sobre una tarea concreta delegada por el orquestador.
@@ -578,6 +621,7 @@ async def run_subagent(
         tool_timeout_s=tool_timeout_s,
         temperature=temperature,
         max_tokens=max_tokens,
+        top_p=top_p,
     )
 
     analysis = outcome.final_text
@@ -689,11 +733,18 @@ async def run_agent(
     state = AgentState()
     t0 = time.perf_counter()
 
+    # Perfil del modo: ata el toggle (off/adaptive/on) a velocidad↔profundidad
+    # completa — nº de especialistas, iteraciones y sampling — no solo el thinking.
+    profile = _profile_for(thinking_mode)
+
     # El router se decide sobre el mensaje ORIGINAL (no sobre el adjunto, que
     # podría sesgar el ruteo). El contenido adjunto se inyecta como contexto.
-    specs = select_specialists(user_message, history)
-    log.info("router → especialistas: %s (thinking_mode=%s, adjuntos=%s)",
-             [s.key for s in specs], thinking_mode, bool(attachments_context))
+    # El perfil acota cuántos especialistas corren (cada uno suma latencia, pues
+    # las generaciones del LLM se serializan).
+    specs = select_specialists(user_message, history)[: profile.max_specialists]
+    log.info("router → especialistas: %s (modo=%s, tope=%d, adjuntos=%s)",
+             [s.key for s in specs], thinking_mode, profile.max_specialists,
+             bool(attachments_context))
 
     # Task de los especialistas: la pregunta, precedida por el adjunto si existe.
     task_message = user_message
@@ -702,7 +753,8 @@ async def run_agent(
 
     # 1+2. Especialistas en paralelo. Cada uno recibe la pregunta como task
     # autocontenida; comparten el AgentState (refs [N] y grounding globales).
-    sub_max_iters = min(max_iterations, DEFAULT_SUBAGENT_MAX_ITERATIONS)
+    # El nº de iteraciones y el sampling salen del perfil del modo.
+    sub_max_iters = min(max_iterations, profile.subagent_iterations)
 
     async def _run(spec: SubAgentSpec) -> SubAgentResult:
         think = _should_think(thinking_mode, "quant" if spec.multi_step else "doc")
@@ -714,7 +766,8 @@ async def run_agent(
             max_iterations=sub_max_iters,
             max_tool_result_tokens=max_tool_result_tokens,
             tool_timeout_s=DEFAULT_TOOL_TIMEOUT_S,
-            temperature=temperature,
+            temperature=profile.temperature,
+            top_p=profile.top_p,
             max_tokens=max_tokens,
             think=think,
         )
@@ -723,6 +776,8 @@ async def run_agent(
     total_tokens = sum(s.total_tokens for s in subs)
 
     # 3. Síntesis: una sola llamada al LLM, SIN tools (no puede entrar en loop).
+    # No razona y usa sampling determinista (fiel para citar), independiente del
+    # perfil; el largo lo da synthesis_max_tokens (output completo).
     synth_think = _should_think(thinking_mode, "synthesis")
     synth_user = _build_synthesis_user_message(user_message, subs)
     if attachments_context:
@@ -738,7 +793,9 @@ async def run_agent(
     # análisis y con el max_tokens de un paso intermedio se truncaba.
     synth_max = max(synthesis_max_tokens or 0, max_tokens or 0) or None
     synth = await llm.generate(
-        synth_messages, tools=None, temperature=temperature, max_tokens=synth_max,
+        synth_messages, tools=None,
+        temperature=_SYNTHESIS_TEMPERATURE, top_p=_SYNTHESIS_TOP_P,
+        max_tokens=synth_max,
     )
     total_tokens += synth.n_tokens
     final_text = synth.text or MAX_ITERATIONS_FALLBACK_MESSAGE

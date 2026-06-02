@@ -150,7 +150,7 @@ chunks    (chunk_id PK, document_id FK,
 | `BANKS_LLM_MODEL_PATH` | `` | Ruta al `.gguf` |
 | `BANKS_LLM_MAX_TOKENS` | `2048` | Tokens máx por paso (especialistas/iteración) |
 | `BANKS_SYNTHESIS_MAX_TOKENS` | `4096` | Tokens máx de la respuesta final (síntesis); subir si se trunca |
-| `BANKS_THINKING_MODE` | `adaptive` | `off`/`adaptive`/`on`: thinking de Qwen3. `adaptive` = razona solo en especialistas cuantitativos (multi-paso); no en documentales ni síntesis |
+| `BANKS_THINKING_MODE` | `adaptive` | `off`/`adaptive`/`on`: **perfil completo** velocidad↔profundidad (no solo thinking). Define `MODE_PROFILES` en `conversation_loop.py`: nº de especialistas (1/2/3), iteraciones (3/4/5) y sampling según la model card de Qwen3 (thinking→temp0.6/top_p0.95; no-thinking→0.4/0.8). El toggle del frontend lo overridea por consulta. La síntesis nunca razona y usa sampling determinista (0.3/0.8) |
 | `RAG_EMBEDDING_MODEL` | `Qwen3-VL-Embedding-8B` | Modelo de embeddings (resuelve a `models/<name>/`) |
 | `BANKS_CATALOG_SEMANTIC` | `false` | `true` para activar descubrimiento semántico del catálogo (requiere el embedder cargado) |
 | `BANKS_API_KEYS` | `` | CSV de API keys (vacío = sin auth) |

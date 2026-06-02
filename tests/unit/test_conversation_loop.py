@@ -36,6 +36,8 @@ class _MockLLM:
             "n_messages": len(messages),
             "tools": tools,
             "max_tokens": kwargs.get("max_tokens"),
+            "temperature": kwargs.get("temperature"),
+            "top_p": kwargs.get("top_p"),
         })
         if not self.responses:
             return GenerationResult(text="default", n_tokens=5)
@@ -203,6 +205,37 @@ class TestRunAgent:
         # La síntesis lleva /no_think (no razona) aun en modo on.
         synth_system = llm.calls[-1]["messages"][0]["content"]
         assert "/no_think" in synth_system
+
+    @pytest.mark.asyncio
+    async def test_mode_off_is_a_fast_profile(self) -> None:
+        """'Rápido' (off) = perfil completo: 1 especialista, sampling no-thinking
+        (temp 0.4, top_p 0.8), aunque la consulta rutee a varios dominios."""
+        llm = _MockLLM(responses=[GenerationResult(text="a", n_tokens=1) for _ in range(6)])
+        # Consulta cross-domain (rutearía a 2-3 especialistas).
+        await run_agent("compara la postura del Consejo con la curva BTP", history=[],
+                        llm=llm, thinking_mode="off")
+        # La 1ª llamada es un especialista (no la síntesis).
+        spec_call = llm.calls[0]
+        assert spec_call["temperature"] == 0.4 and spec_call["top_p"] == 0.80
+
+    @pytest.mark.asyncio
+    async def test_mode_on_uses_qwen_thinking_sampling(self) -> None:
+        """'Profundo' (on) usa el sampling de thinking de Qwen3 (temp 0.6, top_p 0.95)."""
+        llm = _MockLLM(responses=[GenerationResult(text="a", n_tokens=1) for _ in range(8)])
+        await run_agent("¿DV01 de las AFP?", history=[], llm=llm, thinking_mode="on")
+        assert llm.calls[0]["temperature"] == 0.6 and llm.calls[0]["top_p"] == 0.95
+
+    @pytest.mark.asyncio
+    async def test_synthesis_sampling_is_deterministic(self) -> None:
+        """La síntesis usa sampling fijo determinista (temp 0.3, top_p 0.8),
+        independiente del modo (es la respuesta final, debe ser fiel)."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="análisis", n_tokens=1),
+            GenerationResult(text="respuesta final", n_tokens=1),
+        ])
+        await run_agent("¿DV01 de las AFP?", history=[], llm=llm, thinking_mode="on")
+        synth_call = llm.calls[-1]
+        assert synth_call["temperature"] == 0.3 and synth_call["top_p"] == 0.8
 
     @pytest.mark.asyncio
     async def test_synthesis_uses_larger_token_budget(self) -> None:
