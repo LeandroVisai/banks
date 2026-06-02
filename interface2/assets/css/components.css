@@ -666,10 +666,10 @@
     margin-top: 2px;
 }
 
-/* Chat input — fila 1: campo + enviar; fila 2: control de modo */
+/* Chat input — una fila: campo | control de modo | enviar */
 .chat-input {
     display: grid;
-    grid-template-columns: 1fr auto;   /* input | send */
+    grid-template-columns: 1fr auto auto;   /* input | modo | send */
     gap: 8px;
     align-items: center;
 }
@@ -701,12 +701,10 @@
 .chat-input-send:active { transform: translateY(0); }
 .chat-input-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Modo de razonamiento: dropdown (trigger + menú título/descripción/check) */
+/* Modo de razonamiento: dropdown (trigger + menú título/descripción/check).
+   Vive en la misma fila, a la izquierda del botón Enviar. */
 .chat-mode {
-    grid-column: 1 / -1;          /* fila propia bajo input+send */
     position: relative;
-    margin-top: var(--space-2);
-    justify-self: start;
 }
 .chat-mode__trigger {
     display: inline-flex;
@@ -742,11 +740,12 @@
 }
 .chat-mode.is-open .chat-mode__chevron { transform: rotate(180deg); }
 
-/* Menú: abre HACIA ARRIBA (el control vive al fondo del footer) */
+/* Menú: abre HACIA ARRIBA y alineado a la DERECHA del trigger (se extiende
+   hacia la izquierda para no salirse del panel, igual que el selector de modelos). */
 .chat-mode__menu {
     position: absolute;
     bottom: calc(100% + 6px);
-    left: 0;
+    right: 0;
     min-width: 260px;
     padding: 4px;
     background: var(--bg-card);

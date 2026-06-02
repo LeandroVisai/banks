@@ -120,7 +120,8 @@ class ChatController {
         }
 
         this.modeWrap.append(this.modeTrigger, this.modeMenu);
-        this.form.appendChild(this.modeWrap);
+        // A la izquierda del botón Enviar, en la misma fila que el input.
+        this.form.insertBefore(this.modeWrap, this.send);
         this._applyModeUI();
     }
 
