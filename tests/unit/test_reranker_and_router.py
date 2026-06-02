@@ -15,6 +15,8 @@ import numpy as np
 import pytest
 
 from banks_rag.application.retrieval.query_router import RouteDecision, route_query
+from banks_rag.config import override_settings, reset_settings
+from banks_rag.config.settings import Settings
 from banks_rag.infrastructure.reranker.cross_encoder_reranker import (
     CrossEncoderReranker,
     _extract_text,
@@ -145,36 +147,38 @@ class TestCrossEncoderReranker:
         assert [c["text"] for c in out] == ["a"]
 
 
-# ── Tests build_default_reranker (singleton + env vars) ───────────────────────
+# ── Tests build_default_reranker (singleton + settings/.env) ──────────────────
 
 @pytest.mark.unit
 class TestBuildDefaultReranker:
+    """El reranker lee de Settings (BANKS_RERANK_*), que carga el .env."""
+
     def setup_method(self) -> None:
         reset_default_reranker()
 
     def teardown_method(self) -> None:
         reset_default_reranker()
+        reset_settings()
 
-    def test_enabled_by_default(self, monkeypatch) -> None:
-        monkeypatch.delenv("BANKS_RERANK_ENABLED", raising=False)
+    def test_enabled_by_default(self) -> None:
+        override_settings(Settings(rerank_enabled=True))
         assert reranking_enabled() is True
         r = build_default_reranker()
         assert isinstance(r, CrossEncoderReranker)
         # No carga el modelo al construir (lazy en el primer rerank).
         assert r.loaded is False
 
-    def test_disabled_returns_none(self, monkeypatch) -> None:
-        monkeypatch.setenv("BANKS_RERANK_ENABLED", "false")
+    def test_disabled_returns_none(self) -> None:
+        override_settings(Settings(rerank_enabled=False))
         assert reranking_enabled() is False
         assert build_default_reranker() is None
 
-    def test_singleton_returns_same_instance(self, monkeypatch) -> None:
-        monkeypatch.delenv("BANKS_RERANK_ENABLED", raising=False)
+    def test_singleton_returns_same_instance(self) -> None:
+        override_settings(Settings(rerank_enabled=True))
         assert build_default_reranker() is build_default_reranker()
 
-    def test_respects_custom_model_env(self, monkeypatch) -> None:
-        monkeypatch.delenv("BANKS_RERANK_ENABLED", raising=False)
-        monkeypatch.setenv("RAG_RERANK_MODEL", "custom/model")
+    def test_respects_custom_model(self) -> None:
+        override_settings(Settings(rerank_enabled=True, rerank_model="custom/model"))
         assert build_default_reranker().name == "custom/model"
 
 

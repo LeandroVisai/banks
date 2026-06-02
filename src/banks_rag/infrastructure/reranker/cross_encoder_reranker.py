@@ -19,7 +19,6 @@ Protocol ``Reranker``:
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from pathlib import Path
@@ -214,27 +213,30 @@ _DEFAULT_RERANKER_LOCK = threading.Lock()
 
 
 def reranking_enabled() -> bool:
-    """``True`` salvo que ``BANKS_RERANK_ENABLED`` se ponga en false/0/no/off.
+    """``True`` salvo que ``BANKS_RERANK_ENABLED`` esté en false (en el ``.env``).
 
-    Permite apagar el cross-encoder sin tocar código (p. ej. en una caja con
-    poca VRAM o para aislar latencia en debugging)."""
-    return os.getenv("BANKS_RERANK_ENABLED", "true").strip().lower() not in (
-        "false", "0", "no", "off",
-    )
+    Lee de ``Settings`` (no de ``os.getenv``) para que la variable funcione desde
+    el ``.env`` como el resto de las ``BANKS_*``. Permite apagar el cross-encoder
+    sin tocar código (poca VRAM, aislar latencia, o si falta el modelo)."""
+    from banks_rag.config import get_settings
+
+    return get_settings().rerank_enabled
 
 
 def build_default_reranker() -> CrossEncoderReranker | None:
     """Factory memoizada del reranker compartido. ``None`` si está deshabilitado.
 
-    Respeta:
+    Respeta (desde el ``.env`` vía ``Settings``):
       - ``BANKS_RERANK_ENABLED`` (default true) — apaga el reranker si es false.
-      - ``RAG_RERANK_MODEL`` (default ``BAAI/bge-reranker-v2-m3``) — resuelve a
+      - ``BANKS_RERANK_MODEL`` (default ``BAAI/bge-reranker-v2-m3``) — resuelve a
         ``models/<owner>--<name>/`` para deploy offline en H100.
 
     No carga el modelo aquí (la carga es lazy en el primer ``rerank``). Es
     independiente de la dimensión de los embeddings del corpus: el cross-encoder
     puntúa pares ``(query, texto)`` crudos, así que sirve igual con el corpus
     4096-dim de Qwen3-VL que con cualquier otro embedder."""
+    from banks_rag.config import get_settings
+
     global _DEFAULT_RERANKER
     if not reranking_enabled():
         return None
@@ -243,7 +245,7 @@ def build_default_reranker() -> CrossEncoderReranker | None:
     with _DEFAULT_RERANKER_LOCK:
         if _DEFAULT_RERANKER is not None:
             return _DEFAULT_RERANKER
-        model_name = os.getenv("RAG_RERANK_MODEL", _DEFAULT_MODEL)
+        model_name = get_settings().rerank_model or _DEFAULT_MODEL
         _DEFAULT_RERANKER = CrossEncoderReranker(model_name)
         return _DEFAULT_RERANKER
 

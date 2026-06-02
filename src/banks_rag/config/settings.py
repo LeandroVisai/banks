@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # 2048 se truncaba. No infla los pasos intermedios (que usan llm_max_tokens).
     synthesis_max_tokens: int = 4096
 
+    # ── Reranker (cross-encoder de segunda pasada en search_documents) ────────
+    rerank_enabled: bool = True   # BANKS_RERANK_ENABLED
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"  # BANKS_RERANK_MODEL
+
     # ── Agente ───────────────────────────────────────────────────────────────
     max_agent_iterations: int = 6
     max_tool_result_tokens: int = 1500
