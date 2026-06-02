@@ -66,6 +66,9 @@ class HistoricalSeriesRef(BaseModel):
     n_observations: int
     first_date: str | None
     last_date: str | None
+    # [[iso_date, value], ...] para que el frontend grafique la serie en la
+    # respuesta. Vacío si la serie no es temporal/numérica (no graficable).
+    points: list[list] = Field(default_factory=list)
 
 
 class ToolTraceEntry(BaseModel):

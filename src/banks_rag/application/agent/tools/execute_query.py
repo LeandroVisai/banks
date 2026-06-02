@@ -99,17 +99,18 @@ def _register_series(
     devuelta. Mirror del patrón usado en analytics.py."""
     if not rows:
         return
-    date_rows = [{"date": r.get(date_col)} for r in rows]
     for col in select_cols:
         if col == date_col:
             continue
+        # date + value por fila → la serie queda graficable en la respuesta.
+        col_rows = [{"date": r.get(date_col), "value": r.get(col)} for r in rows]
         state.add_series(
             f"{dataset_id}:{col}",
             {
                 "series_name": f"{dataset_name} — {col}",
                 "unit": dataset_unit,
             },
-            date_rows,
+            col_rows,
         )
 
 

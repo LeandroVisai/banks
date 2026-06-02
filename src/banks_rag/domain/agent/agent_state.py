@@ -52,7 +52,13 @@ class AgentState:
         return ref
 
     def add_series(self, series_id: str, meta: dict, rows: list[dict]) -> None:
-        """Registra una serie consultada. ``rows`` debe tener key ``date`` por fila."""
+        """Registra una serie consultada. ``rows`` debe tener key ``date`` por fila.
+
+        Si las filas traen además ``value`` (numérico), se guardan los ``points``
+        ``[[iso_date, value], ...]`` para que el frontend grafique la serie en la
+        respuesta. Se capan a ``MAX_SERIES_POINTS`` (los más recientes) para no
+        inflar el payload del chat; sin ``value`` la serie no es graficable."""
+        points = _extract_points(rows)
         self.series_used[series_id] = {
             "series_id": series_id,
             "series_name": meta.get("series_name") or meta.get("name", ""),
@@ -61,6 +67,7 @@ class AgentState:
             "n_observations": len(rows),
             "first_date": _isoformat(rows[0]["date"]) if rows else None,
             "last_date": _isoformat(rows[-1]["date"]) if rows else None,
+            "points": points,
         }
 
     def add_tool_call_trace(
@@ -95,3 +102,27 @@ def _isoformat(value) -> str | None:
     if callable(iso):
         return iso()
     return str(value)
+
+
+# Tope de puntos por serie en la respuesta: suficiente para un gráfico, evita
+# payloads enormes. Si la serie excede, se conservan los más recientes.
+MAX_SERIES_POINTS = 500
+
+
+def _extract_points(rows: list[dict]) -> list[list]:
+    """``[[iso_date, value], ...]`` de las filas que traen ``date`` y ``value``
+    numérico. Vacío si las filas no tienen valores (serie no graficable)."""
+    points: list[list] = []
+    for r in rows:
+        if "value" not in r or r["value"] is None:
+            continue
+        try:
+            value = float(r["value"])
+        except (TypeError, ValueError):
+            continue
+        date = _isoformat(r.get("date"))
+        if date is not None:
+            points.append([date, value])
+    if len(points) > MAX_SERIES_POINTS:
+        points = points[-MAX_SERIES_POINTS:]
+    return points

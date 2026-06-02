@@ -34,13 +34,17 @@ const ROUTE_CLASSES = {
 };
 
 const THINKING_KEY = "bcch_thinking_mode";   // localStorage
+// Ciclo de 3 modos del thinking de Qwen3 (orden ascendente de razonamiento).
+const THINKING_CYCLE = ["off", "adaptive", "on"];
 const THINKING_LABELS = {
-    adaptive: "Análisis",
     off: "Rápido",
+    adaptive: "Análisis",
+    on: "Profundo",
 };
 const THINKING_TITLES = {
-    adaptive: "Modo análisis: el agente razona en las consultas de datos (más completo, algo más lento). Click para modo rápido.",
-    off: "Modo rápido: sin razonamiento interno (respuestas más veloces). Click para modo análisis.",
+    off: "Modo Rápido: sin razonamiento interno, respuestas más veloces. Click para subir a Análisis.",
+    adaptive: "Modo Análisis: el agente razona en las consultas de datos (recomendado). Click para subir a Profundo.",
+    on: "Modo Profundo: razonamiento en todas las etapas, máxima calidad y más lento. Click para volver a Rápido.",
 };
 
 class ChatController {
@@ -52,9 +56,10 @@ class ChatController {
         this.suggestionsEl = suggestions;
 
         this.history = [];
-        // "adaptive" (default) | "off". Persistido entre sesiones y compartido
+        // off | adaptive (default) | on. Persistido entre sesiones y compartido
         // por ambas vistas del chat (panel lateral + inline) vía localStorage.
-        this.thinkingMode = localStorage.getItem(THINKING_KEY) === "off" ? "off" : "adaptive";
+        const saved = localStorage.getItem(THINKING_KEY);
+        this.thinkingMode = THINKING_CYCLE.includes(saved) ? saved : "adaptive";
 
         this._bindForm();
         this._mountModeToggle();
@@ -63,27 +68,58 @@ class ChatController {
 
     _mountModeToggle() {
         if (!this.form || !this.send) return;
-        this.modeBtn = h("button", {
+        // Segmented control (radiogroup): los 3 modos visibles a la vez, con el
+        // orden de intensidad fast→deep y el estado actual evidente. Más
+        // descubrible y accesible que un botón que cicla estados ocultos.
+        this.modeGroup = h("div", {
+            "class": "chat-mode",
+            "role": "radiogroup",
+            "aria-label": "Modo de razonamiento del agente",
+        });
+        this.modeBtns = THINKING_CYCLE.map((mode) => h("button", {
             type: "button",
-            "class": "chat-mode-toggle",
-            "aria-label": "Modo de análisis del agente",
+            "class": "chat-mode__opt",
+            "data-mode": mode,
+            "role": "radio",
+            "aria-label": THINKING_TITLES[mode],
+            onClick: () => this._setMode(mode),
+        }, THINKING_LABELS[mode]));
+        this.modeGroup.append(...this.modeBtns);
+
+        // Navegación con flechas (patrón WAI-ARIA radiogroup).
+        this.modeGroup.addEventListener("keydown", (e) => {
+            if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+            e.preventDefault();
+            const i = THINKING_CYCLE.indexOf(this.thinkingMode);
+            const dir = (e.key === "ArrowRight" || e.key === "ArrowDown") ? 1 : -1;
+            const next = THINKING_CYCLE[(i + dir + THINKING_CYCLE.length) % THINKING_CYCLE.length];
+            this._setMode(next);
+            this.modeBtns.find((b) => b.dataset.mode === next)?.focus();
         });
-        this.modeBtn.addEventListener("click", () => {
-            this.thinkingMode = this.thinkingMode === "off" ? "adaptive" : "off";
-            localStorage.setItem(THINKING_KEY, this.thinkingMode);
-            this._applyModeUI();
-        });
-        // Insertar el toggle justo antes del botón Enviar.
-        this.form.insertBefore(this.modeBtn, this.send);
+
+        this.modeHint = h("div", { "class": "chat-mode__hint mono" },
+            "Razonamiento · a más profundo, más lento");
+
+        // En su propia fila dentro del form (el grid lo ubica bajo input+send).
+        this.form.appendChild(this.modeGroup);
+        this.form.appendChild(this.modeHint);
+        this._applyModeUI();
+    }
+
+    _setMode(mode) {
+        this.thinkingMode = mode;
+        localStorage.setItem(THINKING_KEY, mode);
         this._applyModeUI();
     }
 
     _applyModeUI() {
-        if (!this.modeBtn) return;
-        this.modeBtn.dataset.mode = this.thinkingMode;
-        this.modeBtn.setAttribute("aria-pressed", String(this.thinkingMode === "adaptive"));
-        this.modeBtn.title = THINKING_TITLES[this.thinkingMode];
-        this.modeBtn.textContent = THINKING_LABELS[this.thinkingMode];
+        if (!this.modeBtns) return;
+        this.modeBtns.forEach((btn) => {
+            const active = btn.dataset.mode === this.thinkingMode;
+            btn.classList.toggle("is-active", active);
+            btn.setAttribute("aria-checked", String(active));
+            btn.tabIndex = active ? 0 : -1;   // roving tabindex
+        });
     }
 
     _bindForm() {
@@ -112,7 +148,7 @@ class ChatController {
         this._appendUserMsg(message);
         this.input.value = "";
         if (this.send) this.send.disabled = true;
-        if (this.modeBtn) this.modeBtn.disabled = true;
+        if (this.modeBtns) this.modeBtns.forEach((b) => { b.disabled = true; });
 
         const loadingEl = this._appendLoading();
 
@@ -131,7 +167,7 @@ class ChatController {
             this._appendError(e);
         } finally {
             if (this.send) this.send.disabled = false;
-            if (this.modeBtn) this.modeBtn.disabled = false;
+            if (this.modeBtns) this.modeBtns.forEach((b) => { b.disabled = false; });
             this._scrollToBottom();
         }
     }
@@ -170,11 +206,59 @@ class ChatController {
             meta,
         ]);
 
+        // Gráficos de las series temporales que el agente analizó (antes de
+        // las fuentes, para que el dato cuantitativo sea lo primero que se ve).
+        this._renderSeriesCharts(seriesUsed, msg);
+
         const sources = this._buildSources(citedRefs, chunksSeen, seriesUsed);
         if (sources) msg.appendChild(sources);
 
         this.messages.appendChild(msg);
         this._scrollToBottom();
+    }
+
+    _renderSeriesCharts(seriesUsed, msgEl) {
+        // Solo series temporales reales (≥2 puntos). ApexCharts y baseChartConfig
+        // deben estar cargados; si no, se omite en silencio.
+        if (!window.ApexCharts || !BCCh.baseChartConfig) return;
+        const plottable = (seriesUsed || []).filter((s) => (s.points || []).length >= 2);
+        if (!plottable.length) return;
+
+        const MAX_CHARTS = 3;   // no saturar la respuesta
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        plottable.slice(0, MAX_CHARTS).forEach((s, idx) => {
+            const head = h("div", { "class": "chat-chart__head" }, [
+                h("span", { "class": "chat-chart__title" }, s.series_name || s.series_id),
+                h("span", { "class": "chat-chart__unit mono" }, s.unit || ""),
+            ]);
+            const body = h("div", { "class": "chat-chart__body" });
+            const card = h("div", { "class": "chat-chart" }, [head, body]);
+            msgEl.appendChild(card);
+
+            const data = s.points
+                .map((p) => [new Date(p[0]).getTime(), Number(p[1])])
+                .filter((p) => !Number.isNaN(p[0]) && !Number.isNaN(p[1]));
+            if (data.length < 2) { card.remove(); return; }
+
+            // El primero más alto; los apilados, compactos (no enterrar las citas).
+            const height = idx === 0 ? 160 : 132;
+            const cfg = BCCh.baseChartConfig("area", { compact: true, height });
+            cfg.series = [{ name: s.series_name || s.series_id, data }];
+            cfg.fill = {
+                type: "gradient",
+                gradient: { shadeIntensity: 0.2, opacityFrom: 0.25, opacityTo: 0.02, stops: [0, 100] },
+            };
+            // El reveal lo hace el CSS (.chat-chart); Apex no anima (evita doble
+            // animación) y respeta prefers-reduced-motion.
+            cfg.chart.animations = { enabled: false };
+            void reduce;
+            try {
+                const apex = new window.ApexCharts(body, cfg);
+                apex.render();
+            } catch (e) {
+                card.remove();   // si ApexCharts falla, la respuesta de texto queda intacta
+            }
+        });
     }
 
     _buildSources(citedRefs, chunksSeen, seriesUsed) {

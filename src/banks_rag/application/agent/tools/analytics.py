@@ -165,7 +165,7 @@ def _register_series(
             "series_name": f"{dataset.name} — {column}{name_suffix}",
             "unit": dataset.unit,
         },
-        [{"date": fecha} for fecha, _ in series],
+        [{"date": fecha, "value": valor} for fecha, valor in series],
     )
 
 

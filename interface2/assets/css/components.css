@@ -662,13 +662,14 @@
 .src-card__score {
     font-family: var(--font-mono);
     font-size: var(--fs-2xs);
-    color: var(--c-gold-2);
+    color: var(--text-strong);   /* navy: contraste AA (gold-2 fallaba en 11px) */
     margin-top: 2px;
 }
 
-/* Chat input */
+/* Chat input — fila 1: campo + enviar; fila 2: control de modo */
 .chat-input {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto;   /* input | send */
     gap: 8px;
     align-items: center;
 }
@@ -687,50 +688,112 @@
 .chat-input-field::placeholder { color: var(--text-mute); }
 
 .chat-input-send {
-    width: 36px; height: 36px;
+    width: 40px; height: 40px;
     background: var(--c-gold);
     color: #fff;
     border-radius: var(--r-sm);
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background var(--transition-fast);
+    transition: background var(--transition-fast), transform var(--transition-fast);
 }
-.chat-input-send:hover { background: var(--c-gold-2); }
+.chat-input-send:hover { background: var(--c-gold-2); transform: translateY(-1px); }
+.chat-input-send:active { transform: translateY(0); }
 .chat-input-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Toggle de modo thinking (al lado de Enviar): adaptive ↔ off */
-.chat-mode-toggle {
-    height: 36px;
-    padding: 0 10px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    white-space: nowrap;
-    font-size: var(--fs-xs);
-    font-family: var(--font-sans);
+/* Modo de razonamiento: segmented control de 3 estados (Rápido·Análisis·Profundo) */
+.chat-mode {
+    grid-column: 1 / -1;          /* fila propia bajo input+send */
+    display: inline-flex;
+    margin-top: var(--space-2);
+    padding: 2px;
+    background: var(--bg-elev);
     border: 1px solid var(--border-soft);
     border-radius: var(--r-sm);
-    background: #fff;
-    color: var(--text-mute);
-    cursor: pointer;
-    transition: border-color var(--transition-fast), color var(--transition-fast),
-                background var(--transition-fast);
+    gap: 2px;
 }
-.chat-mode-toggle::before {
-    content: "";
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: currentColor;
+.chat-mode__opt {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    padding: 6px 12px;
+    min-height: 28px;
+    font-size: var(--fs-xs);
+    font-family: var(--font-sans);
+    color: var(--text-mute);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: color var(--transition-fast), background var(--transition-fast),
+                box-shadow var(--transition-fast);
+}
+.chat-mode__opt:hover:not(.is-active) { color: var(--text); }
+.chat-mode__opt.is-active {
+    color: var(--c-navy);
+    background: #fff;
+    font-weight: var(--fw-medium);
+    box-shadow: var(--shadow-sm);
+}
+.chat-mode__opt[data-mode="adaptive"].is-active { color: var(--c-gold-2); }
+.chat-mode__opt[data-mode="on"].is-active {
+    color: #fff;                  /* navy garantiza contraste AA (no gold) */
+    background: var(--c-navy);
+    box-shadow: none;
+}
+.chat-mode__opt:focus-visible {
+    outline: 2px solid var(--c-gold);
+    outline-offset: 1px;
+    position: relative; z-index: 1;
+}
+.chat-mode__opt:disabled { cursor: not-allowed; }
+.chat-mode__hint {
+    grid-column: 1 / -1;
+    font-size: var(--fs-2xs);
+    color: var(--text-mute);
+    letter-spacing: var(--tracking-wide);
+    margin-top: var(--space-1);
+}
+
+/* Gráfico de serie temporal embebido en una respuesta del agente */
+.chat-chart {
+    margin-top: var(--space-3);
+    padding: var(--space-2) var(--space-3) var(--space-1);
+    background: var(--bg-card);
+    border: 1px solid var(--border-soft);
+    border-left: 3px solid var(--c-gold);   /* lo marca como bloque de evidencia */
+    border-radius: var(--r-sm);
+}
+@media (prefers-reduced-motion: no-preference) {
+    .chat-chart { animation: chartIn 0.28s cubic-bezier(0.4, 0, 0.2, 1) both; }
+    @keyframes chartIn {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+}
+.chat-chart__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-bottom: var(--space-1);
+    padding-bottom: var(--space-1);
+    border-bottom: 1px solid var(--mkt-grid-line);
+}
+.chat-chart__title {
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semi);
+    color: var(--text-strong);
+    letter-spacing: var(--tracking-tight);
+    line-height: 1.3;
+}
+.chat-chart__unit {
+    font-size: var(--fs-2xs);
+    color: var(--c-gold-2);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    white-space: nowrap;
     flex: 0 0 auto;
 }
-.chat-mode-toggle:hover { border-color: var(--c-gold); }
-.chat-mode-toggle[data-mode="adaptive"] {
-    border-color: var(--c-gold);
-    color: var(--c-gold);
-    background: var(--c-gold-soft);
-}
-.chat-mode-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
+.chat-chart__body { min-height: 132px; }
 
 /* ── CHAT INLINE (sección Agente GOEM, embebida en #chart-grid) ──────── */
 .chat-inline {

@@ -117,7 +117,8 @@ PYTHONPATH=src python3 -m banks_rag.interface.api.main
 Notas:
 - La pill superior derecha pasa por `SIN CONEXIÓN → LLM CARGANDO → OK` mientras `llama-cpp` carga. Los charts del catálogo no esperan al LLM; sólo el panel "Agente IA" sí.
 - Los charts usan `/v1/query/{dataset_id}` (DuckDB sobre parquets) y los KPIs son hardcoded en `kpi.js` — no requieren PostgreSQL para renderizar.
-- Junto a "Enviar" hay un toggle **Análisis / Rápido** que el usuario alterna por consulta: envía `thinking_mode` (`adaptive`/`off`) en el request; el server cae a `BANKS_THINKING_MODE` si no se especifica. Se persiste en `localStorage`.
+- Bajo el campo de chat hay un **segmented control de razonamiento** (`Rápido` / `Análisis` / `Profundo`) que el usuario elige por consulta: envía `thinking_mode` (`off`/`adaptive`/`on`) en el request; el server cae a `BANKS_THINKING_MODE` si no se especifica. Se persiste en `localStorage`.
+- El agente **grafica las series temporales** que analiza: cuando una respuesta usó datos de un parquet, debajo del texto se renderiza un mini-gráfico de área (ApexCharts) con los puntos que el agente consultó. Backend: `series_used[].points` en `/v1/chat`.
 
 ### Verificación de sub-agentes
 
