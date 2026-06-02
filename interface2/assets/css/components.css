@@ -701,57 +701,94 @@
 .chat-input-send:active { transform: translateY(0); }
 .chat-input-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Modo de razonamiento: segmented control de 3 estados (Rápido·Análisis·Profundo) */
+/* Modo de razonamiento: dropdown (trigger + menú título/descripción/check) */
 .chat-mode {
     grid-column: 1 / -1;          /* fila propia bajo input+send */
-    display: inline-flex;
+    position: relative;
     margin-top: var(--space-2);
-    padding: 2px;
+    justify-self: start;
+}
+.chat-mode__trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    min-height: 30px;
+    font-size: var(--fs-xs);
+    font-family: var(--font-sans);
+    font-weight: var(--fw-medium);
+    color: var(--text-strong);
     background: var(--bg-elev);
     border: 1px solid var(--border-soft);
     border-radius: var(--r-sm);
-    gap: 2px;
+    cursor: pointer;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
 }
-.chat-mode__opt {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    padding: 6px 12px;
-    min-height: 28px;
-    font-size: var(--fs-xs);
-    font-family: var(--font-sans);
+.chat-mode__trigger::before {   /* punto indicador del modo */
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--text-mute);
+}
+.chat-mode__trigger[data-mode="adaptive"]::before { background: var(--c-gold); }
+.chat-mode__trigger[data-mode="on"]::before { background: var(--c-navy); }
+.chat-mode__trigger:hover { border-color: var(--c-gold); }
+.chat-mode__trigger:focus-visible { outline: 2px solid var(--c-gold); outline-offset: 1px; }
+.chat-mode__trigger:disabled { opacity: 0.4; cursor: not-allowed; }
+.chat-mode__chevron {
     color: var(--text-mute);
+    font-size: 10px;
+    transition: transform var(--transition-fast);
+}
+.chat-mode.is-open .chat-mode__chevron { transform: rotate(180deg); }
+
+/* Menú: abre HACIA ARRIBA (el control vive al fondo del footer) */
+.chat-mode__menu {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    min-width: 260px;
+    padding: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-lg);
+    z-index: 50;
+}
+.chat-mode__item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    padding: 8px 10px;
+    background: transparent;
+    border: 0;
     border-radius: var(--r-sm);
     cursor: pointer;
-    transition: color var(--transition-fast), background var(--transition-fast),
-                box-shadow var(--transition-fast);
+    text-align: left;
+    transition: background var(--transition-fast);
 }
-.chat-mode__opt:hover:not(.is-active) { color: var(--text); }
-.chat-mode__opt.is-active {
-    color: var(--c-navy);
-    background: #fff;
+.chat-mode__item:hover { background: var(--bg-elev); }
+.chat-mode__item-main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.chat-mode__item-title {
+    font-size: var(--fs-sm);
     font-weight: var(--fw-medium);
-    box-shadow: var(--shadow-sm);
+    color: var(--text-strong);
+    line-height: 1.2;
 }
-.chat-mode__opt[data-mode="adaptive"].is-active { color: var(--c-gold-2); }
-.chat-mode__opt[data-mode="on"].is-active {
-    color: #fff;                  /* navy garantiza contraste AA (no gold) */
-    background: var(--c-navy);
-    box-shadow: none;
-}
-.chat-mode__opt:focus-visible {
-    outline: 2px solid var(--c-gold);
-    outline-offset: 1px;
-    position: relative; z-index: 1;
-}
-.chat-mode__opt:disabled { cursor: not-allowed; }
-.chat-mode__hint {
-    grid-column: 1 / -1;
-    font-size: var(--fs-2xs);
+.chat-mode__item-desc {
+    font-size: var(--fs-xs);
     color: var(--text-mute);
-    letter-spacing: var(--tracking-wide);
-    margin-top: var(--space-1);
+    line-height: 1.3;
 }
+.chat-mode__check {
+    color: var(--c-gold);
+    font-size: var(--fs-sm);
+    flex: 0 0 auto;
+    opacity: 0;             /* visible solo en el modo activo */
+}
+.chat-mode__item.is-active .chat-mode__check { opacity: 1; }
+.chat-mode__item.is-active .chat-mode__item-title { color: var(--c-gold-2); }
 
 /* Gráfico de serie temporal embebido en una respuesta del agente */
 .chat-chart {

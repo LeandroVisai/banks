@@ -34,17 +34,17 @@ const ROUTE_CLASSES = {
 };
 
 const THINKING_KEY = "bcch_thinking_mode";   // localStorage
-// Ciclo de 3 modos del thinking de Qwen3 (orden ascendente de razonamiento).
-const THINKING_CYCLE = ["off", "adaptive", "on"];
+const THINKING_MODES = ["off", "adaptive", "on"];           // valores válidos
+const THINKING_MENU_ORDER = ["on", "adaptive", "off"];      // orden visual: profundo→rápido
 const THINKING_LABELS = {
     off: "Rápido",
     adaptive: "Análisis",
     on: "Profundo",
 };
-const THINKING_TITLES = {
-    off: "Modo Rápido: sin razonamiento interno, respuestas más veloces. Click para subir a Análisis.",
-    adaptive: "Modo Análisis: el agente razona en las consultas de datos (recomendado). Click para subir a Profundo.",
-    on: "Modo Profundo: razonamiento en todas las etapas, máxima calidad y más lento. Click para volver a Rápido.",
+const THINKING_DESCS = {
+    off: "Respuestas veloces, sin razonamiento",
+    adaptive: "Razona en los datos · recomendado",
+    on: "Razonamiento en todo, máxima calidad",
 };
 
 class ChatController {
@@ -59,7 +59,7 @@ class ChatController {
         // off | adaptive (default) | on. Persistido entre sesiones y compartido
         // por ambas vistas del chat (panel lateral + inline) vía localStorage.
         const saved = localStorage.getItem(THINKING_KEY);
-        this.thinkingMode = THINKING_CYCLE.includes(saved) ? saved : "adaptive";
+        this.thinkingMode = THINKING_MODES.includes(saved) ? saved : "adaptive";
 
         this._bindForm();
         this._mountModeToggle();
@@ -68,57 +68,91 @@ class ChatController {
 
     _mountModeToggle() {
         if (!this.form || !this.send) return;
-        // Segmented control (radiogroup): los 3 modos visibles a la vez, con el
-        // orden de intensidad fast→deep y el estado actual evidente. Más
-        // descubrible y accesible que un botón que cicla estados ocultos.
-        this.modeGroup = h("div", {
-            "class": "chat-mode",
-            "role": "radiogroup",
-            "aria-label": "Modo de razonamiento del agente",
-        });
-        this.modeBtns = THINKING_CYCLE.map((mode) => h("button", {
+        // Dropdown (estilo selector de modelos): trigger con el modo actual +
+        // menú con título/descripción/check por modo. Descubrible y accesible.
+        this.modeWrap = h("div", { "class": "chat-mode" });
+
+        this.modeTrigger = h("button", {
             type: "button",
-            "class": "chat-mode__opt",
-            "data-mode": mode,
-            "role": "radio",
-            "aria-label": THINKING_TITLES[mode],
-            onClick: () => this._setMode(mode),
-        }, THINKING_LABELS[mode]));
-        this.modeGroup.append(...this.modeBtns);
+            "class": "chat-mode__trigger",
+            "aria-haspopup": "true",
+            "aria-expanded": "false",
+            "aria-label": "Modo de razonamiento del agente",
+            onClick: (e) => { e.stopPropagation(); this._toggleMenu(); },
+        }, [
+            h("span", { "class": "chat-mode__trigger-label" }, ""),
+            h("span", { "class": "chat-mode__chevron", "aria-hidden": "true" }, "▾"),
+        ]);
+        this.modeTriggerLabel = this.modeTrigger.querySelector(".chat-mode__trigger-label");
 
-        // Navegación con flechas (patrón WAI-ARIA radiogroup).
-        this.modeGroup.addEventListener("keydown", (e) => {
-            if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
-            e.preventDefault();
-            const i = THINKING_CYCLE.indexOf(this.thinkingMode);
-            const dir = (e.key === "ArrowRight" || e.key === "ArrowDown") ? 1 : -1;
-            const next = THINKING_CYCLE[(i + dir + THINKING_CYCLE.length) % THINKING_CYCLE.length];
-            this._setMode(next);
-            this.modeBtns.find((b) => b.dataset.mode === next)?.focus();
+        this.modeMenu = h("div", { "class": "chat-mode__menu", "role": "menu", hidden: true });
+        this.modeItems = THINKING_MENU_ORDER.map((mode) => {
+            const item = h("button", {
+                type: "button",
+                "class": "chat-mode__item",
+                "data-mode": mode,
+                "role": "menuitemradio",
+                onClick: () => this._setMode(mode),
+            }, [
+                h("span", { "class": "chat-mode__item-main" }, [
+                    h("span", { "class": "chat-mode__item-title" }, THINKING_LABELS[mode]),
+                    h("span", { "class": "chat-mode__item-desc" }, THINKING_DESCS[mode]),
+                ]),
+                h("span", { "class": "chat-mode__check", "aria-hidden": "true" }, "✓"),
+            ]);
+            return item;
         });
+        this.modeMenu.append(...this.modeItems);
 
-        this.modeHint = h("div", { "class": "chat-mode__hint mono" },
-            "Razonamiento · a más profundo, más lento");
+        // Cerrar con Escape o click fuera.
+        this.modeMenu.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") { this._closeMenu(); this.modeTrigger.focus(); }
+        });
+        if (!ChatController._outsideBound) {
+            document.addEventListener("click", () => {
+                document.querySelectorAll(".chat-mode.is-open").forEach((el) => {
+                    el.classList.remove("is-open");
+                    el.querySelector(".chat-mode__trigger")?.setAttribute("aria-expanded", "false");
+                    el.querySelector(".chat-mode__menu")?.setAttribute("hidden", "");
+                });
+            });
+            ChatController._outsideBound = true;
+        }
 
-        // En su propia fila dentro del form (el grid lo ubica bajo input+send).
-        this.form.appendChild(this.modeGroup);
-        this.form.appendChild(this.modeHint);
+        this.modeWrap.append(this.modeTrigger, this.modeMenu);
+        this.form.appendChild(this.modeWrap);
         this._applyModeUI();
+    }
+
+    _toggleMenu() {
+        this.modeWrap.classList.contains("is-open") ? this._closeMenu() : this._openMenu();
+    }
+    _openMenu() {
+        this.modeWrap.classList.add("is-open");
+        this.modeTrigger.setAttribute("aria-expanded", "true");
+        this.modeMenu.hidden = false;
+    }
+    _closeMenu() {
+        this.modeWrap.classList.remove("is-open");
+        this.modeTrigger.setAttribute("aria-expanded", "false");
+        this.modeMenu.hidden = true;
     }
 
     _setMode(mode) {
         this.thinkingMode = mode;
         localStorage.setItem(THINKING_KEY, mode);
         this._applyModeUI();
+        this._closeMenu();
+        this.modeTrigger.focus();
     }
 
     _applyModeUI() {
-        if (!this.modeBtns) return;
-        this.modeBtns.forEach((btn) => {
-            const active = btn.dataset.mode === this.thinkingMode;
-            btn.classList.toggle("is-active", active);
-            btn.setAttribute("aria-checked", String(active));
-            btn.tabIndex = active ? 0 : -1;   // roving tabindex
+        if (this.modeTriggerLabel) this.modeTriggerLabel.textContent = THINKING_LABELS[this.thinkingMode];
+        if (this.modeTrigger) this.modeTrigger.dataset.mode = this.thinkingMode;
+        (this.modeItems || []).forEach((item) => {
+            const active = item.dataset.mode === this.thinkingMode;
+            item.classList.toggle("is-active", active);
+            item.setAttribute("aria-checked", String(active));
         });
     }
 
@@ -148,7 +182,7 @@ class ChatController {
         this._appendUserMsg(message);
         this.input.value = "";
         if (this.send) this.send.disabled = true;
-        if (this.modeBtns) this.modeBtns.forEach((b) => { b.disabled = true; });
+        if (this.modeTrigger) this.modeTrigger.disabled = true;
 
         const loadingEl = this._appendLoading();
 
@@ -167,7 +201,7 @@ class ChatController {
             this._appendError(e);
         } finally {
             if (this.send) this.send.disabled = false;
-            if (this.modeBtns) this.modeBtns.forEach((b) => { b.disabled = false; });
+            if (this.modeTrigger) this.modeTrigger.disabled = false;
             this._scrollToBottom();
         }
     }
