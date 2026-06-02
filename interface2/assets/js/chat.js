@@ -78,7 +78,7 @@ class ChatController {
         this.fileInput = h("input", {
             type: "file",
             "class": "chat-attach__input",
-            accept: ".pdf,.txt,.md,.csv,.xlsx,.xls",
+            accept: ".pdf,.txt,.md,.json,.csv,.xlsx,.xls",
             multiple: true,
         });
         this.fileInput.addEventListener("change", () => {

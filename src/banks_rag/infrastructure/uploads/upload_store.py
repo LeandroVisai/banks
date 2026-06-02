@@ -24,6 +24,18 @@ from typing import Any
 
 from banks_rag.config.paths import DATA_UPLOADS_DIR
 
+# Campos comunes en JSONs de noticias webscrapeadas (es/en). Se buscan
+# case-insensitive para formatear cada ítem de forma legible para el LLM.
+_NEWS_FIELDS = {
+    "title": ("title", "titulo", "título", "headline", "titular", "name"),
+    "date": ("date", "fecha", "published", "published_at", "fecha_publicacion",
+             "pubdate", "datetime", "timestamp"),
+    "source": ("source", "fuente", "medio", "source_name", "publisher", "diario"),
+    "body": ("content", "body", "texto", "contenido", "summary", "resumen",
+             "description", "descripcion", "cuerpo", "articulo", "abstract"),
+    "url": ("url", "link", "enlace", "href", "permalink"),
+}
+
 # Límites (defensivos): tamaño del archivo, texto inyectado y filas de tabla.
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024     # 10 MB
 MAX_TEXT_CHARS = 12_000                 # texto efímero que entra al contexto
@@ -33,6 +45,7 @@ TTL_SECONDS = 24 * 3600                 # caducidad de los uploads
 # Extensión → tipo lógico.
 _DOC_EXTS = {".pdf", ".txt", ".md"}
 _TABLE_EXTS = {".csv", ".xlsx", ".xls"}
+_JSON_EXTS = {".json"}
 
 
 class UploadError(ValueError):
@@ -87,6 +100,66 @@ def _read_table(content: bytes, ext: str, filename: str) -> str:
     return _format_table(df, source=filename)
 
 
+def _news_item_to_text(item: dict) -> str:
+    """Formatea un objeto noticia (dict) a texto legible. Si no reconoce campos
+    típicos, vuelca el dict en JSON indentado."""
+    lower = {str(k).lower(): v for k, v in item.items()}
+
+    def pick(kind: str) -> str:
+        for key in _NEWS_FIELDS[kind]:
+            v = lower.get(key)
+            if v:
+                return str(v).strip()
+        return ""
+
+    title, date, source = pick("title"), pick("date"), pick("source")
+    body, url = pick("body"), pick("url")
+    if not (title or body):  # no parece una noticia: vuelca el objeto
+        return json.dumps(item, ensure_ascii=False, indent=2)
+    parts = [f"### {title or '(sin título)'}"]
+    meta = " · ".join(x for x in (date, source) if x)
+    if meta:
+        parts.append(meta)
+    if body:
+        parts.append(body)
+    if url:
+        parts.append(f"Fuente: {url}")
+    return "\n".join(parts)
+
+
+def _read_json(content: bytes, filename: str) -> str:
+    """Convierte un JSON (típicamente noticias webscrapeadas) a texto efímero.
+
+    Soporta: lista de noticias, dict con la lista anidada (``articles``/
+    ``noticias``/``data``…), o un objeto suelto."""
+    try:
+        data = json.loads(content.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError as exc:
+        raise UploadError(f"JSON inválido en {filename!r}: {exc}") from exc
+
+    items: list | None = None
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        # Primera lista de objetos entre los valores (p. ej. {"articles": [...]}).
+        for value in data.values():
+            if isinstance(value, list) and value and isinstance(value[0], dict):
+                items = value
+                break
+        if items is None:
+            return json.dumps(data, ensure_ascii=False, indent=2)
+
+    if not items:
+        raise UploadError(f"El JSON {filename!r} no tiene noticias/objetos para leer.")
+
+    blocks = [f"{len(items)} ítem(s) en «{filename}»:"]
+    for it in items[:MAX_TABLE_ROWS]:
+        blocks.append(_news_item_to_text(it) if isinstance(it, dict) else str(it))
+    if len(items) > MAX_TABLE_ROWS:
+        blocks.append(f"[… {len(items) - MAX_TABLE_ROWS} ítem(s) más omitidos]")
+    return "\n\n".join(blocks)
+
+
 def _read_document(content: bytes, ext: str, filename: str) -> str:
     if ext == ".pdf":
         from banks_rag.infrastructure.extractors.pdf_extractor import extract_pages
@@ -128,12 +201,14 @@ def extract_upload(filename: str, content: bytes) -> dict[str, Any]:
     ext = _ext(filename)
     if ext in _TABLE_EXTS:
         kind, raw = "table", _read_table(content, ext, filename)
+    elif ext in _JSON_EXTS:
+        kind, raw = "document", _read_json(content, filename)
     elif ext in _DOC_EXTS:
         kind, raw = "document", _read_document(content, ext, filename)
     else:
         raise UploadError(
             f"Tipo no soportado: {ext or '(sin extensión)'}. "
-            "Permitidos: PDF, TXT, MD, CSV, XLSX, XLS."
+            "Permitidos: PDF, TXT, MD, JSON, CSV, XLSX, XLS."
         )
     text, truncated = _clip(raw)
     return {"kind": kind, "name": filename, "text": text, "truncated": truncated}

@@ -32,6 +32,28 @@ class TestExtractUpload:
         assert rec["kind"] == "document"
         assert "TPM" in rec["text"]
 
+    def test_json_news_list_formatted(self) -> None:
+        import json
+        raw = json.dumps([
+            {"titulo": "BCCh mantiene TPM", "fecha": "2026-05-20",
+             "fuente": "DF", "contenido": "El Consejo decidió..."},
+        ]).encode()
+        rec = extract_upload("noticias.json", raw)
+        assert rec["kind"] == "document"
+        assert "BCCh mantiene TPM" in rec["text"]
+        assert "DF" in rec["text"] and "El Consejo decidió" in rec["text"]
+        assert "{" not in rec["text"]  # no vuelca el JSON crudo
+
+    def test_json_nested_articles(self) -> None:
+        import json
+        raw = json.dumps({"articles": [{"title": "Fed holds", "content": "kept rates"}]}).encode()
+        rec = extract_upload("scrape.json", raw)
+        assert "Fed holds" in rec["text"] and "kept rates" in rec["text"]
+
+    def test_invalid_json_raises(self) -> None:
+        with pytest.raises(UploadError, match="JSON inválido"):
+            extract_upload("bad.json", b"{not valid json")
+
     def test_unsupported_extension_raises(self) -> None:
         with pytest.raises(UploadError, match="no soportado"):
             extract_upload("virus.exe", b"MZ\x00")
