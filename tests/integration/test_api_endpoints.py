@@ -184,6 +184,30 @@ class TestChat:
         r = client.post("/v1/upload", json={"filename": "virus.exe", "content_base64": b64})
         assert r.status_code == 400
 
+    def test_news_report_endpoint(self, tmp_path, monkeypatch) -> None:
+        """/v1/news-report genera el reporte del JSON más reciente."""
+        import json as _json
+
+        import banks_rag.application.news.report as report
+        monkeypatch.setattr(report, "NEWS_SCRAPING_DIR", tmp_path)
+        (tmp_path / "n.json").write_text(_json.dumps([
+            {"topic": "Banco Central", "audience": "100,00K", "title": "x", "text": "y"},
+        ]), encoding="utf-8")
+
+        client, _ = _build_app()
+        r = client.post("/v1/news-report", json={"top_n": 5})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["n_total"] == 1 and body["source_file"] == "n.json"
+        assert isinstance(body["report"], str) and body["report"]
+
+    def test_news_report_404_when_no_files(self, tmp_path, monkeypatch) -> None:
+        import banks_rag.application.news.report as report
+        monkeypatch.setattr(report, "NEWS_SCRAPING_DIR", tmp_path / "vacio")
+        client, _ = _build_app()
+        r = client.post("/v1/news-report", json={})
+        assert r.status_code == 404
+
     def test_chat_returns_503_when_llm_unloaded(self) -> None:
         deps = AppState()
         deps.llm = None

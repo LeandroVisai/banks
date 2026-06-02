@@ -122,6 +122,22 @@ Notas:
 - **Adjuntar archivos** (botón `+`): PDF/TXT/CSV/Excel se suben a `/v1/upload` (base64) y se inyectan como **contexto efímero** del turno — el agente los analiza sin indexarlos. Ver [`docs/DISENO_UPLOADS.md`](docs/DISENO_UPLOADS.md).
 - **Leer en voz** (🔊): cada respuesta tiene un botón TTS (voz del navegador, offline).
 
+### Reporte de noticias (informe diario)
+
+Analiza un JSON de noticias scrapeadas en `data_pipeline/Noticias_scrapping/` y
+genera un reporte estructurado con las más importantes del día (prioriza por
+tema del dominio × alcance, y resume vía map-reduce — los ~100 artículos no
+caben en una sola ventana de contexto).
+
+```bash
+curl -X POST http://localhost:8080/v1/news-report \
+  -H "Content-Type: application/json" \
+  -d '{"top_n": 25}'   # json_path opcional; por defecto el más reciente
+```
+
+Pipeline en `application/news/report.py`. Tarda (varias llamadas al LLM
+serializado); no es un endpoint interactivo.
+
 ### Verificación de sub-agentes
 
 ```bash

@@ -45,6 +45,7 @@ from banks_rag.interface.api.routes import (
     health,
     images,
     kpis,
+    news,
     search,
     uploads,
 )
@@ -166,6 +167,7 @@ def create_app(*, deps: AppState | None = None) -> FastAPI:
     app.include_router(metrics_route.router)
     app.include_router(chat.router)
     app.include_router(uploads.router)
+    app.include_router(news.router)
     app.include_router(search.router)
     app.include_router(images.router)
     app.include_router(catalog.router)
