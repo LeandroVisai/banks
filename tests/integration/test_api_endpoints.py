@@ -188,7 +188,7 @@ class TestChat:
         """/v1/news-report genera el reporte del JSON más reciente."""
         import json as _json
 
-        import banks_rag.application.news.report as report
+        import jarvis_news.report as report
         monkeypatch.setattr(report, "NEWS_SCRAPING_DIR", tmp_path)
         (tmp_path / "n.json").write_text(_json.dumps([
             {"topic": "Banco Central", "audience": "100,00K", "title": "x", "text": "y"},
@@ -202,11 +202,26 @@ class TestChat:
         assert isinstance(body["report"], str) and body["report"]
 
     def test_news_report_404_when_no_files(self, tmp_path, monkeypatch) -> None:
-        import banks_rag.application.news.report as report
+        import jarvis_news.report as report
         monkeypatch.setattr(report, "NEWS_SCRAPING_DIR", tmp_path / "vacio")
         client, _ = _build_app()
         r = client.post("/v1/news-report", json={})
         assert r.status_code == 404
+
+    def test_tts_disabled_returns_503(self, monkeypatch) -> None:
+        """Con BANKS_TTS_ENABLED=false (default), /v1/tts responde 503 claro."""
+        from banks_rag.config import override_settings, reset_settings
+        from banks_rag.config.settings import Settings
+        import jarvis_news.tts as tts
+        tts.reset_default_tts()
+        override_settings(Settings(tts_enabled=False))
+        try:
+            client, _ = _build_app()
+            r = client.post("/v1/tts", json={"text": "hola", "translate_to_en": False})
+            assert r.status_code == 503
+        finally:
+            reset_settings()
+            tts.reset_default_tts()
 
     def test_chat_returns_503_when_llm_unloaded(self) -> None:
         deps = AppState()

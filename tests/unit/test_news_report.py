@@ -6,14 +6,14 @@ import json
 
 import pytest
 
-import banks_rag.application.news.report as report
-from banks_rag.application.news.report import (
+import jarvis_news.report as report
+from banks_rag.domain.agent import GenerationResult
+from jarvis_news.report import (
     _parse_metric,
     generate_news_report,
     load_news,
     prioritize,
 )
-from banks_rag.domain.agent import GenerationResult
 
 
 @pytest.fixture

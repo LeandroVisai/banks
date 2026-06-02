@@ -69,25 +69,7 @@ class UploadResponse(BaseModel):
     truncated: bool      # True si se acotó el contenido
     preview: str         # extracto corto para la UI
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Reporte de noticias (analizador del informe diario scrapeado)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-class NewsReportRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    # Nombre del JSON en Noticias_scrapping/; None = el más reciente.
-    json_path: str | None = Field(default=None, max_length=255)
-    top_n: int = Field(default=25, ge=1, le=60)
-
-
-class NewsReportResponse(BaseModel):
-    report: str
-    source_file: str
-    n_total: int         # noticias en el archivo
-    n_used: int          # noticias usadas (top-N)
+# Nota: los schemas de noticias/TTS viven en el paquete aislado jarvis_news.schemas.
 
 
 class ChunkSeen(BaseModel):

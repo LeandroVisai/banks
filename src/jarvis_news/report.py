@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from banks_rag.config.paths import NEWS_SCRAPING_DIR
+from .config import NEWS_SCRAPING_DIR
 
 log = logging.getLogger(__name__)
 
