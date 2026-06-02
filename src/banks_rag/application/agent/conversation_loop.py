@@ -57,7 +57,15 @@ def _should_think(thinking_mode: str, component: str) -> bool:
     ``component``: ``"quant"`` (especialista multi-paso), ``"doc"`` (especialista
     documental) o ``"synthesis"``. En ``adaptive`` solo razonan los cuantitativos
     (donde el razonamiento más rinde, según la literatura de CoT/function-calling);
-    ``on`` razona en todo, ``off`` en nada."""
+    ``on`` razona en los especialistas, ``off`` en nada.
+
+    La SÍNTESIS NUNCA razona (ni en ``on``): solo integra y redacta. Su thinking
+    consumía el presupuesto de ``max_tokens`` y, si se truncaba antes de cerrar
+    ``</think>``, la respuesta entregada era el razonamiento en vez de la
+    conclusión. El razonamiento ya ocurre en los especialistas (y se guarda en
+    el chat log como ``specialist_analyses``)."""
+    if component == "synthesis":
+        return False
     if thinking_mode == "on":
         return True
     if thinking_mode == "off":
@@ -761,4 +769,14 @@ async def run_agent(
         latency_ms=int((time.perf_counter() - t0) * 1000),
         invalid_refs=invalid_refs,
         ungrounded_numbers=ungrounded_numbers,
+        specialist_analyses=[
+            {
+                "key": s.key,
+                "display_name": s.display_name,
+                "analysis": s.analysis,
+                "finish_reason": s.finish_reason,
+                "iterations": s.iterations,
+            }
+            for s in subs
+        ],
     )

@@ -51,3 +51,7 @@ class AgentResult:
     # herramienta de este turno (grounding numérico). Señal de alucinación de
     # valores; se reportan para evaluación y para que el frontend las marque.
     ungrounded_numbers: list[float] = field(default_factory=list)
+    # Análisis crudo de cada especialista (el "proceso de razonamiento"). NO va
+    # en la respuesta al usuario (esa es solo la síntesis); se persiste en el
+    # chat log para trazabilidad/depuración.
+    specialist_analyses: list[dict] = field(default_factory=list)

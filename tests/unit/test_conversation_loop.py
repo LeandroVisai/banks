@@ -177,6 +177,33 @@ class TestRunAgent:
         assert "CONTENIDO ADJUNTO" in synth_user
 
     @pytest.mark.asyncio
+    async def test_specialist_analyses_captured_outside_response(self) -> None:
+        """El razonamiento de los especialistas va en specialist_analyses (para el
+        log), NO en la respuesta (que es solo la síntesis)."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="análisis afp detallado", n_tokens=5),
+            GenerationResult(text="Respuesta sintetizada para el usuario.", n_tokens=5),
+        ])
+        result = await run_agent("¿DV01 de las AFP?", history=[], llm=llm)
+        assert result.response == "Respuesta sintetizada para el usuario."
+        assert len(result.specialist_analyses) == 1
+        assert result.specialist_analyses[0]["key"] == "afp"
+        assert result.specialist_analyses[0]["analysis"] == "análisis afp detallado"
+
+    @pytest.mark.asyncio
+    async def test_synthesis_never_thinks_even_in_on_mode(self) -> None:
+        """En modo 'on' los especialistas razonan, pero la síntesis NO (su system
+        prompt de síntesis no lleva el preámbulo de thinking)."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="análisis", n_tokens=5),
+            GenerationResult(text="final", n_tokens=5),
+        ])
+        await run_agent("¿DV01 de las AFP?", history=[], llm=llm, thinking_mode="on")
+        # La síntesis lleva /no_think (no razona) aun en modo on.
+        synth_system = llm.calls[-1]["messages"][0]["content"]
+        assert "/no_think" in synth_system
+
+    @pytest.mark.asyncio
     async def test_no_attachments_no_injection(self) -> None:
         """Sin adjuntos, el task del especialista es la pregunta limpia."""
         llm = _MockLLM(responses=[
