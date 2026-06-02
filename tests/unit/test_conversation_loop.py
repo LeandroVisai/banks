@@ -159,6 +159,34 @@ class TestRunAgent:
         assert synth_system.endswith("/no_think")  # síntesis no
 
     @pytest.mark.asyncio
+    async def test_attachments_context_injected(self) -> None:
+        """El contenido adjunto se inyecta en el task del especialista y en la síntesis."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="análisis del especialista", n_tokens=5),
+            GenerationResult(text="respuesta final", n_tokens=5),
+        ])
+        await run_agent(
+            "¿DV01 de las AFP?", history=[], llm=llm,
+            attachments_context="--- Datos adjuntos: x.csv ---\nFecha,Cobre\n2026-05-20,624.9",
+        )
+        # Llamada 0 = especialista: ve el adjunto en su task.
+        afp_task = llm.calls[0]["messages"][1]["content"]
+        assert "CONTENIDO ADJUNTO" in afp_task and "624.9" in afp_task
+        # Última llamada = síntesis: también ve el adjunto.
+        synth_user = llm.calls[-1]["messages"][-1]["content"]
+        assert "CONTENIDO ADJUNTO" in synth_user
+
+    @pytest.mark.asyncio
+    async def test_no_attachments_no_injection(self) -> None:
+        """Sin adjuntos, el task del especialista es la pregunta limpia."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="análisis", n_tokens=5),
+            GenerationResult(text="final", n_tokens=5),
+        ])
+        await run_agent("¿DV01 de las AFP?", history=[], llm=llm)
+        assert "CONTENIDO ADJUNTO" not in llm.calls[0]["messages"][1]["content"]
+
+    @pytest.mark.asyncio
     async def test_thinking_mode_off_everywhere(self) -> None:
         """off: ni el especialista ni la síntesis razonan."""
         llm = _MockLLM(responses=[

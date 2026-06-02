@@ -133,6 +133,43 @@ class TestChat:
         )
         assert response.status_code == 422
 
+    def test_upload_csv_then_chat_with_attachment(self, tmp_path, monkeypatch) -> None:
+        """Sube un CSV (contexto efímero) y lo referencia en /v1/chat."""
+        import base64
+
+        import banks_rag.infrastructure.uploads.upload_store as store
+        monkeypatch.setattr(store, "DATA_UPLOADS_DIR", tmp_path / "uploads")
+
+        client, _ = _build_app()
+        csv_b64 = base64.b64encode(b"Fecha,Cobre\n2026-05-20,624.9\n").decode()
+        up = client.post("/v1/upload", json={"filename": "cobre.csv", "content_base64": csv_b64})
+        assert up.status_code == 200
+        body = up.json()
+        assert body["kind"] == "table"
+        assert body["upload_id"].startswith("up_")
+
+        chat = client.post(
+            "/v1/chat",
+            json={"message": "analiza estos datos", "attachments": [body["upload_id"]]},
+        )
+        assert chat.status_code == 200
+
+    def test_upload_rejects_bad_base64(self) -> None:
+        client, _ = _build_app()
+        r = client.post("/v1/upload", json={"filename": "x.csv", "content_base64": "!!!notb64!!!"})
+        assert r.status_code == 400
+
+    def test_upload_rejects_unsupported_type(self, tmp_path, monkeypatch) -> None:
+        import base64
+
+        import banks_rag.infrastructure.uploads.upload_store as store
+        monkeypatch.setattr(store, "DATA_UPLOADS_DIR", tmp_path / "uploads")
+
+        client, _ = _build_app()
+        b64 = base64.b64encode(b"MZ\x00binary").decode()
+        r = client.post("/v1/upload", json={"filename": "virus.exe", "content_base64": b64})
+        assert r.status_code == 400
+
     def test_chat_returns_503_when_llm_unloaded(self) -> None:
         deps = AppState()
         deps.llm = None

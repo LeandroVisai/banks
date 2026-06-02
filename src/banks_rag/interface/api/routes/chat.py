@@ -12,6 +12,7 @@ from banks_rag.application.agent import (
 )
 from banks_rag.config import get_settings
 from banks_rag.infrastructure.observability import log_chat_error, log_chat_turn
+from banks_rag.infrastructure.uploads import load_upload
 from banks_rag.interface.api.schemas import (
     ChatRequest,
     ChatResponse,
@@ -48,6 +49,18 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     model = getattr(deps.llm, "name", settings.llm_family)
     request_id = getattr(request.state, "request_id", "")
 
+    # Resuelve los archivos adjuntos a un bloque de contexto efímero. Los que ya
+    # caducaron o no existen se ignoran en silencio.
+    attachments_context = ""
+    if body.attachments:
+        blocks = []
+        for upload_id in body.attachments[:5]:
+            rec = load_upload(upload_id)
+            if rec:
+                label = "Documento adjunto" if rec.get("kind") == "document" else "Datos adjuntos"
+                blocks.append(f"--- {label}: {rec.get('name', '')} ---\n{rec.get('text', '')}")
+        attachments_context = "\n\n".join(blocks)
+
     try:
         result = await run_agent(
             body.message,
@@ -58,6 +71,7 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
             temperature=body.temperature if body.temperature is not None else settings.llm_temperature,
             max_tokens=body.max_tokens if body.max_tokens is not None else settings.llm_max_tokens,
             thinking_mode=body.thinking_mode or settings.thinking_mode,
+            attachments_context=attachments_context,
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("run_agent falló en /v1/chat")

@@ -40,6 +40,32 @@ class ChatRequest(BaseModel):
     # Override por request del modo thinking de Qwen3. None → usa el default del
     # servidor (settings.thinking_mode). Permite al frontend ofrecer un toggle.
     thinking_mode: Literal["off", "adaptive", "on"] | None = None
+    # upload_ids de archivos adjuntos (POST /v1/upload). Su contenido se inyecta
+    # como contexto efímero del turno (no se indexa).
+    attachments: list[str] = Field(default_factory=list, max_length=5)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Upload (archivos adjuntos del chat — contexto efímero)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class UploadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    filename: str = Field(..., min_length=1, max_length=255)
+    # Contenido del archivo en base64 (evita depender de python-multipart).
+    # ~14 MB de base64 ≈ 10 MB de archivo (el límite real lo valida el store).
+    content_base64: str = Field(..., min_length=1, max_length=14_000_000)
+
+
+class UploadResponse(BaseModel):
+    upload_id: str
+    kind: str            # "document" | "table"
+    name: str
+    chars: int           # tamaño del texto extraído
+    truncated: bool      # True si se acotó el contenido
+    preview: str         # extracto corto para la UI
 
 
 class ChunkSeen(BaseModel):

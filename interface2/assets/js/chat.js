@@ -56,14 +56,93 @@ class ChatController {
         this.suggestionsEl = suggestions;
 
         this.history = [];
+        this.attachments = [];   // [{upload_id, name, kind}] del turno en curso
         // off | adaptive (default) | on. Persistido entre sesiones y compartido
         // por ambas vistas del chat (panel lateral + inline) vía localStorage.
         const saved = localStorage.getItem(THINKING_KEY);
         this.thinkingMode = THINKING_MODES.includes(saved) ? saved : "adaptive";
 
         this._bindForm();
+        this._mountAttach();
         this._mountModeToggle();
         this._renderSuggestions();
+    }
+
+    _mountAttach() {
+        if (!this.form || !this.input) return;
+        // Contenedor de chips (fila propia sobre el input).
+        this.chipsEl = h("div", { "class": "chat-attachments" });
+        this.form.insertBefore(this.chipsEl, this.form.firstChild);
+
+        // Botón 📎 + input file oculto, a la izquierda del campo de texto.
+        this.fileInput = h("input", {
+            type: "file",
+            "class": "chat-attach__input",
+            accept: ".pdf,.txt,.md,.csv,.xlsx,.xls",
+            multiple: true,
+        });
+        this.fileInput.addEventListener("change", () => {
+            this._handleFiles(this.fileInput.files);
+            this.fileInput.value = "";   // permite re-subir el mismo archivo
+        });
+        this.attachBtn = h("button", {
+            type: "button",
+            "class": "chat-attach",
+            title: "Adjuntar archivo (PDF, TXT, CSV, Excel)",
+            "aria-label": "Adjuntar archivo",
+            onClick: () => this.fileInput.click(),
+        }, "+");
+        this.form.insertBefore(this.attachBtn, this.input);
+        this.form.appendChild(this.fileInput);   // oculto vía CSS
+    }
+
+    async _handleFiles(fileList) {
+        for (const file of Array.from(fileList || [])) {
+            if (this.attachments.length >= 5) break;   // tope del backend
+            const chip = this._addChip(file.name, true);
+            try {
+                const b64 = await this._fileToBase64(file);
+                const rec = await BCCh.API.upload(file.name, b64);
+                this.attachments.push({ upload_id: rec.upload_id, name: rec.name, kind: rec.kind });
+                chip.dataset.kind = rec.kind;
+                chip.classList.remove("is-loading");
+                chip._uploadId = rec.upload_id;
+            } catch (e) {
+                chip.classList.remove("is-loading");
+                chip.classList.add("is-error");
+                chip.title = e.message || "No se pudo subir";
+            }
+        }
+    }
+
+    _fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = () => resolve(String(r.result).split(",")[1] || "");
+            r.onerror = () => reject(new Error("No se pudo leer el archivo"));
+            r.readAsDataURL(file);
+        });
+    }
+
+    _addChip(name, loading) {
+        const remove = h("button", { type: "button", "class": "chat-chip__x", "aria-label": "Quitar" }, "×");
+        const chip = h("div", { "class": "chat-chip" + (loading ? " is-loading" : "") }, [
+            h("span", { "class": "chat-chip__name" }, name),
+            remove,
+        ]);
+        remove.addEventListener("click", () => {
+            if (chip._uploadId) {
+                this.attachments = this.attachments.filter((a) => a.upload_id !== chip._uploadId);
+            }
+            chip.remove();
+        });
+        this.chipsEl.appendChild(chip);
+        return chip;
+    }
+
+    _clearAttachments() {
+        this.attachments = [];
+        if (this.chipsEl) this.chipsEl.innerHTML = "";
     }
 
     _mountModeToggle() {
@@ -161,7 +240,8 @@ class ChatController {
         this.form.addEventListener("submit", (e) => {
             e.preventDefault();
             const msg = this.input.value.trim();
-            if (msg) this.ask(msg);
+            // Permite enviar solo con adjuntos (mensaje por defecto).
+            if (msg || this.attachments.length) this.ask(msg || "Analiza el archivo adjunto.");
         });
     }
 
@@ -180,16 +260,22 @@ class ChatController {
         const empty = this.messages.querySelector(".chat-empty");
         if (empty) empty.remove();
 
-        this._appendUserMsg(message);
+        // Captura y consume los adjuntos de este turno (efímero).
+        const attachmentIds = this.attachments.map((a) => a.upload_id).filter(Boolean);
+        const attachmentNames = this.attachments.map((a) => a.name);
+
+        this._appendUserMsg(message, attachmentNames);
         this.input.value = "";
+        this._clearAttachments();
         if (this.send) this.send.disabled = true;
         if (this.modeTrigger) this.modeTrigger.disabled = true;
+        if (this.attachBtn) this.attachBtn.disabled = true;
 
         const loadingEl = this._appendLoading();
 
         try {
             const t0 = performance.now();
-            const data = await BCCh.API.chat(message, this.history.slice(-8), this.thinkingMode);
+            const data = await BCCh.API.chat(message, this.history.slice(-8), this.thinkingMode, attachmentIds);
             const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
 
             this.history.push({ role: "user", content: message });
@@ -203,16 +289,20 @@ class ChatController {
         } finally {
             if (this.send) this.send.disabled = false;
             if (this.modeTrigger) this.modeTrigger.disabled = false;
+            if (this.attachBtn) this.attachBtn.disabled = false;
             this._scrollToBottom();
         }
     }
 
-    _appendUserMsg(content) {
+    _appendUserMsg(content, attachmentNames = []) {
+        const children = [h("p", {}, content)];
+        if (attachmentNames.length) {
+            children.push(h("div", { "class": "chat-msg__files" },
+                attachmentNames.map((n) => h("span", { "class": "chat-msg__file" }, `📎 ${n}`))));
+        }
         const msg = h("div", { "class": "chat-msg chat-msg--user" }, [
             h("div", { "class": "chat-msg__role" }, "TÚ"),
-            h("div", { "class": "chat-msg__content" }, [
-                h("p", {}, content),
-            ]),
+            h("div", { "class": "chat-msg__content" }, children),
         ]);
         this.messages.appendChild(msg);
         this._scrollToBottom();

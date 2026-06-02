@@ -691,12 +691,73 @@
     margin-top: 2px;
 }
 
-/* Chat input — una fila: campo | control de modo | enviar */
+/* Chat input — fila: adjuntar | campo | modo | enviar (+ chips arriba) */
 .chat-input {
     display: grid;
-    grid-template-columns: 1fr auto auto;   /* input | modo | send */
+    grid-template-columns: auto 1fr auto auto;   /* attach | input | modo | send */
     gap: 8px;
     align-items: center;
+}
+
+/* Adjuntar archivo */
+.chat-attach {
+    width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; line-height: 1;
+    color: var(--text-mute);
+    background: var(--bg-elev);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+.chat-attach:hover { border-color: var(--c-gold); color: var(--c-gold); }
+.chat-attach:disabled { opacity: 0.4; cursor: not-allowed; }
+.chat-attach__input { display: none; }
+
+/* Chips de adjuntos (fila propia sobre el input) */
+.chat-attachments {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.chat-attachments:empty { display: none; }
+.chat-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 220px;
+    padding: 4px 6px 4px 10px;
+    font-size: var(--fs-xs);
+    color: var(--text-strong);
+    background: var(--c-gold-soft);
+    border: 1px solid var(--border-soft);
+    border-radius: 999px;
+}
+.chat-chip[data-kind="table"] { background: var(--bg-elev); }
+.chat-chip.is-loading { opacity: 0.6; }
+.chat-chip.is-error { background: #fde8e8; border-color: #e6b8b8; }
+.chat-chip__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-chip__x {
+    width: 16px; height: 16px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 14px; line-height: 1;
+    color: var(--text-mute);
+    border-radius: 50%;
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+.chat-chip__x:hover { color: var(--text-strong); background: rgba(0,0,0,0.06); }
+
+/* Archivos adjuntos mostrados en el mensaje del usuario */
+.chat-msg__files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chat-msg__file {
+    font-size: var(--fs-2xs);
+    color: var(--text-mute);
+    background: rgba(0,0,0,0.04);
+    padding: 2px 8px;
+    border-radius: 999px;
 }
 .chat-input-field {
     flex: 1;
