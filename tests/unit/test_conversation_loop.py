@@ -35,6 +35,7 @@ class _MockLLM:
             "messages": [dict(m) for m in messages],
             "n_messages": len(messages),
             "tools": tools,
+            "max_tokens": kwargs.get("max_tokens"),
         })
         if not self.responses:
             return GenerationResult(text="default", n_tokens=5)
@@ -202,6 +203,20 @@ class TestRunAgent:
         # La síntesis lleva /no_think (no razona) aun en modo on.
         synth_system = llm.calls[-1]["messages"][0]["content"]
         assert "/no_think" in synth_system
+
+    @pytest.mark.asyncio
+    async def test_synthesis_uses_larger_token_budget(self) -> None:
+        """La síntesis usa synthesis_max_tokens (mayor); el especialista, el normal."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="análisis", n_tokens=5),
+            GenerationResult(text="respuesta final", n_tokens=5),
+        ])
+        await run_agent(
+            "¿DV01 de las AFP?", history=[], llm=llm,
+            max_tokens=2048, synthesis_max_tokens=4096,
+        )
+        assert llm.calls[0]["max_tokens"] == 2048    # especialista
+        assert llm.calls[-1]["max_tokens"] == 4096   # síntesis (presupuesto propio)
 
     @pytest.mark.asyncio
     async def test_no_attachments_no_injection(self) -> None:

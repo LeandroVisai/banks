@@ -72,6 +72,7 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
             max_tokens=body.max_tokens if body.max_tokens is not None else settings.llm_max_tokens,
             thinking_mode=body.thinking_mode or settings.thinking_mode,
             attachments_context=attachments_context,
+            synthesis_max_tokens=settings.synthesis_max_tokens,
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("run_agent falló en /v1/chat")

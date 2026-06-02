@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.2
     llm_top_p: float = 0.9
     llm_max_tokens: int = 2048
+    # Presupuesto de tokens de la RESPUESTA FINAL (síntesis). Mayor que
+    # llm_max_tokens porque integra los análisis de varios especialistas; con
+    # 2048 se truncaba. No infla los pasos intermedios (que usan llm_max_tokens).
+    synthesis_max_tokens: int = 4096
 
     # ── Agente ───────────────────────────────────────────────────────────────
     max_agent_iterations: int = 6

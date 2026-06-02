@@ -661,6 +661,7 @@ async def run_agent(
     system_prompt: str = SYNTHESIS_PROMPT,
     thinking_mode: str = DEFAULT_THINKING_MODE,
     attachments_context: str = "",
+    synthesis_max_tokens: int | None = None,
 ) -> AgentResult:
     """Ejecuta un turno completo del agente (arquitectura router-v1).
 
@@ -733,8 +734,11 @@ async def run_agent(
         *history,
         {"role": "user", "content": synth_user},
     ]
+    # La respuesta final usa un presupuesto propio (mayor): integra varios
+    # análisis y con el max_tokens de un paso intermedio se truncaba.
+    synth_max = max(synthesis_max_tokens or 0, max_tokens or 0) or None
     synth = await llm.generate(
-        synth_messages, tools=None, temperature=temperature, max_tokens=max_tokens,
+        synth_messages, tools=None, temperature=temperature, max_tokens=synth_max,
     )
     total_tokens += synth.n_tokens
     final_text = synth.text or MAX_ITERATIONS_FALLBACK_MESSAGE
