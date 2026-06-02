@@ -66,7 +66,10 @@ class Settings(BaseSettings):
     # ── Agente ───────────────────────────────────────────────────────────────
     max_agent_iterations: int = 6
     max_tool_result_tokens: int = 1500
-    history_max_turns: int = 10
+    # Máximo de MENSAJES de historial que se pasan al LLM (memoria conversacional
+    # del chatbot). BANKS_HISTORY_MAX_TURNS. Cabe holgado en N_CTX; subir para que
+    # el chatbot recuerde conversaciones más largas (ojo: prompt+salida <= N_CTX).
+    history_max_turns: int = 40
     # Control del modo "thinking" de Qwen3 (soft switch /no_think):
     #   off      → sin thinking en ningún componente (mínima latencia).
     #   adaptive → thinking SOLO en especialistas multi-paso (cuantitativos),

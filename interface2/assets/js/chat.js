@@ -275,7 +275,8 @@ class ChatController {
 
         try {
             const t0 = performance.now();
-            const data = await BCCh.API.chat(message, this.history.slice(-8), this.thinkingMode, attachmentIds);
+            // Manda hasta 60 mensajes; el backend recorta a history_max_turns.
+            const data = await BCCh.API.chat(message, this.history.slice(-60), this.thinkingMode, attachmentIds);
             const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
 
             this.history.push({ role: "user", content: message });

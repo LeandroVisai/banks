@@ -34,7 +34,9 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     message: str = Field(..., min_length=1, max_length=4000)
-    history: list[ChatMessage] = Field(default_factory=list, max_length=40)
+    # Tope alto; el backend recorta a settings.history_max_turns. Permite que el
+    # frontend envíe conversaciones largas (memoria del chatbot).
+    history: list[ChatMessage] = Field(default_factory=list, max_length=200)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=8192)
     # Override por request del modo thinking de Qwen3. None → usa el default del

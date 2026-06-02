@@ -116,6 +116,20 @@ class TestChat:
         assert body["model"] == "mock-llm"
         assert "prompt_version" in body
 
+    def test_chat_accepts_long_history(self) -> None:
+        """El chatbot acepta historial largo (memoria); el backend lo recorta a
+        history_max_turns sin romper (antes el schema topaba en 40)."""
+        client, _ = _build_app()
+        history = [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg {i}"}
+            for i in range(80)
+        ]
+        response = client.post(
+            "/v1/chat",
+            json={"message": "última pregunta", "history": history},
+        )
+        assert response.status_code == 200
+
     def test_chat_accepts_thinking_mode(self) -> None:
         """El frontend puede enviar thinking_mode por request (off/adaptive/on)."""
         client, _ = _build_app()

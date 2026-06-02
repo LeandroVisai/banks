@@ -40,11 +40,13 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
 
     # Solo se aceptan turnos 'user'/'assistant' del cliente: un mensaje
     # 'system' en el history permitiría sobrescribir el system prompt.
+    # Se recorta a los últimos `history_max_turns` mensajes (memoria del chatbot)
+    # como red de seguridad para no exceder N_CTX en conversaciones largas.
     history = [
         {"role": m.role, "content": m.content}
         for m in body.history
         if m.role != "system"
-    ]
+    ][-settings.history_max_turns:]
 
     model = getattr(deps.llm, "name", settings.llm_family)
     request_id = getattr(request.state, "request_id", "")
