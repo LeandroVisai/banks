@@ -599,6 +599,31 @@
     font-size: var(--fs-2xs);
     color: var(--text-mute);
 }
+/* Botón "leer en voz alta" (TTS) en el meta de cada respuesta */
+.chat-tts {
+    margin-left: auto;          /* lo empuja al extremo derecho del meta */
+    width: 26px; height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    line-height: 1;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--r-sm);
+    background: var(--bg-elev);
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity var(--transition-fast), border-color var(--transition-fast);
+}
+.chat-tts:hover { opacity: 1; border-color: var(--c-gold); }
+.chat-tts.is-speaking {
+    opacity: 1;
+    border-color: var(--c-gold);
+    background: var(--c-gold-soft);
+    animation: ttsPulse 1.1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) { .chat-tts.is-speaking { animation: none; } }
+@keyframes ttsPulse { 0%,100% { box-shadow: 0 0 0 0 var(--c-gold-soft); } 50% { box-shadow: 0 0 0 4px var(--c-gold-soft); } }
 
 /* Loading multi-step */
 .chat-loading {

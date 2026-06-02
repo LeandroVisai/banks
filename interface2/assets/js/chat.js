@@ -231,6 +231,17 @@ class ChatController {
             h("span", { "class": `route-pill ${ROUTE_CLASSES[route] || ""}` }, route.toUpperCase()),
             h("span", { "class": "chat-msg__meta-time mono" }, `${elapsed}s · ${data.iterations || 0} iter`),
         ]);
+        // Botón para leer la respuesta en voz alta (TTS del navegador, offline).
+        if (window.speechSynthesis) {
+            const ttsBtn = h("button", {
+                type: "button",
+                "class": "chat-tts",
+                title: "Leer en voz alta",
+                "aria-label": "Leer la respuesta en voz alta",
+            }, "🔊");
+            ttsBtn.addEventListener("click", () => this._speak(response, ttsBtn));
+            meta.appendChild(ttsBtn);
+        }
 
         const contentDiv = h("div", { "class": "chat-msg__content" });
         contentDiv.innerHTML = this._markdown(response);
@@ -391,6 +402,32 @@ class ChatController {
 
     _scrollToBottom() {
         this.messages.scrollTop = this.messages.scrollHeight;
+    }
+
+    _speak(text, btn) {
+        const synth = window.speechSynthesis;
+        if (!synth) return;
+        // Toggle: si este botón ya está leyendo, detener.
+        if (this._ttsBtn === btn) { synth.cancel(); return; }
+        synth.cancel();   // corta cualquier lectura previa
+        // Texto plano: sin markdown ni marcadores de cita [N].
+        const plain = String(text)
+            .replace(/\*\*(.+?)\*\*/g, "$1")
+            .replace(/`(.+?)`/g, "$1")
+            .replace(/\[\d+(?:\s*,\s*\d+)*\]/g, "")
+            .replace(/[#*_>]/g, "")
+            .trim();
+        if (!plain) return;
+        const u = new SpeechSynthesisUtterance(plain);
+        u.lang = "es-CL";
+        const voice = synth.getVoices().find((v) => /^es\b|^es[-_]/i.test(v.lang));
+        if (voice) u.voice = voice;
+        const reset = () => { btn.classList.remove("is-speaking"); this._ttsBtn = null; };
+        u.onend = reset;
+        u.onerror = reset;
+        btn.classList.add("is-speaking");
+        this._ttsBtn = btn;
+        synth.speak(u);
     }
 
     _markdown(text) {
