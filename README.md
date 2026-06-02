@@ -119,6 +119,8 @@ Notas:
 - Los charts usan `/v1/query/{dataset_id}` (DuckDB sobre parquets) y los KPIs son hardcoded en `kpi.js` — no requieren PostgreSQL para renderizar.
 - Bajo el campo de chat hay un **segmented control de razonamiento** (`Rápido` / `Análisis` / `Profundo`) que el usuario elige por consulta: envía `thinking_mode` (`off`/`adaptive`/`on`) en el request; el server cae a `BANKS_THINKING_MODE` si no se especifica. Se persiste en `localStorage`.
 - El agente **grafica las series temporales** que analiza: cuando una respuesta usó datos de un parquet, debajo del texto se renderiza un mini-gráfico de área (ApexCharts) con los puntos que el agente consultó. Backend: `series_used[].points` en `/v1/chat`.
+- **Adjuntar archivos** (botón `+`): PDF/TXT/CSV/Excel se suben a `/v1/upload` (base64) y se inyectan como **contexto efímero** del turno — el agente los analiza sin indexarlos. Ver [`docs/DISENO_UPLOADS.md`](docs/DISENO_UPLOADS.md).
+- **Leer en voz** (🔊): cada respuesta tiene un botón TTS (voz del navegador, offline).
 
 ### Verificación de sub-agentes
 
@@ -180,7 +182,7 @@ Parquets en `data_pipeline/parquet/`. Esquemas completos (id, columnas, tipos, e
 ## Tests
 
 ```bash
-PYTHONPATH=src pytest tests/unit/ -q    # 722 tests, <2s, sin BD ni modelos
+PYTHONPATH=src pytest tests/unit/ -q    # 742 tests, <2s, sin BD ni modelos
 PYTHONPATH=src pytest tests/ -q         # + integración (requiere PostgreSQL)
 ```
 
@@ -218,7 +220,7 @@ banks/
 │   ├── infrastructure/  # adaptadores (embeddings, llm, postgres, reranker, observability)
 │   └── interface/       # FastAPI + CLI
 ├── tests/
-│   ├── unit/            # 722 tests, sin BD ni modelos reales
+│   ├── unit/            # 742 tests, sin BD ni modelos reales
 │   └── integration/     # requieren PostgreSQL + pgvector
 ├── scripts/
 │   └── verify_subagents.py   # verificación e2e de los 8 sub-agentes
