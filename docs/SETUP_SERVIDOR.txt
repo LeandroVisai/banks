@@ -17,8 +17,13 @@ BANKS_LLM_MODEL_PATH=unsloth--Qwen3.6-27B-GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
 BANKS_LLM_N_CTX=16384
 BANKS_LLM_N_GPU_LAYERS=-1
 BANKS_LLM_TEMPERATURE=0.2
-BANKS_LLM_MAX_TOKENS=2048
+BANKS_LLM_MAX_TOKENS=2048            # tokens por paso intermedio (especialistas)
+BANKS_SYNTHESIS_MAX_TOKENS=4096      # tokens de la RESPUESTA FINAL; subir si se
+                                     # trunca (ojo: prompt+salida <= N_CTX=16384)
 BANKS_MAX_AGENT_ITERATIONS=6
+BANKS_RERANK_ENABLED=false           # NO tenemos bge-reranker-v2-m3; apagado para
+                                     # no intentar cargarlo. Cuando exista el modelo,
+                                     # poner true (o BANKS_RERANK_MODEL=<dir en models/>)
 BANKS_LOG_LEVEL=INFO
 
 # ---- .env para el PC DEV (RTX 3080 10GB; el 27B-Q4 NO cabe -> 7B) ---------
