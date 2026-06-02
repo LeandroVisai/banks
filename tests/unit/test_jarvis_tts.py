@@ -47,3 +47,32 @@ class TestSynthesizeErrors:
         # Sin piper-tts (ni modelo) → TTSError accionable, no excepción cruda.
         with pytest.raises(TTSError):
             PiperTTSEngine("inexistente/modelo.onnx").synthesize("hola")
+
+
+@pytest.mark.unit
+class TestAudioHelpers:
+    """Helpers compartidos por el script CLI y la API (jarvis_news.audio)."""
+
+    def teardown_method(self) -> None:
+        reset_default_tts()
+        reset_settings()
+
+    @pytest.mark.asyncio
+    async def test_translate_uses_llm(self) -> None:
+        from banks_rag.domain.agent import GenerationResult
+        from jarvis_news.audio import translate_to_english
+
+        class _LLM:
+            async def generate(self, messages, **kwargs):
+                # El prompt debe llevar el texto a traducir.
+                assert "hola mundo" in messages[-1]["content"]
+                return GenerationResult(text="hello world", n_tokens=3)
+
+        assert await translate_to_english(_LLM(), "hola mundo") == "hello world"
+
+    def test_synthesize_wav_raises_when_tts_disabled(self) -> None:
+        from jarvis_news.audio import synthesize_wav
+
+        override_settings(Settings(tts_enabled=False))
+        with pytest.raises(TTSError):
+            synthesize_wav("hello")

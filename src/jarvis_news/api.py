@@ -12,18 +12,13 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
+from .audio import synthesize_wav, translate_to_english
 from .report import generate_news_report
 from .schemas import NewsReportRequest, NewsReportResponse, TtsRequest
 from .tts import TTSError, build_default_tts
 
 router = APIRouter()
 log = logging.getLogger(__name__)
-
-_TRANSLATE_SYSTEM = "You are a professional translator. Output only the translation, nothing else."
-_TRANSLATE_PROMPT = (
-    "Translate the following Spanish text into natural British English suitable "
-    "for being read aloud (clear sentences, expand figures). Text:\n\n"
-)
 
 
 def _require_llm(request: Request):
@@ -66,22 +61,16 @@ async def news_report(request: Request, body: NewsReportRequest) -> NewsReportRe
 async def tts(request: Request, body: TtsRequest) -> Response:
     """Texto → audio WAV (voz JARVIS vía Piper). Traduce a inglés si se pide
     (la voz JARVIS es en_GB)."""
-    engine = build_default_tts()
-    if engine is None:
+    if build_default_tts() is None:
         raise HTTPException(status_code=503, detail="TTS deshabilitado (BANKS_TTS_ENABLED=false).")
 
     text = body.text
     if body.translate_to_en:
         llm = _require_llm(request)
-        res = await llm.generate(
-            [{"role": "system", "content": _TRANSLATE_SYSTEM},
-             {"role": "user", "content": _TRANSLATE_PROMPT + text}],
-            tools=None, temperature=0.3, max_tokens=_synthesis_budget(),
-        )
-        text = (res.text or "").strip() or body.text
+        text = await translate_to_english(llm, text, max_tokens=_synthesis_budget())
 
     try:
-        wav = await asyncio.to_thread(engine.synthesize, text)
+        wav = await asyncio.to_thread(synthesize_wav, text)
     except TTSError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001

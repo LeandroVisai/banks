@@ -150,3 +150,33 @@ Qué esperar:
     de los 107 parquets y el routing por especialista están validados de forma
     determinista (sin LLM).
 ==============================================================================
+
+------------------------------------------------------------------------------
+ 7) GENERADOR DE NOTICIAS JARVIS  (paquete aislado src/jarvis_news/)
+------------------------------------------------------------------------------
+Lee un JSON de data_pipeline/Noticias_scrapping/ y genera el reporte del día
+(texto) y, opcional, un audio con voz JARVIS. Reusa el LLM del .env.
+
+  # Solo texto (al JSON más reciente):
+  python scripts/jarvis_news_report.py
+  python scripts/jarvis_news_report.py --top-n 30 --out data/news_reports
+  # → data/news_reports/reporte_<archivo>.md
+
+  # Texto + AUDIO (voz JARVIS):
+  python scripts/jarvis_news_report.py --audio
+  # → además reporte_<archivo>.wav
+
+AUDIO — requiere instalar TTS (una vez) y el modelo de voz:
+  pip install piper-tts
+  # Descargar la voz JARVIS (en_GB) a models/jgkawell--jarvis/:
+  #   jarvis-medium.onnx + jarvis-medium.onnx.json  (repo HF: jgkawell/jarvis)
+  # Activar en el .env:
+  BANKS_TTS_ENABLED=true
+  # (opcional) BANKS_TTS_MODEL=jgkawell--jarvis/jarvis-medium.onnx
+
+Notas:
+  - La voz JARVIS es INGLÉS; el script traduce el reporte a inglés antes del TTS
+    (--no-translate para omitir).
+  - El LLM es serializado: el reporte (map-reduce) compite con el chat. Conviene
+    correrlo fuera de horario / por tarea programada.
+==============================================================================
