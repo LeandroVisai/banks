@@ -14,12 +14,17 @@ NO del .env  ->  fijarlas en PowerShell o en run_local_cpu.ps1 (ver sección 4).
 # ---- .env para el SERVIDOR H100 (modelo de producción 27B-Q4) -------------
 BANKS_LLM_FAMILY=qwen
 BANKS_LLM_MODEL_PATH=unsloth--Qwen3.6-27B-GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
-BANKS_LLM_N_CTX=16384
+BANKS_LLM_N_CTX=50000               # ventana de contexto. El modelo entrena con
+                                     # 262144; 50000 da holgura para RAG y cabe en
+                                     # la H100. KV cache ~ lineal con N_CTX (más
+                                     # N_CTX = más VRAM); subir a 200000 cabe pero
+                                     # no aporta para RAG (prompts reales ~6-10K).
 BANKS_LLM_N_GPU_LAYERS=-1
 BANKS_LLM_TEMPERATURE=0.2
 BANKS_LLM_MAX_TOKENS=2048            # tokens por paso intermedio (especialistas)
-BANKS_SYNTHESIS_MAX_TOKENS=4096      # tokens de la RESPUESTA FINAL; subir si se
-                                     # trunca (ojo: prompt+salida <= N_CTX=16384)
+BANKS_SYNTHESIS_MAX_TOKENS=10000     # tokens de la RESPUESTA FINAL. Es un TOPE
+                                     # (el modelo para al terminar); respuestas
+                                     # muy largas tardan más. prompt+salida <= N_CTX.
 BANKS_MAX_AGENT_ITERATIONS=6
 BANKS_RERANK_ENABLED=false           # NO tenemos bge-reranker-v2-m3; apagado para
                                      # no intentar cargarlo. Cuando exista el modelo,
