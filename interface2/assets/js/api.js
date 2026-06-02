@@ -57,10 +57,14 @@ BCCh.API = {
     readyz:  () => _fetch("/readyz"),
 
     // ── Chat ────────────────────────────────────────────────────────────
-    chat: (message, history = []) => _fetch("/v1/chat", {
+    // thinkingMode: "off" | "adaptive" | "on" | null (null → default del server)
+    chat: (message, history = [], thinkingMode = null) => _fetch("/v1/chat", {
         method: "POST",
         headers: _headers(),
-        body: JSON.stringify({ message, history }),
+        body: JSON.stringify(
+            thinkingMode ? { message, history, thinking_mode: thinkingMode }
+                         : { message, history },
+        ),
     }),
 
     // ── Search ──────────────────────────────────────────────────────────

@@ -33,6 +33,16 @@ const ROUTE_CLASSES = {
     visual: "route-pill--visual",
 };
 
+const THINKING_KEY = "bcch_thinking_mode";   // localStorage
+const THINKING_LABELS = {
+    adaptive: "Análisis",
+    off: "Rápido",
+};
+const THINKING_TITLES = {
+    adaptive: "Modo análisis: el agente razona en las consultas de datos (más completo, algo más lento). Click para modo rápido.",
+    off: "Modo rápido: sin razonamiento interno (respuestas más veloces). Click para modo análisis.",
+};
+
 class ChatController {
     constructor({ messages, form, input, sendBtn, suggestions }) {
         this.messages = messages;
@@ -42,9 +52,38 @@ class ChatController {
         this.suggestionsEl = suggestions;
 
         this.history = [];
+        // "adaptive" (default) | "off". Persistido entre sesiones y compartido
+        // por ambas vistas del chat (panel lateral + inline) vía localStorage.
+        this.thinkingMode = localStorage.getItem(THINKING_KEY) === "off" ? "off" : "adaptive";
 
         this._bindForm();
+        this._mountModeToggle();
         this._renderSuggestions();
+    }
+
+    _mountModeToggle() {
+        if (!this.form || !this.send) return;
+        this.modeBtn = h("button", {
+            type: "button",
+            "class": "chat-mode-toggle",
+            "aria-label": "Modo de análisis del agente",
+        });
+        this.modeBtn.addEventListener("click", () => {
+            this.thinkingMode = this.thinkingMode === "off" ? "adaptive" : "off";
+            localStorage.setItem(THINKING_KEY, this.thinkingMode);
+            this._applyModeUI();
+        });
+        // Insertar el toggle justo antes del botón Enviar.
+        this.form.insertBefore(this.modeBtn, this.send);
+        this._applyModeUI();
+    }
+
+    _applyModeUI() {
+        if (!this.modeBtn) return;
+        this.modeBtn.dataset.mode = this.thinkingMode;
+        this.modeBtn.setAttribute("aria-pressed", String(this.thinkingMode === "adaptive"));
+        this.modeBtn.title = THINKING_TITLES[this.thinkingMode];
+        this.modeBtn.textContent = THINKING_LABELS[this.thinkingMode];
     }
 
     _bindForm() {
@@ -73,12 +112,13 @@ class ChatController {
         this._appendUserMsg(message);
         this.input.value = "";
         if (this.send) this.send.disabled = true;
+        if (this.modeBtn) this.modeBtn.disabled = true;
 
         const loadingEl = this._appendLoading();
 
         try {
             const t0 = performance.now();
-            const data = await BCCh.API.chat(message, this.history.slice(-8));
+            const data = await BCCh.API.chat(message, this.history.slice(-8), this.thinkingMode);
             const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
 
             this.history.push({ role: "user", content: message });
@@ -91,6 +131,7 @@ class ChatController {
             this._appendError(e);
         } finally {
             if (this.send) this.send.disabled = false;
+            if (this.modeBtn) this.modeBtn.disabled = false;
             this._scrollToBottom();
         }
     }

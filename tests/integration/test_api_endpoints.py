@@ -116,6 +116,23 @@ class TestChat:
         assert body["model"] == "mock-llm"
         assert "prompt_version" in body
 
+    def test_chat_accepts_thinking_mode(self) -> None:
+        """El frontend puede enviar thinking_mode por request (off/adaptive/on)."""
+        client, _ = _build_app()
+        response = client.post(
+            "/v1/chat",
+            json={"message": "precio del cobre", "thinking_mode": "off"},
+        )
+        assert response.status_code == 200
+
+    def test_chat_rejects_invalid_thinking_mode(self) -> None:
+        client, _ = _build_app()
+        response = client.post(
+            "/v1/chat",
+            json={"message": "hola", "thinking_mode": "turbo"},
+        )
+        assert response.status_code == 422
+
     def test_chat_returns_503_when_llm_unloaded(self) -> None:
         deps = AppState()
         deps.llm = None

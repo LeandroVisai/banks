@@ -37,6 +37,9 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list, max_length=40)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=8192)
+    # Override por request del modo thinking de Qwen3. None → usa el default del
+    # servidor (settings.thinking_mode). Permite al frontend ofrecer un toggle.
+    thinking_mode: Literal["off", "adaptive", "on"] | None = None
 
 
 class ChunkSeen(BaseModel):

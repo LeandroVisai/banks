@@ -117,6 +117,7 @@ PYTHONPATH=src python3 -m banks_rag.interface.api.main
 Notas:
 - La pill superior derecha pasa por `SIN CONEXIÓN → LLM CARGANDO → OK` mientras `llama-cpp` carga. Los charts del catálogo no esperan al LLM; sólo el panel "Agente IA" sí.
 - Los charts usan `/v1/query/{dataset_id}` (DuckDB sobre parquets) y los KPIs son hardcoded en `kpi.js` — no requieren PostgreSQL para renderizar.
+- Junto a "Enviar" hay un toggle **Análisis / Rápido** que el usuario alterna por consulta: envía `thinking_mode` (`adaptive`/`off`) en el request; el server cae a `BANKS_THINKING_MODE` si no se especifica. Se persiste en `localStorage`.
 
 ### Verificación de sub-agentes
 

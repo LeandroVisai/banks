@@ -699,6 +699,39 @@
 .chat-input-send:hover { background: var(--c-gold-2); }
 .chat-input-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* Toggle de modo thinking (al lado de Enviar): adaptive ↔ off */
+.chat-mode-toggle {
+    height: 36px;
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    font-size: var(--fs-xs);
+    font-family: var(--font-sans);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--r-sm);
+    background: #fff;
+    color: var(--text-mute);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), color var(--transition-fast),
+                background var(--transition-fast);
+}
+.chat-mode-toggle::before {
+    content: "";
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    flex: 0 0 auto;
+}
+.chat-mode-toggle:hover { border-color: var(--c-gold); }
+.chat-mode-toggle[data-mode="adaptive"] {
+    border-color: var(--c-gold);
+    color: var(--c-gold);
+    background: var(--c-gold-soft);
+}
+.chat-mode-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* ── CHAT INLINE (sección Agente GOEM, embebida en #chart-grid) ──────── */
 .chat-inline {
     grid-column: 1 / -1;
