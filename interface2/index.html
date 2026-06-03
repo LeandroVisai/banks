@@ -13,8 +13,8 @@
 
     <link rel="stylesheet" href="assets/css/reset.css?v=20" />
     <link rel="stylesheet" href="assets/css/tokens.css?v=20" />
-    <link rel="stylesheet" href="assets/css/layout.css?v=20" />
-    <link rel="stylesheet" href="assets/css/components.css?v=20" />
+    <link rel="stylesheet" href="assets/css/layout.css?v=21" />
+    <link rel="stylesheet" href="assets/css/components.css?v=22" />
 
     <link rel="icon" type="image/webp" href="assets/img/100_BC_logo-SLOGAN-02.webp" />
 </head>
@@ -110,7 +110,10 @@
             </svg>
             Agente IA
         </h3>
-        <button class="chat-panel-close" id="chat-close" aria-label="Cerrar">×</button>
+        <div class="chat-panel-header__actions">
+            <button class="chat-panel-new" id="chat-new" type="button" title="Nuevo chat" aria-label="Nuevo chat">+ Nuevo</button>
+            <button class="chat-panel-close" id="chat-close" aria-label="Cerrar">×</button>
+        </div>
     </div>
 
     <div class="chat-panel-body" id="chat-messages">
@@ -165,7 +168,8 @@
 <script src="assets/js/mock.js?v=20"></script>
 <script src="assets/js/charts.js?v=20"></script>
 <script src="assets/js/kpi.js?v=20"></script>
-<script src="assets/js/chat.js?v=20"></script>
+<script src="assets/js/chat_store.js?v=21"></script>
+<script src="assets/js/chat.js?v=22"></script>
 <script src="assets/js/components/market-helpers.js?v=20"></script>
 <script src="assets/js/components/sparkline-mini.js?v=20"></script>
 <script src="assets/js/components/ticker-row.js?v=20"></script>

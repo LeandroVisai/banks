@@ -33,6 +33,13 @@ const ROUTE_CLASSES = {
     visual: "route-pill--visual",
 };
 
+// Ventana deslizante de memoria: el modelo ve las últimas N consultas (pares
+// pregunta+respuesta) INCLUYENDO la actual. Como la pregunta del turno se manda
+// aparte, se envían los últimos (N-1)*2 mensajes previos → al llegar a la
+// consulta N+1, la 1.ª se cae de la ventana. El hilo en pantalla conserva todo.
+const CONTEXT_WINDOW_QUERIES = 5;
+const CONTEXT_WINDOW_MESSAGES = (CONTEXT_WINDOW_QUERIES - 1) * 2;
+
 const THINKING_KEY = "bcch_thinking_mode";   // localStorage
 const THINKING_MODES = ["off", "adaptive", "on"];           // valores válidos
 const THINKING_MENU_ORDER = ["on", "adaptive", "off"];      // orden visual: profundo→rápido
@@ -66,6 +73,13 @@ class ChatController {
         this._mountAttach();
         this._mountModeToggle();
         this._renderSuggestions();
+
+        // Conversación persistida: el store es la fuente de verdad compartida
+        // por la sección inline y el panel lateral. Hidrata la conversación
+        // activa (re-renderiza sus turnos) al construirse.
+        this.emptyEl = this.messages ? this.messages.querySelector(".chat-empty") : null;
+        this.conversationId = BCCh.ChatStore.activeId();
+        this._hydrate();
     }
 
     _mountAttach() {
@@ -256,15 +270,75 @@ class ChatController {
         });
     }
 
+    // ── Conversaciones persistidas (store compartido) ──────────────────────
+
+    /** Restaura el estado vacío (icono + sugerencias) en el panel de mensajes. */
+    _showEmpty() {
+        this.messages.innerHTML = "";
+        if (this.emptyEl) {
+            this.messages.appendChild(this.emptyEl);
+            this._renderSuggestions();
+        }
+    }
+
+    /** Re-renderiza los turnos de la conversación activa y rehace `history`. */
+    _hydrate() {
+        if (!this.messages) return;
+        const conv = BCCh.ChatStore.get(this.conversationId);
+        const turns = (conv && conv.turns) || [];
+        // `history` (solo role/content) alimenta la ventana de contexto.
+        this.history = turns.map((t) => (
+            t.role === "user"
+                ? { role: "user", content: t.content }
+                : { role: "assistant", content: (t.data && t.data.response) || "" }
+        ));
+        if (!turns.length) { this._showEmpty(); return; }
+        this.messages.innerHTML = "";
+        turns.forEach((t) => {
+            if (t.role === "user") this._appendUserMsg(t.content, t.attachmentNames || []);
+            else if (t.role === "assistant") this._appendAssistantMsg(t.data, t.elapsed);
+        });
+        this._scrollToBottom();
+    }
+
+    /** Inicia una conversación nueva y vacía (la anterior queda en el historial). */
+    newConversation() {
+        this.conversationId = BCCh.ChatStore.create().id;
+        this.history = [];
+        this._clearAttachments();
+        this._showEmpty();
+        if (this.input) this.input.focus();
+    }
+
+    /** Carga una conversación existente por id (cambia la activa y re-renderiza). */
+    loadConversation(id) {
+        BCCh.ChatStore.setActive(id);
+        this.conversationId = id;
+        this._clearAttachments();
+        this._hydrate();
+    }
+
+    /** Re-sincroniza con la conversación activa del store (lo usa el panel al abrir). */
+    reloadActive() {
+        this.conversationId = BCCh.ChatStore.activeId();
+        this._hydrate();
+    }
+
     async ask(message) {
         const empty = this.messages.querySelector(".chat-empty");
         if (empty) empty.remove();
+
+        // La conversación activa pudo cambiar en otra vista (panel/inline).
+        if (!BCCh.ChatStore.get(this.conversationId)) {
+            this.conversationId = BCCh.ChatStore.activeId();
+        }
 
         // Captura y consume los adjuntos de este turno (efímero).
         const attachmentIds = this.attachments.map((a) => a.upload_id).filter(Boolean);
         const attachmentNames = this.attachments.map((a) => a.name);
 
         this._appendUserMsg(message, attachmentNames);
+        BCCh.ChatStore.appendUserTurn(this.conversationId, message, attachmentNames);
         this.input.value = "";
         this._clearAttachments();
         if (this.send) this.send.disabled = true;
@@ -275,12 +349,15 @@ class ChatController {
 
         try {
             const t0 = performance.now();
-            // Manda hasta 60 mensajes; el backend recorta a history_max_turns.
-            const data = await BCCh.API.chat(message, this.history.slice(-60), this.thinkingMode, attachmentIds);
+            // Ventana deslizante: solo las últimas CONTEXT_WINDOW_QUERIES consultas
+            // de contexto (la pregunta actual va aparte). El hilo visible es completo.
+            const ctx = this.history.slice(-CONTEXT_WINDOW_MESSAGES);
+            const data = await BCCh.API.chat(message, ctx, this.thinkingMode, attachmentIds);
             const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
 
             this.history.push({ role: "user", content: message });
             this.history.push({ role: "assistant", content: data.response });
+            BCCh.ChatStore.appendAssistantTurn(this.conversationId, data, elapsed);
 
             loadingEl.remove();
             this._appendAssistantMsg(data, elapsed);
@@ -611,6 +688,12 @@ class ChatPanel {
             suggestions: $("#chat-suggestions"),
         });
 
+        // Botón "Nuevo chat" del panel (si existe en el header).
+        this.newBtn = $("#chat-new");
+        if (this.newBtn) {
+            this.newBtn.addEventListener("click", () => this.controller.newConversation());
+        }
+
         this.toggle.addEventListener("click", () => this.setOpen(!this.open));
         this.close.addEventListener("click",  () => this.setOpen(false));
         this._applyOpenState();
@@ -626,13 +709,24 @@ class ChatPanel {
     setOpen(value) {
         this.open = value;
         this._applyOpenState();
-        if (value) setTimeout(() => this.controller.input.focus(), 250);
+        if (value) {
+            // Re-sincroniza con la conversación activa (pudo cambiar en la vista
+            // inline mientras el panel estaba cerrado).
+            this.controller.reloadActive();
+            setTimeout(() => this.controller.input.focus(), 250);
+        }
     }
 }
 
 BCCh.mountInlineChat = (container) => {
     container.innerHTML = "";
 
+    // ── Barra de historial (izquierda, estilo Claude) ──────────────────────
+    const newBtn = h("button", { "class": "chat-rail__new", type: "button" }, "+ Nuevo chat");
+    const listEl = h("div", { "class": "chat-rail__list" });
+    const rail = h("aside", { "class": "chat-rail" }, [newBtn, listEl]);
+
+    // ── Área de chat (derecha) ──────────────────────────────────────────────
     const suggestions = h("div", { "class": "chat-suggestions" });
     const empty = h("div", { "class": "chat-empty" }, [
         h("div", { "class": "chat-empty-icon" }, "◈"),
@@ -657,10 +751,86 @@ BCCh.mountInlineChat = (container) => {
         input, sendBtn,
     ]);
 
-    const wrapper = h("div", { "class": "chat-inline" }, [messages, form]);
+    // Barra superior del chat: toggle de la barra de historial (izq) + nuevo chat (der).
+    const railToggle = h("button", {
+        "class": "chat-main__toggle", type: "button",
+        title: "Mostrar/ocultar conversaciones", "aria-label": "Mostrar/ocultar conversaciones",
+        html: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>',
+    });
+    const newBtnTop = h("button", {
+        "class": "chat-main__new", type: "button",
+        title: "Nuevo chat", "aria-label": "Nuevo chat",
+    }, "+");
+    const bar = h("div", { "class": "chat-main__bar" }, [railToggle, newBtnTop]);
+    const main = h("div", { "class": "chat-main" }, [bar, messages, form]);
+
+    const wrapper = h("div", { "class": "chat-inline chat-inline--with-rail" }, [rail, main]);
     container.appendChild(wrapper);
 
-    return new ChatController({ messages, form, input, sendBtn, suggestions });
+    // Colapsar/expandir la barra de historial (estado recordado entre sesiones).
+    const RAIL_KEY = "bcch_chat_rail_collapsed";
+    let railCollapsed = localStorage.getItem(RAIL_KEY) === "true";
+    const applyRail = () => {
+        wrapper.classList.toggle("chat-inline--rail-collapsed", railCollapsed);
+        railToggle.setAttribute("aria-expanded", String(!railCollapsed));
+    };
+    railToggle.addEventListener("click", () => {
+        railCollapsed = !railCollapsed;
+        localStorage.setItem(RAIL_KEY, String(railCollapsed));
+        applyRail();
+    });
+    applyRail();
+
+    const controller = new ChatController({ messages, form, input, sendBtn, suggestions });
+
+    // Re-renderiza la lista de conversaciones desde el store.
+    const renderRail = () => {
+        const activeId = BCCh.ChatStore.peekActiveId();
+        listEl.innerHTML = "";
+        BCCh.ChatStore.list().forEach((c) => {
+            const title = h("span", { "class": "chat-rail__item-title" }, c.title || "Nueva conversación");
+            const renameBtn = h("button", {
+                "class": "chat-rail__act", type: "button",
+                title: "Renombrar", "aria-label": "Renombrar",
+                onClick: (e) => {
+                    e.stopPropagation();
+                    const nv = window.prompt("Nuevo título de la conversación:", c.title || "");
+                    if (nv != null && nv.trim()) BCCh.ChatStore.rename(c.id, nv);
+                },
+            }, "✎");
+            const delBtn = h("button", {
+                "class": "chat-rail__act chat-rail__act--del", type: "button",
+                title: "Borrar", "aria-label": "Borrar",
+                onClick: (e) => {
+                    e.stopPropagation();
+                    if (window.confirm("¿Borrar esta conversación?")) {
+                        const wasActive = controller.conversationId === c.id;
+                        BCCh.ChatStore.remove(c.id);
+                        if (wasActive) controller.reloadActive();
+                    }
+                },
+            }, "🗑");
+            const acts = h("div", { "class": "chat-rail__acts" }, [renameBtn, delBtn]);
+            const item = h("div", {
+                "class": "chat-rail__item",
+                "data-active": String(c.id === activeId),
+                title: c.title || "",
+                onClick: () => controller.loadConversation(c.id),
+            }, [title, acts]);
+            listEl.appendChild(item);
+        });
+    };
+
+    newBtn.addEventListener("click", () => controller.newConversation());
+    newBtnTop.addEventListener("click", () => controller.newConversation());
+
+    // Una sola suscripción de la barra a la vez: al re-montar la sección,
+    // desuscribe la anterior (evita fugas de closures sobre rails detached).
+    if (BCCh._inlineRailUnsub) BCCh._inlineRailUnsub();
+    BCCh._inlineRailUnsub = BCCh.ChatStore.subscribe(renderRail);
+    renderRail();
+
+    return controller;
 };
 
 BCCh.ChatPanel = ChatPanel;

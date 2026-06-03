@@ -971,6 +971,151 @@
     border-radius: 6px;
     overflow: hidden;
 }
+
+/* Layout con barra de historial (estilo Claude): rail izq + chat der. */
+.chat-inline--with-rail {
+    flex-direction: row;
+    align-items: stretch;
+}
+.chat-rail {
+    flex: 0 0 240px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border-right: 1px solid var(--border-soft);
+    background: var(--bg-subtle, #faf8f4);
+}
+.chat-rail__new {
+    margin: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    font: inherit;
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semi);
+    color: var(--text-strong);
+    background: var(--bg-card, #fff);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s, background 0.15s;
+}
+.chat-rail__new:hover { border-color: var(--c-gold); background: #fff; }
+.chat-rail__list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 var(--space-2) var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.chat-rail__item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    color: var(--text-soft, #5f6a6f);
+    transition: background 0.12s, color 0.12s;
+}
+.chat-rail__item:hover { background: rgba(0, 0, 0, 0.04); color: var(--text-strong); }
+.chat-rail__item[data-active="true"] {
+    background: rgba(191, 156, 105, 0.14);   /* gold tenue */
+    color: var(--text-strong);
+}
+.chat-rail__item-title {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--fs-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.chat-rail__acts {
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.12s;
+}
+.chat-rail__item:hover .chat-rail__acts,
+.chat-rail__item[data-active="true"] .chat-rail__acts { opacity: 1; }
+.chat-rail__act {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: var(--fs-xs);
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 4px;
+    color: var(--text-soft, #7F8C8D);
+}
+.chat-rail__act:hover { background: rgba(0, 0, 0, 0.08); }
+.chat-rail__act--del:hover { color: #C00000; }
+
+/* Columna de chat dentro del layout con rail. */
+.chat-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+/* Barra superior: toggle del historial (izq) + nuevo chat (der). */
+.chat-main__bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border-soft);
+}
+.chat-main__toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 28px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--r-sm);
+    background: var(--bg-card, #fff);
+    color: var(--text-soft, #7F8C8D);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.chat-main__toggle:hover { border-color: var(--c-gold); color: var(--c-gold-2); }
+.chat-main__new {
+    width: 28px;
+    height: 28px;
+    line-height: 1;
+    font-size: 18px;
+    border: 1px solid var(--border-soft);
+    border-radius: 50%;
+    background: var(--bg-card, #fff);
+    color: var(--text-soft, #7F8C8D);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+.chat-main__new:hover { border-color: var(--c-gold); color: var(--c-gold-2); }
+
+/* Barra de historial colapsada: el chat ocupa todo el ancho. */
+.chat-inline--rail-collapsed .chat-rail { display: none; }
+
+/* En pantallas angostas, el rail pasa a una franja superior compacta. */
+@media (max-width: 720px) {
+    .chat-inline--with-rail { flex-direction: column; }
+    .chat-rail {
+        flex: 0 0 auto;
+        flex-direction: row;
+        align-items: center;
+        border-right: none;
+        border-bottom: 1px solid var(--border-soft);
+        overflow-x: auto;
+    }
+    .chat-rail__new { white-space: nowrap; }
+    .chat-rail__list { flex-direction: row; padding: var(--space-2); }
+    .chat-rail__item { white-space: nowrap; }
+    .chat-rail__item-title { max-width: 140px; }
+}
+
 .chat-inline__messages {
     flex: 1;
     overflow-y: auto;

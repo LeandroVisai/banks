@@ -332,6 +332,26 @@ body[data-chat-open="true"] .main {
     gap: 8px;
 }
 
+.chat-panel-header__actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.chat-panel-new {
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-semi);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    color: var(--c-gold);
+    background: transparent;
+    border: 1px solid rgba(191, 156, 105, 0.5);
+    border-radius: var(--r-sm);
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+.chat-panel-new:hover { background: rgba(191, 156, 105, 0.18); color: #fff; }
+
 .chat-panel-close {
     color: rgba(255, 255, 255, 0.55);
     font-size: 22px;
