@@ -97,7 +97,7 @@ Datos_prueba/Monitor PM/textos_monitor_pm.xlsx
 
 - **Logging de turnos del agente**: cada turno de `/v1/chat` se persiste como una línea JSON en `data/chat_logs/chat-YYYY-MM-DD.jsonl` vía `infrastructure/observability/chat_log.py` (best-effort, nunca tumba el request). Guarda pregunta, respuesta y evidencia (tool_trace, chunks_seen, series_used, citas) para contrastar respuestas reales vs. esperadas. Control: `BANKS_CHAT_LOG_ENABLED` / `BANKS_CHAT_LOG_DIR`.
 
-- **`jarvis_news` es un paquete aislado, NO depende de `banks_rag.application/domain`**: vive aparte por seguridad (procesa datos externos scrapeados). Solo importa el LLM ya cargado por la app (`app.state.deps.llm`) y `banks_rag.config` para flags del `.env`. No mover lógica de `banks_rag` a `jarvis_news` ni al revés. **Voz JARVIS — dos motores** (en `tts.py`, lazy import de `pyttsx3`/`piper`): `piper` (recomendado, JARVIS auténtico neural) usa **un modelo por idioma** — EN `jgkawell/jarvis` (en_GB RP) con efecto "sala sutil", ES voz latina `gevy` (es_MX) plana; los perfiles por idioma (espeak, length_scale, fx) viven en `voices.py` → `PIPER_PROFILES`. `sapi` (default, fallback) usa la voz del SO + DSP numpy (`effects.py`). El texto se normaliza con `textnorm.to_speakable_text` antes de sintetizar (la voz NO lee `#`, `*`, `1.`, links). Ver [`docs/SETUP_JARVIS.md`](docs/SETUP_JARVIS.md).
+- **`jarvis_news` es un paquete aislado, NO depende de `banks_rag.application/domain`**: vive aparte por seguridad (procesa datos externos scrapeados). Solo importa el LLM ya cargado por la app (`app.state.deps.llm`) y `banks_rag.config` para flags del `.env`. No mover lógica de `banks_rag` a `jarvis_news` ni al revés. **Voz JARVIS — dos motores** (en `tts.py`, lazy import de `pyttsx3`/`piper`): `piper` (default, JARVIS auténtico neural) usa **un modelo por idioma** — EN `jgkawell/jarvis` (en_GB RP) con efecto "sala sutil", ES voz latina `gevy` (es_MX) plana; los perfiles por idioma (espeak, length_scale, fx) viven en `voices.py` → `PIPER_PROFILES`. `sapi` (fallback) usa la voz del SO + DSP numpy (`effects.py`). El texto se normaliza con `textnorm.to_speakable_text` antes de sintetizar (la voz NO lee `#`, `*`, `1.`, links). Ver [`docs/SETUP_JARVIS.md`](docs/SETUP_JARVIS.md).
 
 - **Tests unitarios sin BD ni modelos**: todos los tests en `tests/unit/` usan mocks. `PYTHONPATH=src pytest tests/unit/ -q` debe correr en pocos segundos sin internet ni GPU (incluye `jarvis_news` con mocks de TTS).
 
@@ -170,7 +170,7 @@ chunks    (chunk_id PK, document_id FK,
 | `BANKS_CHAT_LOG_ENABLED` | `true` | `false` para no persistir turnos del agente |
 | `BANKS_CHAT_LOG_DIR` | `data/chat_logs` | Otra ruta para los JSONL de chat |
 | `BANKS_TTS_ENABLED` | `false` | `true` para habilitar el audio (voz JARVIS) en `jarvis_news` |
-| `BANKS_TTS_ENGINE` | `sapi` | `piper` (neural, JARVIS auténtico EN+ES — recomendado) o `sapi` (voz del SO + efecto DSP, sin modelos) |
+| `BANKS_TTS_ENGINE` | `piper` | `piper` (neural, JARVIS auténtico EN+ES — default) o `sapi` (voz del SO + efecto DSP, sin modelos; fallback) |
 | `BANKS_TTS_MODEL` | `jgkawell--jarvis/jarvis-medium.onnx` | Modelo `.onnx` voz EN (solo `engine=piper`) |
 | `BANKS_TTS_MODEL_ES` | `es_MX-gevy/es_MX-gevy-10196-epoch-high.onnx` | Modelo `.onnx` voz ES (solo `engine=piper`) |
 

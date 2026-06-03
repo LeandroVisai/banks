@@ -65,9 +65,9 @@ class Settings(BaseSettings):
 
     # ── TTS (texto→audio; voz JARVIS) ─────────────────────────────────────────
     tts_enabled: bool = False     # BANKS_TTS_ENABLED
-    # Motor: "sapi" (voz del SO + efecto DSP JARVIS, SIN modelos) o "piper"
-    # (modelo neural jgkawell/jarvis, mejor calidad pero descarga ~60MB).
-    tts_engine: str = "sapi"      # BANKS_TTS_ENGINE
+    # Motor: "piper" (voz JARVIS auténtica neural, EN+ES — default) o "sapi"
+    # (voz del SO + efecto DSP, SIN modelos; fallback si falta piper/modelos).
+    tts_engine: str = "piper"     # BANKS_TTS_ENGINE
     # Solo para engine="piper": ruta al .onnx (relativa a models/ o absoluta).
     # tts_model = voz INGLÉS (JARVIS británico). tts_model_es = voz ESPAÑOL.
     tts_model: str = "jgkawell--jarvis/jarvis-medium.onnx"  # BANKS_TTS_MODEL

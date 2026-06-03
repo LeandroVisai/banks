@@ -49,9 +49,9 @@ def tts_model_es() -> str:
 
 
 def tts_engine() -> str:
-    """'sapi' (voz del SO + efecto DSP, sin modelos) o 'piper' (modelo neural)."""
+    """'piper' (voz JARVIS neural, default) o 'sapi' (voz del SO + DSP, fallback)."""
     try:
         from banks_rag.config import get_settings
         return get_settings().tts_engine
     except Exception:  # noqa: BLE001
-        return os.getenv("BANKS_TTS_ENGINE", "sapi")
+        return os.getenv("BANKS_TTS_ENGINE", "piper")

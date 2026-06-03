@@ -30,18 +30,18 @@ class TestTtsFlags:
         assert tts_enabled() is False
         assert build_default_tts() is None
 
-    def test_enabled_builds_sapi_by_default(self) -> None:
-        # Default BANKS_TTS_ENGINE=sapi → voz del SO + efecto DSP (sin modelos).
+    def test_enabled_builds_piper_by_default(self) -> None:
+        # Default BANKS_TTS_ENGINE=piper → voz JARVIS auténtica neural (EN+ES).
         override_settings(Settings(tts_enabled=True))
         engine = build_default_tts()
-        assert isinstance(engine, SapiTTSEngine)
-        assert build_default_tts() is engine  # singleton
-
-    def test_engine_piper_opt_in(self) -> None:
-        override_settings(Settings(tts_enabled=True, tts_engine="piper", tts_model="x/y.onnx"))
-        engine = build_default_tts()
         assert isinstance(engine, PiperTTSEngine)
+        assert build_default_tts() is engine  # singleton
         assert engine.loaded is False  # carga perezosa
+
+    def test_engine_sapi_opt_in(self) -> None:
+        # Fallback explícito: voz del SO + DSP (sin modelos).
+        override_settings(Settings(tts_enabled=True, tts_engine="sapi"))
+        assert isinstance(build_default_tts(), SapiTTSEngine)
 
     def test_piper_engine_has_en_and_es_models(self) -> None:
         # El motor piper carga DOS voces: EN (JARVIS) y ES (gevy latino).

@@ -32,7 +32,7 @@ un fallback `sapi` (voz del SO + DSP) que no descarga modelos.
 | Motor (`BANKS_TTS_ENGINE`) | Voz EN | Voz ES | Modelos | Wheels |
 |---|---|---|---|---|
 | **`piper`** (recomendado) | JARVIS británico real (`jgkawell/jarvis`, en_GB RP) + reverb "sala sutil" | voz latina neural `gevy` (es_MX), natural y plana | 2 × ~60 MB `.onnx` | ~40 MB |
-| `sapi` (default, fallback) | voz del SO + DSP metálico | voz del SO + DSP | ninguno | ~15 MB |
+| `sapi` (fallback) | voz del SO + DSP metálico | voz del SO + DSP | ninguno | ~15 MB |
 
 **Voz por idioma con piper** (un modelo por idioma; los perfiles viven en
 `voices.py` → `PIPER_PROFILES`):
@@ -152,7 +152,7 @@ curl -s -XPOST localhost:8080/v1/tts -H 'content-type: application/json' \
 | Variable | Default | Qué hace |
 |---|---|---|
 | `BANKS_TTS_ENABLED` | `false` | `true` para habilitar el audio (voz JARVIS) |
-| `BANKS_TTS_ENGINE` | `sapi` | `piper` (neural, JARVIS auténtico — recomendado) o `sapi` (voz del SO + DSP, sin modelos) |
+| `BANKS_TTS_ENGINE` | `piper` | `piper` (neural, JARVIS auténtico — default) o `sapi` (voz del SO + DSP, sin modelos; fallback) |
 | `BANKS_TTS_MODEL` | `jgkawell--jarvis/jarvis-medium.onnx` | Modelo `.onnx` de la voz **EN** (solo `engine=piper`) |
 | `BANKS_TTS_MODEL_ES` | `es_MX-gevy/es_MX-gevy-10196-epoch-high.onnx` | Modelo `.onnx` de la voz **ES** (solo `engine=piper`) |
 | `BANKS_LLM_*` | — | El LLM que sintetiza el reporte y traduce a EN |
