@@ -12,6 +12,7 @@ from .upload_store import (
     extract_upload,
     load_upload,
     save_upload,
+    upload_images_dir,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "extract_upload",
     "load_upload",
     "save_upload",
+    "upload_images_dir",
 ]

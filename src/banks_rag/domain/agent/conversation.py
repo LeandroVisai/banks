@@ -55,3 +55,8 @@ class AgentResult:
     # en la respuesta al usuario (esa es solo la síntesis); se persiste en el
     # chat log para trazabilidad/depuración.
     specialist_analyses: list[dict] = field(default_factory=list)
+    # Gráficos/figuras extraídos de los PDFs adjuntos por el usuario (modo
+    # análisis de documento). Cada item: ``{caption, page, image_url, kind}``;
+    # el frontend los muestra como galería junto a la respuesta. Vacío en el
+    # flujo normal (sin adjuntos).
+    attachment_visuals: list[dict] = field(default_factory=list)

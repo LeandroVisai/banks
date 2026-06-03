@@ -9,8 +9,16 @@ Flujo:
      el texto y el agente lo inyecta como contexto del turno.
 
 No se indexa nada (ni pgvector ni el catálogo de parquets): el contenido vive
-solo en disco temporal y caduca por TTL. El texto se acota a ``MAX_TEXT_CHARS``
-para no desbordar el contexto del LLM.
+solo en disco temporal y caduca por TTL.
+
+Dos representaciones del contenido conviven en el record:
+
+  - ``text``: extracto **acotado** a ``MAX_TEXT_CHARS`` — fallback liviano que se
+    inyecta como contexto en flujos que no leen el archivo completo.
+  - ``pages``: contenido **completo** por página (``[{page, text}, …]``) — lo que
+    consume el modo análisis de documento (map-reduce) para leer el PDF ENTERO
+    sin truncar. Para PDFs también se extraen los gráficos/figuras (``visuals``)
+    recortados a PNG, que el frontend muestra junto a la respuesta.
 """
 
 from __future__ import annotations
@@ -38,9 +46,15 @@ _NEWS_FIELDS = {
 
 # Límites (defensivos): tamaño del archivo, texto inyectado y filas de tabla.
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024     # 10 MB
-MAX_TEXT_CHARS = 12_000                 # texto efímero que entra al contexto
+MAX_TEXT_CHARS = 12_000                 # texto efímero (fallback) que entra al contexto
 MAX_TABLE_ROWS = 50                     # primeras filas de una tabla
 TTL_SECONDS = 24 * 3600                 # caducidad de los uploads
+# Techo de gráficos extraídos por PDF (evita inflar el disco temporal). La UI
+# muestra solo los más relevantes (cap aparte, en el flujo de análisis).
+MAX_EXTRACTED_VISUALS = 40
+
+# Subdirectorio (dentro de DATA_UPLOADS_DIR) para los PNG de gráficos del PDF.
+_UPLOAD_IMAGES_SUBDIR = "images"
 
 # Extensión → tipo lógico.
 _DOC_EXTS = {".pdf", ".txt", ".md"}
@@ -160,7 +174,13 @@ def _read_json(content: bytes, filename: str) -> str:
     return "\n\n".join(blocks)
 
 
-def _read_document(content: bytes, ext: str, filename: str) -> str:
+def _read_document(content: bytes, ext: str, filename: str) -> tuple[str, list[dict]]:
+    """Devuelve ``(text, pages)``.
+
+    ``text`` es el contenido completo unido con marcadores ``[pág. N]`` (luego
+    ``extract_upload`` lo acota para el fallback). ``pages`` es la lista completa
+    ``[{page, text}, …]`` con el número de página REAL (1-based) — la fuente que
+    lee el modo análisis de documento sin truncar."""
     if ext == ".pdf":
         from banks_rag.infrastructure.extractors.pdf_extractor import extract_pages
 
@@ -168,28 +188,37 @@ def _read_document(content: bytes, ext: str, filename: str) -> str:
         tmp.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_bytes(content)
         try:
-            pages, warnings = extract_pages(tmp)
+            raw_pages, warnings = extract_pages(tmp)
         finally:
             tmp.unlink(missing_ok=True)
-        text = "\n\n".join(f"[pág. {i + 1}]\n{p}" for i, p in enumerate(pages) if p.strip())
+        # Página REAL (i+1) preservada; se omiten las vacías para no gastar lotes.
+        pages = [
+            {"page": i + 1, "text": p}
+            for i, p in enumerate(raw_pages)
+            if p and p.strip()
+        ]
+        text = "\n\n".join(f"[pág. {pg['page']}]\n{pg['text']}" for pg in pages)
         if not text.strip():
             raise UploadError(
                 f"No se extrajo texto de {filename!r} "
                 f"(¿PDF escaneado o protegido? {', '.join(warnings) or 'sin detalle'})."
             )
-        return text
+        return text, pages
     # txt / md
     try:
-        return content.decode("utf-8", errors="replace")
+        text = content.decode("utf-8", errors="replace")
     except Exception as exc:  # noqa: BLE001
         raise UploadError(f"No se pudo leer {filename!r}: {exc}") from exc
+    return text, [{"page": 1, "text": text}]
 
 
 def extract_upload(filename: str, content: bytes) -> dict[str, Any]:
     """Valida y extrae el contenido a texto. NO persiste (lo hace save_upload).
 
     Returns un dict con ``kind`` ('document'|'table'), ``name``, ``text``
-    (acotado) y ``truncated``. Lanza ``UploadError`` si es inválido.
+    (acotado, fallback), ``truncated``, ``pages`` (contenido COMPLETO por
+    página ``[{page, text}, …]``) y ``char_count`` (tamaño total). Lanza
+    ``UploadError`` si es inválido.
     """
     if not content:
         raise UploadError("Archivo vacío.")
@@ -199,28 +228,86 @@ def extract_upload(filename: str, content: bytes) -> dict[str, Any]:
             f"máx {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)."
         )
     ext = _ext(filename)
+    pages: list[dict]
     if ext in _TABLE_EXTS:
         kind, raw = "table", _read_table(content, ext, filename)
+        pages = [{"page": 1, "text": raw}]
     elif ext in _JSON_EXTS:
         kind, raw = "document", _read_json(content, filename)
+        pages = [{"page": 1, "text": raw}]
     elif ext in _DOC_EXTS:
-        kind, raw = "document", _read_document(content, ext, filename)
+        kind = "document"
+        raw, pages = _read_document(content, ext, filename)
     else:
         raise UploadError(
             f"Tipo no soportado: {ext or '(sin extensión)'}. "
             "Permitidos: PDF, TXT, MD, JSON, CSV, XLSX, XLS."
         )
     text, truncated = _clip(raw)
-    return {"kind": kind, "name": filename, "text": text, "truncated": truncated}
+    return {
+        "kind": kind,
+        "name": filename,
+        "text": text,
+        "truncated": truncated,
+        "pages": pages,
+        "n_pages": len(pages),
+        "char_count": sum(len(p["text"]) for p in pages),
+    }
+
+
+def _extract_pdf_visuals(content: bytes, upload_id: str) -> list[dict]:
+    """Extrae y recorta los gráficos/figuras de un PDF a PNG (modo análisis de
+    documento). Reusa la maquinaria de ingesta ``extract_visual_assets``.
+
+    Los PNG se guardan en ``DATA_UPLOADS_DIR/images/<upload_id>/``. Devuelve la
+    metadata ``[{asset_id, page, caption, kind, image_file}, …]`` (``image_file``
+    es solo el nombre, no la ruta — el endpoint lo resuelve). Best-effort: si
+    PyMuPDF no está o falla, devuelve ``[]`` sin abortar el upload."""
+    try:
+        from banks_rag.infrastructure.extractors.chart_detector import (
+            extract_visual_assets,
+        )
+    except Exception:
+        return []
+
+    out_dir = DATA_UPLOADS_DIR / _UPLOAD_IMAGES_SUBDIR / upload_id
+    tmp = DATA_UPLOADS_DIR / f"_tmp_{uuid.uuid4().hex}.pdf"
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_bytes(content)
+    try:
+        assets = extract_visual_assets(tmp, upload_id, out_dir)
+    except Exception:
+        return []
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    visuals: list[dict] = []
+    for a in assets[:MAX_EXTRACTED_VISUALS]:
+        visuals.append({
+            "asset_id": a.asset_id,
+            "page": a.page,
+            "caption": a.caption,
+            "kind": a.kind,
+            "image_file": Path(a.image_path).name,
+        })
+    return visuals
 
 
 def _cleanup_old() -> None:
-    """Borra uploads cuyo mtime excede el TTL. Best-effort (nunca lanza)."""
+    """Borra uploads (JSON + PNG de gráficos) cuyo mtime excede el TTL.
+    Best-effort (nunca lanza)."""
+    import shutil
+
     try:
         cutoff = time.time() - TTL_SECONDS
         for p in DATA_UPLOADS_DIR.glob("*.json"):
             if p.stat().st_mtime < cutoff:
                 p.unlink(missing_ok=True)
+        images_root = DATA_UPLOADS_DIR / _UPLOAD_IMAGES_SUBDIR
+        if images_root.exists():
+            for d in images_root.iterdir():
+                if d.is_dir() and d.stat().st_mtime < cutoff:
+                    shutil.rmtree(d, ignore_errors=True)
     except Exception:  # noqa: BLE001
         pass
 
@@ -228,14 +315,21 @@ def _cleanup_old() -> None:
 def save_upload(filename: str, content: bytes) -> dict[str, Any]:
     """Extrae el contenido, persiste el JSON y devuelve la metadata + texto.
 
-    El campo ``preview`` es un extracto corto para mostrar en la UI.
+    Para PDFs extrae además los gráficos/figuras (``visuals``). El campo
+    ``preview`` es un extracto corto para mostrar en la UI.
     """
     meta = extract_upload(filename, content)
     _cleanup_old()
     upload_id = f"up_{uuid.uuid4().hex[:16]}"
+
+    visuals: list[dict] = []
+    if _ext(filename) == ".pdf":
+        visuals = _extract_pdf_visuals(content, upload_id)
+
     record = {
         "upload_id": upload_id,
         "created_at": time.time(),
+        "visuals": visuals,
         **meta,
     }
     DATA_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -243,14 +337,34 @@ def save_upload(filename: str, content: bytes) -> dict[str, Any]:
         json.dumps(record, ensure_ascii=False), encoding="utf-8",
     )
     record["preview"] = meta["text"][:280]
-    record["chars"] = len(meta["text"])
+    # ``chars`` = tamaño total del documento (no del fallback acotado), para que
+    # la UI muestre el peso real de lo que el agente leerá.
+    record["chars"] = meta.get("char_count", len(meta["text"]))
+    record["n_visuals"] = len(visuals)
     return record
+
+
+def _valid_upload_id(upload_id: str) -> bool:
+    """``True`` si el id tiene el formato esperado (evita traversal con '../')."""
+    return bool(
+        upload_id
+        and upload_id.startswith("up_")
+        and "/" not in upload_id
+        and "\\" not in upload_id
+    )
+
+
+def upload_images_dir(upload_id: str) -> Path | None:
+    """Directorio de PNG de gráficos de un upload, o ``None`` si el id es inválido."""
+    if not _valid_upload_id(upload_id):
+        return None
+    return DATA_UPLOADS_DIR / _UPLOAD_IMAGES_SUBDIR / upload_id
 
 
 def load_upload(upload_id: str) -> dict[str, Any] | None:
     """Recupera un upload por id. ``None`` si no existe o caducó."""
     # Solo ids con el formato esperado (evita traversal con '../').
-    if not upload_id or not upload_id.startswith("up_") or "/" in upload_id or "\\" in upload_id:
+    if not _valid_upload_id(upload_id):
         return None
     path = DATA_UPLOADS_DIR / f"{upload_id}.json"
     if not path.exists():

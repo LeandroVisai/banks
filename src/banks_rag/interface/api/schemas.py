@@ -96,9 +96,14 @@ class HistoricalSeriesRef(BaseModel):
     n_observations: int
     first_date: str | None
     last_date: str | None
-    # [[iso_date, value], ...] para que el frontend grafique la serie en la
-    # respuesta. Vacío si la serie no es temporal/numérica (no graficable).
+    # [[x, value], ...] para que el frontend grafique la serie en la respuesta.
+    # `x` es una fecha ISO (serie temporal) o una etiqueta de categoría
+    # (composición). Vacío si la serie no es numérica (no graficable).
     points: list[list] = Field(default_factory=list)
+    # Tipo de gráfico que el frontend debe usar: "line"/"area" (temporal) o
+    # "bar"/"grouped_bar" (categórico). Lo fija el backend según la forma del
+    # dato (ver domain/agent/agent_state.infer_chart_type).
+    chart_type: str = "line"
 
 
 class ToolTraceEntry(BaseModel):
@@ -112,6 +117,16 @@ class ToolTraceEntry(BaseModel):
     agent: str = ""
 
 
+class AttachmentVisual(BaseModel):
+    """Gráfico/figura extraído de un PDF adjunto por el usuario (modo análisis
+    de documento). El frontend lo renderiza vía ``image_url``."""
+
+    caption: str | None = None
+    page: int | None = None
+    image_url: str        # /v1/uploads/{upload_id}/images/{file}
+    kind: str = "CHART"   # CHART | TABLE | IMAGE
+
+
 class ChatResponse(BaseModel):
     response: str
     iterations: int
@@ -120,6 +135,8 @@ class ChatResponse(BaseModel):
     chunks_seen: list[ChunkSeen]
     series_used: list[HistoricalSeriesRef]
     cited_refs: list[int]
+    # Gráficos extraídos de los PDFs adjuntos (modo análisis de documento).
+    attachment_visuals: list[AttachmentVisual] = Field(default_factory=list)
     # Cifras de la respuesta sin respaldo de ninguna herramienta (grounding
     # numérico). Si no está vacío, el frontend debería marcarlas como no
     # verificadas.

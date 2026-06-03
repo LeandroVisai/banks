@@ -692,6 +692,69 @@ def _attachment_block(ctx: str) -> str:
     )
 
 
+async def _run_attachment_analysis(
+    user_message: str,
+    attachment_records: list[dict],
+    *,
+    llm,
+    t0: float,
+    reduce_max_tokens: int | None,
+    batch_tokens: int | None,
+    map_max_tokens: int | None,
+    max_batches: int | None,
+    max_visuals: int | None,
+) -> AgentResult:
+    """Envuelve ``run_document_analysis`` en un ``AgentResult``.
+
+    El documento adjunto es la fuente: NO se aplican los guards de citación [N] ni
+    de grounding numérico (diseñados para el flujo de corpus/tools) — las cifras
+    provienen del propio documento y se citan por página. Import local para
+    evitar un ciclo (document_analysis no importa este módulo)."""
+    from .document_analysis import (
+        DEFAULT_BATCH_TOKENS,
+        DEFAULT_MAP_MAX_TOKENS,
+        DEFAULT_MAX_BATCHES,
+        DEFAULT_MAX_VISUALS,
+        DEFAULT_REDUCE_MAX_TOKENS,
+        run_document_analysis,
+    )
+
+    log.info(
+        "modo análisis de documento: %d adjunto(s), %d página(s) total",
+        len(attachment_records),
+        sum(r.get("n_pages", 0) for r in attachment_records),
+    )
+    doc = await run_document_analysis(
+        attachment_records,
+        user_message,
+        llm=llm,
+        batch_tokens=batch_tokens or DEFAULT_BATCH_TOKENS,
+        map_max_tokens=map_max_tokens or DEFAULT_MAP_MAX_TOKENS,
+        reduce_max_tokens=reduce_max_tokens or DEFAULT_REDUCE_MAX_TOKENS,
+        max_batches=max_batches or DEFAULT_MAX_BATCHES,
+        max_visuals=max_visuals or DEFAULT_MAX_VISUALS,
+    )
+    return AgentResult(
+        response=doc.response,
+        iterations=doc.n_batches + 1,   # lotes (map) + 1 (reduce), informativo
+        tool_trace=[],
+        chunks_seen=[],
+        series_used=[],
+        cited_refs=[],
+        finish_reason=doc.finish_reason,
+        total_tokens=doc.total_tokens,
+        latency_ms=int((time.perf_counter() - t0) * 1000),
+        invalid_refs=[],
+        ungrounded_numbers=[],
+        specialist_analyses=[
+            {"key": "document", "display_name": "Analista de Documento",
+             "analysis": note, "finish_reason": "stop", "iterations": 1}
+            for note in doc.partial_notes
+        ],
+        attachment_visuals=doc.visuals,
+    )
+
+
 async def run_agent(
     user_message: str,
     history: list[dict],
@@ -706,6 +769,12 @@ async def run_agent(
     thinking_mode: str = DEFAULT_THINKING_MODE,
     attachments_context: str = "",
     synthesis_max_tokens: int | None = None,
+    attachment_records: list[dict] | None = None,
+    upload_analysis_max_tokens: int | None = None,
+    upload_map_batch_tokens: int | None = None,
+    upload_map_max_tokens: int | None = None,
+    upload_max_map_batches: int | None = None,
+    upload_max_visuals: int | None = None,
 ) -> AgentResult:
     """Ejecuta un turno completo del agente (arquitectura router-v1).
 
@@ -732,6 +801,25 @@ async def run_agent(
     """
     state = AgentState()
     t0 = time.perf_counter()
+
+    # ── Modo análisis de documento ────────────────────────────────────────────
+    # Si el turno trae un archivo adjunto, NO se rutea a los especialistas de
+    # mercado/política (sus tools consultan el corpus indexado y los parquets, no
+    # el archivo). Un analista económico-financiero lee el documento ENTERO por
+    # lotes (map-reduce) — así no se trunca ni se queda sin tokens — y muestra los
+    # gráficos del PDF. Ver application/agent/document_analysis.
+    if attachment_records:
+        return await _run_attachment_analysis(
+            user_message,
+            attachment_records,
+            llm=llm,
+            t0=t0,
+            reduce_max_tokens=upload_analysis_max_tokens,
+            batch_tokens=upload_map_batch_tokens,
+            map_max_tokens=upload_map_max_tokens,
+            max_batches=upload_max_map_batches,
+            max_visuals=upload_max_visuals,
+        )
 
     # Perfil del modo: ata el toggle (off/adaptive/on) a velocidad↔profundidad
     # completa — nº de especialistas, iteraciones y sampling — no solo el thinking.

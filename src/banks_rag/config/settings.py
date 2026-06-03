@@ -86,6 +86,17 @@ class Settings(BaseSettings):
     #   on       → thinking en todo (máxima calidad, máxima latencia).
     thinking_mode: Literal["off", "adaptive", "on"] = "adaptive"
 
+    # ── Análisis de documentos adjuntos (modo upload, map-reduce) ────────────
+    # Cuando el turno trae un PDF/archivo adjunto, el agente NO rutea a los
+    # especialistas de mercado: corre un flujo dedicado de analista de documento
+    # que lee el archivo ENTERO por lotes (map) y consolida (reduce). Estos
+    # parámetros controlan ese flujo.
+    upload_analysis_max_tokens: int = 4096   # output del REDUCE (respuesta final)
+    upload_map_batch_tokens: int = 3500      # texto del doc por lote del MAP
+    upload_map_max_tokens: int = 1024        # output de cada análisis parcial
+    upload_max_map_batches: int = 24         # techo de lotes (docs gigantes)
+    upload_max_visuals: int = 6              # gráficos del PDF a mostrar en la UI
+
     # ── API ──────────────────────────────────────────────────────────────────
     api_host: str = "0.0.0.0"
     api_port: int = 8080

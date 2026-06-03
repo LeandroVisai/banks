@@ -543,7 +543,12 @@ class TestComputeComposition:
         assert result["mode"] == "wide"
         shares = {b["categoria"]: b["share_pct"] for b in result["breakdown"]}
         assert shares["Extranjero"] == pytest.approx(53.57, abs=0.01)
-        assert state.series_used  # se registró la serie
+        # Se registró como serie CATEGÓRICA → barra (no línea temporal).
+        assert state.series_used
+        s = next(iter(state.series_used.values()))
+        assert s["chart_type"] == "bar"
+        assert {p[0] for p in s["points"]} == {"Nacional", "Extranjero"}
+        assert s["first_date"] is None  # categórica: sin eje de fechas
 
     @pytest.mark.asyncio
     async def test_long_mode(self) -> None:
@@ -565,6 +570,11 @@ class TestComputeComposition:
         assert result["mode"] == "long"
         shares = {b["categoria"]: b["share_pct"] for b in result["breakdown"]}
         assert shares == {"BTP": 70.0, "BTU": 30.0}
+        # Serie categórica → barra, puntos [categoría, valor] ordenados desc.
+        s = next(iter(state.series_used.values()))
+        assert s["chart_type"] == "bar"
+        assert [p[0] for p in s["points"]] == ["BTP", "BTU"]
+        assert s["points"][0][1] == pytest.approx(70.0)
 
     @pytest.mark.asyncio
     async def test_requires_a_mode(self) -> None:

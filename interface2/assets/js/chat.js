@@ -347,6 +347,9 @@ class ChatController {
         // las fuentes, para que el dato cuantitativo sea lo primero que se ve).
         this._renderSeriesCharts(seriesUsed, msg);
 
+        // Gráficos extraídos de los PDFs adjuntos (modo análisis de documento).
+        this._renderAttachmentVisuals(data.attachment_visuals || [], msg);
+
         const sources = this._buildSources(citedRefs, chunksSeen, seriesUsed);
         if (sources) msg.appendChild(sources);
 
@@ -355,14 +358,16 @@ class ChatController {
     }
 
     _renderSeriesCharts(seriesUsed, msgEl) {
-        // Solo series temporales reales (≥2 puntos). ApexCharts y baseChartConfig
-        // deben estar cargados; si no, se omite en silencio.
+        // Series con ≥2 puntos. ApexCharts y baseChartConfig deben estar
+        // cargados; si no, se omite en silencio. El TIPO de gráfico lo decide el
+        // backend (chart_type): "bar"/"grouped_bar" para datos categóricos
+        // (composiciones, cortes) y "line"/"area" para series temporales — así
+        // no todo sale como línea.
         if (!window.ApexCharts || !BCCh.baseChartConfig) return;
         const plottable = (seriesUsed || []).filter((s) => (s.points || []).length >= 2);
         if (!plottable.length) return;
 
         const MAX_CHARTS = 3;   // no saturar la respuesta
-        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         plottable.slice(0, MAX_CHARTS).forEach((s, idx) => {
             const head = h("div", { "class": "chat-chart__head" }, [
                 h("span", { "class": "chat-chart__title" }, s.series_name || s.series_id),
@@ -372,23 +377,50 @@ class ChatController {
             const card = h("div", { "class": "chat-chart" }, [head, body]);
             msgEl.appendChild(card);
 
-            const data = s.points
-                .map((p) => [new Date(p[0]).getTime(), Number(p[1])])
-                .filter((p) => !Number.isNaN(p[0]) && !Number.isNaN(p[1]));
-            if (data.length < 2) { card.remove(); return; }
-
             // El primero más alto; los apilados, compactos (no enterrar las citas).
             const height = idx === 0 ? 160 : 132;
-            const cfg = BCCh.baseChartConfig("area", { compact: true, height });
-            cfg.series = [{ name: s.series_name || s.series_id, data }];
-            cfg.fill = {
-                type: "gradient",
-                gradient: { shadeIntensity: 0.2, opacityFrom: 0.25, opacityTo: 0.02, stops: [0, 100] },
-            };
+            const type = s.chart_type || "line";
+            const isBar = type === "bar" || type === "grouped_bar";
+
+            let cfg;
+            if (isBar) {
+                // Eje categórico: x = etiqueta (no fecha), y = valor → barras.
+                const categories = [];
+                const values = [];
+                (s.points || []).forEach((p) => {
+                    const v = Number(p[1]);
+                    if (Number.isNaN(v)) return;
+                    categories.push(String(p[0]));
+                    values.push(v);
+                });
+                if (!values.length) { card.remove(); return; }
+                cfg = BCCh.baseChartConfig("bar", { compact: true, height });
+                cfg.xaxis = {
+                    ...(cfg.xaxis || {}),
+                    type: "category",
+                    categories,
+                    labels: { style: { colors: "#7F8C8D", fontSize: "10px", fontFamily: "IBM Plex Mono" } },
+                };
+                cfg.plotOptions = { bar: { borderRadius: 2, columnWidth: "55%", distributed: values.length <= 12 } };
+                cfg.stroke = { width: 0 };
+                cfg.legend = { show: false };
+                cfg.series = [{ name: s.series_name || s.series_id, data: values }];
+            } else {
+                // Serie temporal: x = timestamp, área (estética de una sola serie).
+                const data = (s.points || [])
+                    .map((p) => [new Date(p[0]).getTime(), Number(p[1])])
+                    .filter((p) => !Number.isNaN(p[0]) && !Number.isNaN(p[1]));
+                if (data.length < 2) { card.remove(); return; }
+                cfg = BCCh.baseChartConfig("area", { compact: true, height });
+                cfg.series = [{ name: s.series_name || s.series_id, data }];
+                cfg.fill = {
+                    type: "gradient",
+                    gradient: { shadeIntensity: 0.2, opacityFrom: 0.25, opacityTo: 0.02, stops: [0, 100] },
+                };
+            }
             // El reveal lo hace el CSS (.chat-chart); Apex no anima (evita doble
             // animación) y respeta prefers-reduced-motion.
             cfg.chart.animations = { enabled: false };
-            void reduce;
             try {
                 const apex = new window.ApexCharts(body, cfg);
                 apex.render();
@@ -396,6 +428,32 @@ class ChatController {
                 card.remove();   // si ApexCharts falla, la respuesta de texto queda intacta
             }
         });
+    }
+
+    _renderAttachmentVisuals(visuals, msgEl) {
+        // Galería de gráficos/figuras extraídos del PDF adjunto (modo análisis
+        // de documento). Las imágenes las sirve el backend vía image_url.
+        if (!visuals || !visuals.length) return;
+        const base = (BCCh.CONFIG && BCCh.CONFIG.API_BASE) || "";
+        const cards = visuals.map((v) => {
+            const img = h("img", {
+                "class": "chat-doc-visual__img",
+                src: `${base}${v.image_url}`,
+                alt: v.caption || "Gráfico del documento",
+                loading: "lazy",
+            });
+            const cap = h("div", { "class": "chat-doc-visual__cap" },
+                [v.caption || "Figura", v.page ? `  ·  pág. ${v.page}` : ""].join(""));
+            const fig = h("figure", { "class": "chat-doc-visual" }, [img, cap]);
+            // Si la imagen no carga (PDF sin esa figura / TTL vencido), se oculta.
+            img.addEventListener("error", () => fig.remove());
+            return fig;
+        });
+        const wrap = h("div", { "class": "chat-doc-visuals" }, [
+            h("div", { "class": "chat-doc-visuals__head" }, "Gráficos del documento"),
+            h("div", { "class": "chat-doc-visuals__grid" }, cards),
+        ]);
+        msgEl.appendChild(wrap);
     }
 
     _buildSources(citedRefs, chunksSeen, seriesUsed) {
