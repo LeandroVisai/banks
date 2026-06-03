@@ -29,11 +29,23 @@ def tts_enabled() -> bool:
 
 
 def tts_model() -> str:
+    """Voz INGLÉS (JARVIS británico, en_GB)."""
     try:
         from banks_rag.config import get_settings
         return get_settings().tts_model
     except Exception:  # noqa: BLE001
         return os.getenv("BANKS_TTS_MODEL", "jgkawell--jarvis/jarvis-medium.onnx")
+
+
+def tts_model_es() -> str:
+    """Voz ESPAÑOL latino (gevy es_MX, neural)."""
+    try:
+        from banks_rag.config import get_settings
+        return get_settings().tts_model_es
+    except Exception:  # noqa: BLE001
+        return os.getenv(
+            "BANKS_TTS_MODEL_ES", "es_MX-gevy/es_MX-gevy-10196-epoch-high.onnx"
+        )
 
 
 def tts_engine() -> str:

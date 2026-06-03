@@ -43,17 +43,51 @@ class TestTtsFlags:
         assert isinstance(engine, PiperTTSEngine)
         assert engine.loaded is False  # carga perezosa
 
+    def test_piper_engine_has_en_and_es_models(self) -> None:
+        # El motor piper carga DOS voces: EN (JARVIS) y ES (gevy latino).
+        override_settings(Settings(
+            tts_enabled=True, tts_engine="piper",
+            tts_model="jarvis/en.onnx", tts_model_es="gevy/es.onnx",
+        ))
+        engine = build_default_tts()
+        assert isinstance(engine, PiperTTSEngine)
+        assert engine._models == {"en": "jarvis/en.onnx", "es": "gevy/es.onnx"}
+
+
+@pytest.mark.unit
+class TestPiperLangProfiles:
+    """Perfiles por idioma del motor neural: EN con efecto, ES plano."""
+
+    def test_en_profile_has_room_fx_and_british_phonemes(self) -> None:
+        from jarvis_news.voices import piper_profile
+
+        prof = piper_profile("en")
+        assert prof.espeak_voice == "en-gb-x-rp"
+        assert prof.fx is not None  # 'sala sutil'
+
+    def test_es_profile_is_flat_and_uses_model_phonemes(self) -> None:
+        from jarvis_news.voices import piper_profile
+
+        prof = piper_profile("es")
+        assert prof.espeak_voice is None  # usa la fonemización del modelo gevy
+        assert prof.fx is None  # voz plana, sin efecto (gevy crudo)
+
+    def test_unknown_lang_falls_back_to_en(self) -> None:
+        from jarvis_news.voices import piper_profile
+
+        assert piper_profile("xx").fx is piper_profile("en").fx
+
 
 @pytest.mark.unit
 class TestSynthesizeErrors:
     def test_empty_text_raises(self) -> None:
         with pytest.raises(TTSError, match="vac"):
-            PiperTTSEngine("x.onnx").synthesize("   ")
+            PiperTTSEngine({"en": "x.onnx"}).synthesize("   ")
 
     def test_missing_piper_or_model_degrades_to_error(self) -> None:
         # Sin piper-tts (ni modelo) → TTSError accionable, no excepción cruda.
         with pytest.raises(TTSError):
-            PiperTTSEngine("inexistente/modelo.onnx").synthesize("hola")
+            PiperTTSEngine({"en": "inexistente/modelo.onnx"}).synthesize("hola")
 
 
 @pytest.mark.unit

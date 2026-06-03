@@ -65,32 +65,26 @@ def _reverb(x: np.ndarray, fr: int, ms: float, decay: float) -> np.ndarray:
     return out
 
 
-def apply_jarvis_effect(wav_bytes: bytes, fx: JarvisFx | None = None) -> bytes:
-    """Aplica el efecto JARVIS a un WAV (bytes) y devuelve WAV mono (bytes)."""
-    fx = fx or JarvisFx()
+def _read_mono(wav_bytes: bytes) -> tuple[np.ndarray, int, int]:
+    """WAV (bytes) → (señal float64 mono, sample_rate, sampwidth)."""
     with wave.open(io.BytesIO(wav_bytes), "rb") as w:
         n_ch, width, fr, n_frames = (
             w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes(),
         )
         raw = w.readframes(n_frames)
-
     dtype = _DTYPE_BY_WIDTH.get(width, np.int16)
     audio = np.frombuffer(raw, dtype=dtype).astype(np.float64)
     if n_ch == 2:
-        audio = audio.reshape(-1, 2).mean(axis=1)   # a mono
-    if audio.size == 0:
-        return wav_bytes
+        audio = audio.reshape(-1, 2).mean(axis=1)
+    return audio, fr, width
+
+
+def _write_mono(audio: np.ndarray, fr: int, width: int, peak: float = 0.97) -> bytes:
+    """Señal float64 → WAV mono (bytes), normalizada a ``peak``."""
+    dtype = _DTYPE_BY_WIDTH.get(width, np.int16)
     maxv = float(np.iinfo(dtype).max)
-    audio /= maxv
-
-    audio = _bandpass(audio, fr, fx.band_low_hz, fx.band_high_hz)
-    audio = _flanger(audio, fr, fx.flanger_depth_ms, fx.flanger_rate_hz, fx.flanger_mix)
-    audio = _reverb(audio, fr, fx.reverb_ms, fx.reverb_decay)
-
-    peak = float(np.max(np.abs(audio))) or 1.0
-    audio = audio / peak * fx.output_peak
-    out = (audio * maxv).astype(dtype)
-
+    p = float(np.max(np.abs(audio))) or 1.0
+    out = (audio / p * peak * maxv).astype(dtype)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
@@ -98,3 +92,18 @@ def apply_jarvis_effect(wav_bytes: bytes, fx: JarvisFx | None = None) -> bytes:
         w.setframerate(fr)
         w.writeframes(out.tobytes())
     return buf.getvalue()
+
+
+def apply_jarvis_effect(wav_bytes: bytes, fx: JarvisFx | None = None) -> bytes:
+    """Aplica el efecto JARVIS a un WAV (bytes) y devuelve WAV mono (bytes)."""
+    fx = fx or JarvisFx()
+    audio, fr, width = _read_mono(wav_bytes)
+    if audio.size == 0:
+        return wav_bytes
+    audio /= float(np.iinfo(_DTYPE_BY_WIDTH.get(width, np.int16)).max)
+
+    audio = _bandpass(audio, fr, fx.band_low_hz, fx.band_high_hz)
+    audio = _flanger(audio, fr, fx.flanger_depth_ms, fx.flanger_rate_hz, fx.flanger_mix)
+    audio = _reverb(audio, fr, fx.reverb_ms, fx.reverb_decay)
+
+    return _write_mono(audio, fr, width, fx.output_peak)

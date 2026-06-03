@@ -69,7 +69,9 @@ class Settings(BaseSettings):
     # (modelo neural jgkawell/jarvis, mejor calidad pero descarga ~60MB).
     tts_engine: str = "sapi"      # BANKS_TTS_ENGINE
     # Solo para engine="piper": ruta al .onnx (relativa a models/ o absoluta).
+    # tts_model = voz INGLÉS (JARVIS británico). tts_model_es = voz ESPAÑOL.
     tts_model: str = "jgkawell--jarvis/jarvis-medium.onnx"  # BANKS_TTS_MODEL
+    tts_model_es: str = "es_MX-gevy/es_MX-gevy-10196-epoch-high.onnx"  # BANKS_TTS_MODEL_ES
 
     # ── Agente ───────────────────────────────────────────────────────────────
     max_agent_iterations: int = 6

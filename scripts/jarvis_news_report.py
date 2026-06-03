@@ -51,7 +51,7 @@ def _save_audio(out: pathlib.Path, stem: str, lang: str, wav: bytes) -> pathlib.
 async def _run(args: argparse.Namespace) -> None:
     settings = get_settings()
     if settings.llm_family in ("mock", ""):
-        print("⚠️  BANKS_LLM_FAMILY es 'mock'/vacío: configura qwen + BANKS_LLM_MODEL_PATH en .env.")
+        print("WARN BANKS_LLM_FAMILY es 'mock'/vacío: configura qwen + BANKS_LLM_MODEL_PATH en .env.")
         return
 
     print(f"Cargando LLM {settings.llm_model_path} …", flush=True)
@@ -67,7 +67,7 @@ async def _run(args: argparse.Namespace) -> None:
     out = pathlib.Path(args.out)
     stem = pathlib.Path(result["source_file"]).stem
     txt_path = _save_text(out, stem, result["report"])
-    print(f"✓ texto → {txt_path}  ({result['n_used']}/{result['n_total']} noticias)")
+    print(f"OK texto -> {txt_path}  ({result['n_used']}/{result['n_total']} noticias)")
 
     if not args.audio:
         return
@@ -79,9 +79,9 @@ async def _run(args: argparse.Namespace) -> None:
         )
         for lang, wav in audios.items():
             wav_path = _save_audio(out, stem, lang, wav)
-            print(f"✓ audio {lang.upper()} → {wav_path}")
+            print(f"OK audio {lang.upper()} -> {wav_path}")
     except TTSError as exc:
-        print(f"⚠️  audio omitido: {exc}")
+        print(f"WARN audio omitido: {exc}")
 
 
 def main() -> None:

@@ -1,0 +1,15 @@
+# Motor TTS NEURAL "piper" — voz JARVIS AUTÉNTICA. Es el motor recomendado:
+#   - Inglés: JARVIS británico real (modelo jgkawell/jarvis, en_GB RP).
+#   - Español: voz latina neural 'gevy' (es_MX).
+# Pesa ~40 MB de wheels (piper-tts + onnxruntime + protobuf/flatbuffers/pathvalidate).
+# numpy ya viene con el core (no se repite). onnxruntime CPU basta (síntesis rápida).
+#
+# ADEMÁS hay que copiar los modelos .onnx a models/ (NO son wheels, ~120 MB):
+#   models/jgkawell--jarvis/jarvis-medium.onnx (+ .onnx.json)        # EN
+#   models/es_MX-gevy/es_MX-gevy-10196-epoch-high.onnx (+ .onnx.json) # ES
+# Ver docs/SETUP_JARVIS.md.
+#
+# Generar el bundle offline:  scripts/build_tts_piper_bundle.(ps1|sh)
+# Instalar en el servidor:    pip install --no-index --find-links <bundle> -r <este archivo>
+
+piper-tts>=1.4

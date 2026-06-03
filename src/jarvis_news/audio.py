@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
+from .textnorm import to_speakable_text
 from .tts import TTSError, build_default_tts
 
 _TRANSLATE_SYSTEM = "You are a professional translator. Output only the translation, nothing else."
@@ -30,17 +31,19 @@ async def translate_to_english(llm, text: str, *, max_tokens: int = 4096) -> str
 
 def synthesize_wav(text: str, lang: str = "en") -> bytes:
     """Texto → WAV con voz JARVIS (motor según BANKS_TTS_ENGINE) en ``lang``
-    ('en'|'es'). Lanza ``TTSError`` si el TTS está deshabilitado o falla."""
+    ('en'|'es'). Normaliza Markdown → texto hablable (no lee ``#``, ``*``, ``1.``)
+    antes de sintetizar. Lanza ``TTSError`` si el TTS está deshabilitado o falla."""
     engine = build_default_tts()
     if engine is None:
         raise TTSError("TTS deshabilitado (BANKS_TTS_ENABLED=false).")
-    return engine.synthesize(text, lang)
+    return engine.synthesize(to_speakable_text(text), lang)
 
 
 async def synthesize_bilingual(report_es: str, llm, *, max_tokens: int = 4096) -> dict[str, bytes]:
     """Genera el audio en ESPAÑOL (texto tal cual) y en INGLÉS (traducido con el
     LLM), ambos con voz JARVIS. Devuelve ``{"es": wav, "en": wav}``."""
-    es = await asyncio.to_thread(synthesize_wav, report_es, "es")
-    text_en = await translate_to_english(llm, report_es, max_tokens=max_tokens)
+    clean_es = to_speakable_text(report_es)
+    es = await asyncio.to_thread(synthesize_wav, clean_es, "es")
+    text_en = await translate_to_english(llm, clean_es, max_tokens=max_tokens)
     en = await asyncio.to_thread(synthesize_wav, text_en, "en")
     return {"es": es, "en": en}

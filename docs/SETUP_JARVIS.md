@@ -24,57 +24,79 @@ El LLM es el **mismo Qwen3.6** del agente (se reusa, no se carga otro modelo).
 
 ---
 
-## 2. Voz JARVIS sin descargar modelos (motor por defecto)
+## 2. Dos motores de voz
 
-El motor `sapi` usa la voz del SO (`pyttsx3` → SAPI en Windows) y le aplica un
-**efecto DSP puro numpy** (`effects.py`): band-pass (~280–3600 Hz) + *flanger* +
-*reverb* corto. Es la receta clásica del fan-audio de JARVIS (EQ + modulación de
-tono + flanger + reverb), **sin descargar ningún modelo** (~15 MB de wheels).
+El motor **recomendado es `piper`** (neural): da la voz JARVIS **auténtica**. Hay
+un fallback `sapi` (voz del SO + DSP) que no descarga modelos.
 
-| Motor (`BANKS_TTS_ENGINE`) | Modelo | Peso | Idiomas |
-|---|---|---|---|
-| `sapi` (default) | ninguno (voz del SO + DSP) | ~15 MB wheels | EN + ES |
-| `piper` (opt-in) | `jgkawell/jarvis` (neural, en_GB) | ~60 MB | solo EN |
+| Motor (`BANKS_TTS_ENGINE`) | Voz EN | Voz ES | Modelos | Wheels |
+|---|---|---|---|---|
+| **`piper`** (recomendado) | JARVIS británico real (`jgkawell/jarvis`, en_GB RP) + reverb "sala sutil" | voz latina neural `gevy` (es_MX), natural y plana | 2 × ~60 MB `.onnx` | ~40 MB |
+| `sapi` (default, fallback) | voz del SO + DSP metálico | voz del SO + DSP | ninguno | ~15 MB |
+
+**Voz por idioma con piper** (un modelo por idioma; los perfiles viven en
+`voices.py` → `PIPER_PROFILES`):
+
+- **EN**: `jgkawell/jarvis` fonemizado en `en-gb-x-rp` (Received Pronunciation),
+  pausado (`length_scale` 1.18) + efecto `apply_jarvis_effect` "sala sutil"
+  (reverb corta, sin band-pass agresivo ni flanger).
+- **ES**: voz `gevy` (es_MX) tal cual — natural, plana, **sin** efecto.
+
+> El texto se normaliza con `textnorm.to_speakable_text` antes de sintetizar, así
+> la voz **no lee** el Markdown (`#`, `*`, `1.`, links).
 
 ---
 
 ## 3. Instalación del TTS (offline, servidor H100 sin internet)
 
-El efecto DSP usa `numpy`, que ya viene con el core. El motor `sapi` solo añade
-`pyttsx3` (+ `pywin32`/`comtypes` en Windows).
+### Motor `piper` (recomendado — JARVIS auténtico)
 
 **Paso 1 — generar el bundle de wheels** (en una máquina Windows CON internet,
-mismo Python/arquitectura que el servidor):
+mismo Python/arquitectura que el servidor: py3.12 / win_amd64):
 
 ```powershell
-.\scripts\build_tts_bundle.ps1          # → jarvis_news_tts_wheels\  (~15 MB)
+.\scripts\build_tts_piper_bundle.ps1     # → jarvis_news_piper_wheels\  (~40 MB)
 ```
 
-(En Linux/macOS para descargar wheels `win_amd64`: `scripts/build_tts_bundle.sh`.)
+(En Linux/macOS para descargar wheels `win_amd64`: `scripts/build_tts_piper_bundle.sh`.)
 
-**Paso 2 — instalar en el servidor** (offline), copiando esa carpeta:
+**Paso 2 — copiar los modelos `.onnx` a `models/`** (NO son wheels, ~120 MB):
+
+```
+models/jgkawell--jarvis/jarvis-medium.onnx           (+ .onnx.json)   # EN
+models/es_MX-gevy/es_MX-gevy-10196-epoch-high.onnx   (+ .onnx.json)   # ES
+```
+
+Descarga (si hay internet en la máquina que arma el bundle):
+- EN: `https://huggingface.co/jgkawell/jarvis` → `en/en_GB/jarvis/medium/jarvis-medium.onnx(.json)`
+- ES: `https://huggingface.co/spaces/HirCoir/Piper-TTS-Spanish` → `es_MX-gevy-10196-epoch-high.onnx(.json)`
+
+**Paso 3 — instalar en el servidor** (offline), copiando el bundle:
 
 ```powershell
-pip install --no-index --find-links jarvis_news_tts_wheels -r src/jarvis_news/requirements-tts.txt
+pip install --no-index --find-links jarvis_news_piper_wheels -r src/jarvis_news/requirements-tts-piper.txt
 ```
 
-**Paso 3 — activar en el `.env`:**
+**Paso 4 — activar en el `.env`:**
 
 ```ini
 BANKS_TTS_ENABLED=true
-BANKS_TTS_ENGINE=sapi          # default; voz del SO + efecto DSP JARVIS
+BANKS_TTS_ENGINE=piper
+# rutas por defecto (override opcional):
+# BANKS_TTS_MODEL=jgkawell--jarvis/jarvis-medium.onnx
+# BANKS_TTS_MODEL_ES=es_MX-gevy/es_MX-gevy-10196-epoch-high.onnx
 ```
 
-### Alternativa: motor neural `piper` (solo EN, ~60 MB)
+### Fallback `sapi` (sin modelos, ~15 MB)
+
+```powershell
+.\scripts\build_tts_bundle.ps1           # → jarvis_news_tts_wheels\
+pip install --no-index --find-links jarvis_news_tts_wheels -r src/jarvis_news/requirements-tts.txt
+```
 
 ```ini
-BANKS_TTS_ENGINE=piper
-# BANKS_TTS_MODEL=jgkawell--jarvis/jarvis-medium.onnx
-```
-
-```bash
-pip install piper-tts
-# descargar jgkawell/jarvis (jarvis-medium.onnx + .onnx.json) a models/jgkawell--jarvis/
+BANKS_TTS_ENABLED=true
+BANKS_TTS_ENGINE=sapi          # voz del SO + efecto DSP JARVIS
 ```
 
 ---
@@ -127,8 +149,9 @@ curl -s -XPOST localhost:8080/v1/tts -H 'content-type: application/json' \
 | Variable | Default | Qué hace |
 |---|---|---|
 | `BANKS_TTS_ENABLED` | `false` | `true` para habilitar el audio (voz JARVIS) |
-| `BANKS_TTS_ENGINE` | `sapi` | `sapi` (voz del SO + DSP, sin modelos) o `piper` (neural) |
-| `BANKS_TTS_MODEL` | `jgkawell--jarvis/...` | Modelo `.onnx` (solo si `engine=piper`) |
+| `BANKS_TTS_ENGINE` | `sapi` | `piper` (neural, JARVIS auténtico — recomendado) o `sapi` (voz del SO + DSP, sin modelos) |
+| `BANKS_TTS_MODEL` | `jgkawell--jarvis/jarvis-medium.onnx` | Modelo `.onnx` de la voz **EN** (solo `engine=piper`) |
+| `BANKS_TTS_MODEL_ES` | `es_MX-gevy/es_MX-gevy-10196-epoch-high.onnx` | Modelo `.onnx` de la voz **ES** (solo `engine=piper`) |
 | `BANKS_LLM_*` | — | El LLM que sintetiza el reporte y traduce a EN |
 | `BANKS_SYNTHESIS_MAX_TOKENS` | `4096` | Tope de tokens del reporte / traducción |
 
