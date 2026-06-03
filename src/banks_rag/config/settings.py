@@ -54,11 +54,48 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.2
     llm_top_p: float = 0.9
     llm_max_tokens: int = 2048
+    # Presupuesto de tokens de la RESPUESTA FINAL (síntesis). Mayor que
+    # llm_max_tokens porque integra los análisis de varios especialistas; con
+    # 2048 se truncaba. No infla los pasos intermedios (que usan llm_max_tokens).
+    synthesis_max_tokens: int = 4096
+
+    # ── Reranker (cross-encoder de segunda pasada en search_documents) ────────
+    rerank_enabled: bool = True   # BANKS_RERANK_ENABLED
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"  # BANKS_RERANK_MODEL
+
+    # ── TTS (texto→audio; voz JARVIS) ─────────────────────────────────────────
+    tts_enabled: bool = False     # BANKS_TTS_ENABLED
+    # Motor: "sapi" (voz del SO + efecto DSP JARVIS, SIN modelos) o "piper"
+    # (modelo neural jgkawell/jarvis, mejor calidad pero descarga ~60MB).
+    tts_engine: str = "sapi"      # BANKS_TTS_ENGINE
+    # Solo para engine="piper": ruta al .onnx (relativa a models/ o absoluta).
+    tts_model: str = "jgkawell--jarvis/jarvis-medium.onnx"  # BANKS_TTS_MODEL
 
     # ── Agente ───────────────────────────────────────────────────────────────
     max_agent_iterations: int = 6
     max_tool_result_tokens: int = 1500
-    history_max_turns: int = 10
+    # Máximo de MENSAJES de historial que se pasan al LLM (memoria conversacional
+    # del chatbot). BANKS_HISTORY_MAX_TURNS. Cabe holgado en N_CTX; subir para que
+    # el chatbot recuerde conversaciones más largas (ojo: prompt+salida <= N_CTX).
+    history_max_turns: int = 40
+    # Control del modo "thinking" de Qwen3 (soft switch /no_think):
+    #   off      → sin thinking en ningún componente (mínima latencia).
+    #   adaptive → thinking SOLO en especialistas multi-paso (cuantitativos),
+    #              donde el razonamiento más rinde; sin thinking en documentales
+    #              ni en la síntesis. Default (mejor balance latencia/calidad).
+    #   on       → thinking en todo (máxima calidad, máxima latencia).
+    thinking_mode: Literal["off", "adaptive", "on"] = "adaptive"
+
+    # ── Análisis de documentos adjuntos (modo upload, map-reduce) ────────────
+    # Cuando el turno trae un PDF/archivo adjunto, el agente NO rutea a los
+    # especialistas de mercado: corre un flujo dedicado de analista de documento
+    # que lee el archivo ENTERO por lotes (map) y consolida (reduce). Estos
+    # parámetros controlan ese flujo.
+    upload_analysis_max_tokens: int = 4096   # output del REDUCE (respuesta final)
+    upload_map_batch_tokens: int = 3500      # texto del doc por lote del MAP
+    upload_map_max_tokens: int = 1024        # output de cada análisis parcial
+    upload_max_map_batches: int = 24         # techo de lotes (docs gigantes)
+    upload_max_visuals: int = 6              # gráficos del PDF a mostrar en la UI
 
     # ── API ──────────────────────────────────────────────────────────────────
     api_host: str = "0.0.0.0"

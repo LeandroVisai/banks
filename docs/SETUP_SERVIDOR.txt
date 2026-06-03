@@ -14,11 +14,24 @@ NO del .env  ->  fijarlas en PowerShell o en run_local_cpu.ps1 (ver sección 4).
 # ---- .env para el SERVIDOR H100 (modelo de producción 27B-Q4) -------------
 BANKS_LLM_FAMILY=qwen
 BANKS_LLM_MODEL_PATH=unsloth--Qwen3.6-27B-GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
-BANKS_LLM_N_CTX=16384
+BANKS_LLM_N_CTX=50000               # ventana de contexto. El modelo entrena con
+                                     # 262144; 50000 da holgura para RAG y cabe en
+                                     # la H100. KV cache ~ lineal con N_CTX (más
+                                     # N_CTX = más VRAM); subir a 200000 cabe pero
+                                     # no aporta para RAG (prompts reales ~6-10K).
 BANKS_LLM_N_GPU_LAYERS=-1
 BANKS_LLM_TEMPERATURE=0.2
-BANKS_LLM_MAX_TOKENS=2048
+BANKS_LLM_MAX_TOKENS=2048            # tokens por paso intermedio (especialistas)
+BANKS_SYNTHESIS_MAX_TOKENS=10000     # tokens de la RESPUESTA FINAL. Es un TOPE
+                                     # (el modelo para al terminar); respuestas
+                                     # muy largas tardan más. prompt+salida <= N_CTX.
 BANKS_MAX_AGENT_ITERATIONS=6
+BANKS_HISTORY_MAX_TURNS=40           # memoria del chatbot: nº de mensajes de la
+                                     # conversación que se pasan al LLM. Subir para
+                                     # recordar más (usa el N_CTX grande). prompt+salida<=N_CTX
+BANKS_RERANK_ENABLED=false           # NO tenemos bge-reranker-v2-m3; apagado para
+                                     # no intentar cargarlo. Cuando exista el modelo,
+                                     # poner true (o BANKS_RERANK_MODEL=<dir en models/>)
 BANKS_LOG_LEVEL=INFO
 
 # ---- .env para el PC DEV (RTX 3080 10GB; el 27B-Q4 NO cabe -> 7B) ---------
@@ -136,4 +149,28 @@ Qué esperar:
     el tamaño del modelo (alucina ids/columnas), NO la infra. La consultabilidad
     de los 107 parquets y el routing por especialista están validados de forma
     determinista (sin LLM).
+==============================================================================
+
+------------------------------------------------------------------------------
+ 7) GENERADOR DE NOTICIAS JARVIS  (paquete aislado src/jarvis_news/)
+------------------------------------------------------------------------------
+Lee un JSON de data_pipeline/Noticias_scrapping/ y genera el reporte del día
+(texto) y, opcional, un audio con voz JARVIS en ES y EN. Reusa el LLM del .env.
+
+  >>> Guía completa en docs/SETUP_JARVIS.md  (instalación offline, .env, API,
+      roadmap de integración al agente). Resumen rápido:
+
+  # Solo texto (al JSON más reciente):
+  python scripts/jarvis_news_report.py --top-n 30 --out data/news_reports
+  # Texto + AUDIO (voz JARVIS en ES y EN):
+  python scripts/jarvis_news_report.py --audio
+
+AUDIO — motor por defecto 'sapi' (SIN modelos descargados, EN + ES):
+  voz del SO (SAPI) + efecto DSP JARVIS (numpy). Bundle offline + activar:
+    .\scripts\build_tts_bundle.ps1          # → jarvis_news_tts_wheels\ (~15 MB)
+    pip install --no-index --find-links jarvis_news_tts_wheels -r src/jarvis_news/requirements-tts.txt
+    # .env:  BANKS_TTS_ENABLED=true   BANKS_TTS_ENGINE=sapi
+
+  El LLM es serializado: el reporte (map-reduce) compite con el chat. Conviene
+  correrlo fuera de horario / por tarea programada. Detalles → SETUP_JARVIS.md
 ==============================================================================

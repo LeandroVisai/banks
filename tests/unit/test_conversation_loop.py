@@ -35,6 +35,9 @@ class _MockLLM:
             "messages": [dict(m) for m in messages],
             "n_messages": len(messages),
             "tools": tools,
+            "max_tokens": kwargs.get("max_tokens"),
+            "temperature": kwargs.get("temperature"),
+            "top_p": kwargs.get("top_p"),
         })
         if not self.responses:
             return GenerationResult(text="default", n_tokens=5)
@@ -143,6 +146,131 @@ class TestRunAgent:
         assert llm.calls[0]["messages"][1]["content"] == "¿DV01 de las AFP?"
         # Llamada 1 = síntesis: SIN tools.
         assert llm.calls[1]["tools"] is None
+
+    @pytest.mark.asyncio
+    async def test_thinking_mode_adaptive_quant_thinks_synthesis_does_not(self) -> None:
+        """adaptive: el especialista cuantitativo (afp) razona (sin /no_think);
+        la síntesis no (con /no_think)."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="DV01 reciente.", n_tokens=8),    # subagente afp
+            GenerationResult(text="Respuesta final.", n_tokens=6),  # síntesis
+        ])
+        await run_agent("¿DV01 de las AFP?", history=[], llm=llm, thinking_mode="adaptive")
+        afp_system = llm.calls[0]["messages"][0]["content"]
+        synth_system = llm.calls[1]["messages"][0]["content"]
+        assert "/no_think" not in afp_system     # cuant razona
+        assert synth_system.endswith("/no_think")  # síntesis no
+
+    @pytest.mark.asyncio
+    async def test_attachments_context_injected(self) -> None:
+        """El contenido adjunto se inyecta en el task del especialista y en la síntesis."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="análisis del especialista", n_tokens=5),
+            GenerationResult(text="respuesta final", n_tokens=5),
+        ])
+        await run_agent(
+            "¿DV01 de las AFP?", history=[], llm=llm,
+            attachments_context="--- Datos adjuntos: x.csv ---\nFecha,Cobre\n2026-05-20,624.9",
+        )
+        # Llamada 0 = especialista: ve el adjunto en su task.
+        afp_task = llm.calls[0]["messages"][1]["content"]
+        assert "CONTENIDO ADJUNTO" in afp_task and "624.9" in afp_task
+        # Última llamada = síntesis: también ve el adjunto.
+        synth_user = llm.calls[-1]["messages"][-1]["content"]
+        assert "CONTENIDO ADJUNTO" in synth_user
+
+    @pytest.mark.asyncio
+    async def test_specialist_analyses_captured_outside_response(self) -> None:
+        """El razonamiento de los especialistas va en specialist_analyses (para el
+        log), NO en la respuesta (que es solo la síntesis)."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="análisis afp detallado", n_tokens=5),
+            GenerationResult(text="Respuesta sintetizada para el usuario.", n_tokens=5),
+        ])
+        result = await run_agent("¿DV01 de las AFP?", history=[], llm=llm)
+        assert result.response == "Respuesta sintetizada para el usuario."
+        assert len(result.specialist_analyses) == 1
+        assert result.specialist_analyses[0]["key"] == "afp"
+        assert result.specialist_analyses[0]["analysis"] == "análisis afp detallado"
+
+    @pytest.mark.asyncio
+    async def test_synthesis_never_thinks_even_in_on_mode(self) -> None:
+        """En modo 'on' los especialistas razonan, pero la síntesis NO (su system
+        prompt de síntesis no lleva el preámbulo de thinking)."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="análisis", n_tokens=5),
+            GenerationResult(text="final", n_tokens=5),
+        ])
+        await run_agent("¿DV01 de las AFP?", history=[], llm=llm, thinking_mode="on")
+        # La síntesis lleva /no_think (no razona) aun en modo on.
+        synth_system = llm.calls[-1]["messages"][0]["content"]
+        assert "/no_think" in synth_system
+
+    @pytest.mark.asyncio
+    async def test_mode_off_is_a_fast_profile(self) -> None:
+        """'Rápido' (off) = perfil completo: 1 especialista, sampling no-thinking
+        (temp 0.4, top_p 0.8), aunque la consulta rutee a varios dominios."""
+        llm = _MockLLM(responses=[GenerationResult(text="a", n_tokens=1) for _ in range(6)])
+        # Consulta cross-domain (rutearía a 2-3 especialistas).
+        await run_agent("compara la postura del Consejo con la curva BTP", history=[],
+                        llm=llm, thinking_mode="off")
+        # La 1ª llamada es un especialista (no la síntesis).
+        spec_call = llm.calls[0]
+        assert spec_call["temperature"] == 0.4 and spec_call["top_p"] == 0.80
+
+    @pytest.mark.asyncio
+    async def test_mode_on_uses_qwen_thinking_sampling(self) -> None:
+        """'Profundo' (on) usa el sampling de thinking de Qwen3 (temp 0.6, top_p 0.95)."""
+        llm = _MockLLM(responses=[GenerationResult(text="a", n_tokens=1) for _ in range(8)])
+        await run_agent("¿DV01 de las AFP?", history=[], llm=llm, thinking_mode="on")
+        assert llm.calls[0]["temperature"] == 0.6 and llm.calls[0]["top_p"] == 0.95
+
+    @pytest.mark.asyncio
+    async def test_synthesis_sampling_is_deterministic(self) -> None:
+        """La síntesis usa sampling fijo determinista (temp 0.3, top_p 0.8),
+        independiente del modo (es la respuesta final, debe ser fiel)."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="análisis", n_tokens=1),
+            GenerationResult(text="respuesta final", n_tokens=1),
+        ])
+        await run_agent("¿DV01 de las AFP?", history=[], llm=llm, thinking_mode="on")
+        synth_call = llm.calls[-1]
+        assert synth_call["temperature"] == 0.3 and synth_call["top_p"] == 0.8
+
+    @pytest.mark.asyncio
+    async def test_synthesis_uses_larger_token_budget(self) -> None:
+        """La síntesis usa synthesis_max_tokens (mayor); el especialista, el normal."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="análisis", n_tokens=5),
+            GenerationResult(text="respuesta final", n_tokens=5),
+        ])
+        await run_agent(
+            "¿DV01 de las AFP?", history=[], llm=llm,
+            max_tokens=2048, synthesis_max_tokens=4096,
+        )
+        assert llm.calls[0]["max_tokens"] == 2048    # especialista
+        assert llm.calls[-1]["max_tokens"] == 4096   # síntesis (presupuesto propio)
+
+    @pytest.mark.asyncio
+    async def test_no_attachments_no_injection(self) -> None:
+        """Sin adjuntos, el task del especialista es la pregunta limpia."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="análisis", n_tokens=5),
+            GenerationResult(text="final", n_tokens=5),
+        ])
+        await run_agent("¿DV01 de las AFP?", history=[], llm=llm)
+        assert "CONTENIDO ADJUNTO" not in llm.calls[0]["messages"][1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_thinking_mode_off_everywhere(self) -> None:
+        """off: ni el especialista ni la síntesis razonan."""
+        llm = _MockLLM(responses=[
+            GenerationResult(text="DV01 reciente.", n_tokens=8),
+            GenerationResult(text="Respuesta final.", n_tokens=6),
+        ])
+        await run_agent("¿DV01 de las AFP?", history=[], llm=llm, thinking_mode="off")
+        assert llm.calls[0]["messages"][0]["content"].endswith("/no_think")
+        assert llm.calls[1]["messages"][0]["content"].endswith("/no_think")
 
     @pytest.mark.asyncio
     async def test_multi_domain_runs_specialists_in_parallel(self) -> None:
@@ -271,6 +399,28 @@ class TestRunSubagent:
         assert sub.iterations == 1
         assert state.tool_trace == []
 
+    @pytest.mark.asyncio
+    async def test_think_false_injects_no_think(self, clean_registry) -> None:
+        """think=False anexa /no_think al system prompt del especialista."""
+        spec = SubAgentSpec(
+            key="tester", display_name="X",
+            system_prompt="Eres un analista de prueba.", tool_names=(),
+        )
+        llm = _MockLLM(responses=[GenerationResult(text="ok", n_tokens=3)])
+        await run_subagent(spec, "t", llm=llm, state=AgentState(), think=False)
+        system_msg = llm.calls[0]["messages"][0]["content"]
+        assert system_msg.endswith("/no_think")
+
+    @pytest.mark.asyncio
+    async def test_think_true_no_directive(self, clean_registry) -> None:
+        spec = SubAgentSpec(
+            key="tester", display_name="X",
+            system_prompt="Eres un analista de prueba.", tool_names=(),
+        )
+        llm = _MockLLM(responses=[GenerationResult(text="ok", n_tokens=3)])
+        await run_subagent(spec, "t", llm=llm, state=AgentState(), think=True)
+        assert "/no_think" not in llm.calls[0]["messages"][0]["content"]
+
 
 @pytest.mark.unit
 class TestFormatChunksSeen:
@@ -348,6 +498,61 @@ class TestFormatChunksSeen:
 
         assert calls["n"] == 1            # dispatch real solo la primera vez
         assert sub.analysis == "Listo, sin más datos."
+
+    @pytest.mark.asyncio
+    async def test_last_iteration_injects_synthesis_nudge(self, clean_registry) -> None:
+        """Consolidación: en la última iteración se inyecta el nudge (sin tools) y
+        el especialista redacta con la evidencia reunida en vez de agotar sin
+        concluir (caso cobre: tenía stats pero entregaba un 'plan')."""
+        from banks_rag.application.agent.prompts import FINAL_SYNTHESIS_NUDGE
+
+        @register("get_series_stats", {
+            "type": "function",
+            "function": {"name": "get_series_stats", "description": "x",
+                         "parameters": {"type": "object", "properties": {}}},
+        })
+        async def _stats(state, **kw):
+            return {"mean": 1.73, "max": 2.08, "last": 1.76}
+
+        spec = SubAgentSpec(
+            key="liquidez", display_name="Analista de Liquidez y Balance",
+            system_prompt="Eres un analista de prueba.",
+            tool_names=("get_series_stats",),
+        )
+        llm = _MockLLM(responses=[
+            GenerationResult(text="", tool_calls=[
+                ToolCall(id="c1", name="get_series_stats", arguments={"q": "a"})], n_tokens=5),
+            GenerationResult(text="", tool_calls=[
+                ToolCall(id="c2", name="get_series_stats", arguments={"q": "b"})], n_tokens=5),
+            GenerationResult(text="El LCR más reciente es 1,76 (al 12-may-2026).", n_tokens=10),
+        ])
+        state = AgentState()
+        sub = await run_subagent(spec, "LCR del sistema", llm=llm, state=state, max_iterations=3)
+
+        # Consolidó con la evidencia (no es el fallback de max_iterations).
+        assert "1,76" in sub.analysis
+        assert sub.finish_reason != "max_iterations"
+        # El nudge se inyectó en la última llamada, que NO ofreció tools.
+        last_msgs = llm.calls[-1]["messages"]
+        assert any(FINAL_SYNTHESIS_NUDGE in (m.get("content") or "") for m in last_msgs)
+        assert llm.calls[-1]["tools"] is None
+
+    @pytest.mark.asyncio
+    async def test_synthesis_nudge_not_injected_on_single_iteration(self, clean_registry) -> None:
+        """Con max_iterations=1 (is_last en la iter 1) NO se inyecta el nudge:
+        no hubo ronda de tools previa que consolidar."""
+        from banks_rag.application.agent.prompts import FINAL_SYNTHESIS_NUDGE
+
+        spec = SubAgentSpec(
+            key="afp", display_name="X",
+            system_prompt="Eres un analista de prueba.",
+            tool_names=(),
+        )
+        llm = _MockLLM(responses=[GenerationResult(text="Respuesta directa.", n_tokens=5)])
+        await run_subagent(spec, "tarea", llm=llm, state=AgentState(), max_iterations=1)
+
+        first_msgs = llm.calls[0]["messages"]
+        assert not any(FINAL_SYNTHESIS_NUDGE in (m.get("content") or "") for m in first_msgs)
 
     @pytest.mark.asyncio
     async def test_subagent_figures_without_evidence_are_discarded(self, clean_registry) -> None:

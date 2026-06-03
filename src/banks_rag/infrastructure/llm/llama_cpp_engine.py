@@ -37,20 +37,48 @@ log = logging.getLogger(__name__)
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
-_CHAT_FORMAT_BY_FAMILY = {
-    "qwen": "chatml",
-    "gemma": "gemma",
-}
+
+def _strip_think(raw_text: str) -> str:
+    """Quita el razonamiento (thinking) del texto entregado al usuario.
+
+    Dos casos:
+      1. Bloque cerrado ``<think>...</think>`` — formato clásico.
+      2. **Cierre colgante** ``...razonamiento... </think> respuesta`` SIN apertura:
+         es lo que emite Qwen3 con su plantilla nativa del GGUF, porque el
+         template ya inyecta ``<think>`` al final del prompt, así que el modelo
+         arranca DENTRO del bloque y solo emite el ``</think>`` de cierre. Sin
+         este caso, todo el chain-of-thought (a menudo en inglés) se filtraba a
+         la respuesta final.
+    """
+    text = _THINK_RE.sub("", raw_text)
+    if "<think>" not in text and "</think>" in text:
+        text = text.split("</think>", 1)[-1]
+    return text.strip()
 
 
-def _detect_chat_format(model_path: str) -> str:
-    """Infiere el chat format desde el nombre del archivo GGUF (solo basename)."""
+def _detect_family(model_path: str) -> str:
+    """Infiere la familia del modelo desde el nombre del GGUF (solo basename).
+
+    Devuelve ``"gemma"`` o ``"qwen"`` (este último es también el default para
+    cualquier modelo ChatML-compatible). La familia decide CÓMO se construye el
+    prompt:
+
+    - ``qwen``  → se usa la **plantilla de chat embebida en el GGUF**
+      (``chat_format=None`` al construir ``Llama``). Qwen3 trae en su metadata
+      el template entrenado para tool-calling: renderiza ``tools``, los
+      ``tool_calls`` del assistant y los resultados (rol ``tool``) como
+      ``<tool_response>``. El ``chatml`` genérico de llama-cpp NO hace esto
+      (ignora ``tools`` y no re-inyecta los resultados en el formato que Qwen
+      reconoce), por lo que el modelo no "veía" lo que devolvían las tools y
+      repetía la misma llamada sin avanzar (p. ej. ``discover_query`` en bucle
+      sin llegar nunca a ``execute_query``).
+    - ``gemma`` → aplanado manual a la alternancia user/model (ver
+      ``_flatten_for_gemma`` y ``_sync_generate``).
+    """
     p = Path(model_path).name.lower()
     if "gemma" in p:
         return "gemma"
-    if "qwen" in p:
-        return "chatml"
-    return "chatml"
+    return "qwen"
 
 
 def _parse_args(raw: str | dict) -> dict:
@@ -161,8 +189,9 @@ class LlamaCppEngine:
         n_gpu_layers: capas a offloadear en GPU; ``-1`` = todas (H100).
         temperature, top_p, max_tokens: defaults de generación (sobreescribibles
             por llamada en ``generate()``).
-        chat_format: ``"chatml"`` (Qwen3) o ``"gemma"``; ``None`` = auto-detect
-            desde el nombre del archivo.
+        family: ``"qwen"`` o ``"gemma"``; ``None`` = auto-detect desde el nombre
+            del archivo. Qwen usa la plantilla nativa del GGUF (tool-calling
+            correcto); ver ``_detect_family``.
         n_threads: workers del ThreadPoolExecutor (default 1; llama.cpp usa
             internamente sus propios threads para inferencia).
     """
@@ -176,7 +205,7 @@ class LlamaCppEngine:
         temperature: float = 0.2,
         top_p: float = 0.9,
         max_tokens: int = 2_048,
-        chat_format: str | None = None,
+        family: str | None = None,
         n_threads: int = 1,
     ) -> None:
         self.model_path = model_path
@@ -186,7 +215,7 @@ class LlamaCppEngine:
         self._temperature = temperature
         self._top_p = top_p
         self._max_tokens = max_tokens
-        self._chat_format = chat_format or _detect_chat_format(model_path)
+        self._family = family or _detect_family(model_path)
         self._model: Any = None
         # Una sola instancia del modelo no es concurrente: con n_threads=1
         # las requests a /v1/chat se serializan en este executor. Es el
@@ -253,19 +282,24 @@ class LlamaCppEngine:
         if not path.exists():
             raise FileNotFoundError(f"Modelo GGUF no encontrado: {self.model_path}")
 
+        # Qwen → chat_format=None: llama-cpp usa la plantilla embebida en el GGUF
+        # (tool-calling nativo: tools, tool_calls y resultados con <tool_response>).
+        # Gemma → "gemma" (la conversación igual se aplana en _sync_generate).
+        llama_chat_format = None if self._family == "qwen" else "gemma"
         log.info(
-            "Cargando %s (n_ctx=%d, n_gpu_layers=%d, chat_format=%s)",
+            "Cargando %s (n_ctx=%d, n_gpu_layers=%d, family=%s, chat_format=%s)",
             self.name,
             self._n_ctx,
             self._n_gpu_layers,
-            self._chat_format,
+            self._family,
+            llama_chat_format or "GGUF-template",
         )
         t0 = time.monotonic()
         self._model = Llama(
             model_path=str(path),
             n_ctx=self._n_ctx,
             n_gpu_layers=self._n_gpu_layers,
-            chat_format=self._chat_format,
+            chat_format=llama_chat_format,
             verbose=False,
         )
         self.loaded = True
@@ -321,7 +355,7 @@ class LlamaCppEngine:
         # Gemma no soporta roles system/tool ni tool calling nativo confiable:
         # se aplana la conversación y las tools se inyectan como texto, dejando
         # que parse_tool_calls extraiga las <tool_call> de la respuesta.
-        if self._chat_format == "gemma":
+        if self._family == "gemma":
             effective_messages = _flatten_for_gemma(messages, tools)
             effective_tools = None
         else:
@@ -352,8 +386,9 @@ class LlamaCppEngine:
         n_tokens: int = response.get("usage", {}).get("completion_tokens", 0)
         raw_text: str = message.get("content") or ""
 
-        # Qwen3 thinking mode: eliminar bloque <think> del texto entregado
-        cleaned = _THINK_RE.sub("", raw_text).strip()
+        # Qwen3 thinking mode: eliminar el razonamiento del texto entregado
+        # (bloque cerrado o cierre colgante de la plantilla nativa).
+        cleaned = _strip_think(raw_text)
 
         # 1. Native tool calls (llama-cpp structured output)
         native_calls: list[dict] = message.get("tool_calls") or []
@@ -425,7 +460,7 @@ class LlamaCppEngine:
             "loaded": self.loaded,
             "n_ctx": self._n_ctx,
             "n_gpu_layers": self._n_gpu_layers,
-            "chat_format": self._chat_format,
+            "family": self._family,
             "temperature": self._temperature,
             "top_p": self._top_p,
             "max_tokens": self._max_tokens,

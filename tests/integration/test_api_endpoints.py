@@ -116,6 +116,113 @@ class TestChat:
         assert body["model"] == "mock-llm"
         assert "prompt_version" in body
 
+    def test_chat_accepts_long_history(self) -> None:
+        """El chatbot acepta historial largo (memoria); el backend lo recorta a
+        history_max_turns sin romper (antes el schema topaba en 40)."""
+        client, _ = _build_app()
+        history = [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg {i}"}
+            for i in range(80)
+        ]
+        response = client.post(
+            "/v1/chat",
+            json={"message": "última pregunta", "history": history},
+        )
+        assert response.status_code == 200
+
+    def test_chat_accepts_thinking_mode(self) -> None:
+        """El frontend puede enviar thinking_mode por request (off/adaptive/on)."""
+        client, _ = _build_app()
+        response = client.post(
+            "/v1/chat",
+            json={"message": "precio del cobre", "thinking_mode": "off"},
+        )
+        assert response.status_code == 200
+
+    def test_chat_rejects_invalid_thinking_mode(self) -> None:
+        client, _ = _build_app()
+        response = client.post(
+            "/v1/chat",
+            json={"message": "hola", "thinking_mode": "turbo"},
+        )
+        assert response.status_code == 422
+
+    def test_upload_csv_then_chat_with_attachment(self, tmp_path, monkeypatch) -> None:
+        """Sube un CSV (contexto efímero) y lo referencia en /v1/chat."""
+        import base64
+
+        import banks_rag.infrastructure.uploads.upload_store as store
+        monkeypatch.setattr(store, "DATA_UPLOADS_DIR", tmp_path / "uploads")
+
+        client, _ = _build_app()
+        csv_b64 = base64.b64encode(b"Fecha,Cobre\n2026-05-20,624.9\n").decode()
+        up = client.post("/v1/upload", json={"filename": "cobre.csv", "content_base64": csv_b64})
+        assert up.status_code == 200
+        body = up.json()
+        assert body["kind"] == "table"
+        assert body["upload_id"].startswith("up_")
+
+        chat = client.post(
+            "/v1/chat",
+            json={"message": "analiza estos datos", "attachments": [body["upload_id"]]},
+        )
+        assert chat.status_code == 200
+
+    def test_upload_rejects_bad_base64(self) -> None:
+        client, _ = _build_app()
+        r = client.post("/v1/upload", json={"filename": "x.csv", "content_base64": "!!!notb64!!!"})
+        assert r.status_code == 400
+
+    def test_upload_rejects_unsupported_type(self, tmp_path, monkeypatch) -> None:
+        import base64
+
+        import banks_rag.infrastructure.uploads.upload_store as store
+        monkeypatch.setattr(store, "DATA_UPLOADS_DIR", tmp_path / "uploads")
+
+        client, _ = _build_app()
+        b64 = base64.b64encode(b"MZ\x00binary").decode()
+        r = client.post("/v1/upload", json={"filename": "virus.exe", "content_base64": b64})
+        assert r.status_code == 400
+
+    def test_news_report_endpoint(self, tmp_path, monkeypatch) -> None:
+        """/v1/news-report genera el reporte del JSON más reciente."""
+        import json as _json
+
+        import jarvis_news.report as report
+        monkeypatch.setattr(report, "NEWS_SCRAPING_DIR", tmp_path)
+        (tmp_path / "n.json").write_text(_json.dumps([
+            {"topic": "Banco Central", "audience": "100,00K", "title": "x", "text": "y"},
+        ]), encoding="utf-8")
+
+        client, _ = _build_app()
+        r = client.post("/v1/news-report", json={"top_n": 5})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["n_total"] == 1 and body["source_file"] == "n.json"
+        assert isinstance(body["report"], str) and body["report"]
+
+    def test_news_report_404_when_no_files(self, tmp_path, monkeypatch) -> None:
+        import jarvis_news.report as report
+        monkeypatch.setattr(report, "NEWS_SCRAPING_DIR", tmp_path / "vacio")
+        client, _ = _build_app()
+        r = client.post("/v1/news-report", json={})
+        assert r.status_code == 404
+
+    def test_tts_disabled_returns_503(self, monkeypatch) -> None:
+        """Con BANKS_TTS_ENABLED=false (default), /v1/tts responde 503 claro."""
+        from banks_rag.config import override_settings, reset_settings
+        from banks_rag.config.settings import Settings
+        import jarvis_news.tts as tts
+        tts.reset_default_tts()
+        override_settings(Settings(tts_enabled=False))
+        try:
+            client, _ = _build_app()
+            r = client.post("/v1/tts", json={"text": "hola", "translate_to_en": False})
+            assert r.status_code == 503
+        finally:
+            reset_settings()
+            tts.reset_default_tts()
+
     def test_chat_returns_503_when_llm_unloaded(self) -> None:
         deps = AppState()
         deps.llm = None

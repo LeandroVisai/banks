@@ -55,26 +55,44 @@ class AgentState:
         self.chunk_id_to_ref[cid] = ref
         return ref
 
-    def add_chart(self, chart: dict) -> int:
-        """Registra un gráfico (spec Vega-Lite + metadata) y retorna su id 1-based.
+    def add_series(
+        self,
+        series_id: str,
+        meta: dict,
+        rows: list[dict],
+        *,
+        chart_type: str | None = None,
+    ) -> None:
+        """Registra una serie consultada para que el frontend la grafique.
 
-        El frontend renderiza ``chart['spec']``; el LLM describe el gráfico en
-        prosa. No comparte el espacio de refs [N] de los chunks.
-        """
-        chart_id = len(self.charts) + 1
-        self.charts.append({"id": chart_id, **chart})
-        return chart_id
+        Cada fila puede ser:
+          - **temporal**: ``{"date": ..., "value": ...}`` → eje X de fechas;
+          - **categórica**: ``{"category": "BTP", "value": ...}`` → eje X de
+            etiquetas (composiciones, cortes transversales).
 
-    def add_series(self, series_id: str, meta: dict, rows: list[dict]) -> None:
-        """Registra una serie consultada. ``rows`` debe tener key ``date`` por fila."""
+        Solo las filas con ``value`` numérico producen ``points``
+        ``[[x, value], ...]`` (``x`` = ISO date o etiqueta). Se capan a
+        ``MAX_SERIES_POINTS`` para no inflar el payload.
+
+        ``chart_type`` (``"line"``/``"area"``/``"bar"``/``"grouped_bar"``) lo fija
+        el llamador o, si es ``None``, lo infiere :func:`infer_chart_type` según
+        la forma del dato (temporal → ``line``; categórico → ``bar``). El frontend
+        respeta este tipo en vez de graficar todo como línea."""
+        points, x_is_date = _extract_points(rows)
+        if chart_type is None:
+            chart_type = infer_chart_type(points, x_is_date=x_is_date)
+        first_date = _isoformat(rows[0].get("date")) if (x_is_date and rows) else None
+        last_date = _isoformat(rows[-1].get("date")) if (x_is_date and rows) else None
         self.series_used[series_id] = {
             "series_id": series_id,
             "series_name": meta.get("series_name") or meta.get("name", ""),
             "unit": meta.get("unit", ""),
             "frequency": meta.get("frequency", ""),
             "n_observations": len(rows),
-            "first_date": _isoformat(rows[0]["date"]) if rows else None,
-            "last_date": _isoformat(rows[-1]["date"]) if rows else None,
+            "first_date": first_date,
+            "last_date": last_date,
+            "chart_type": chart_type,
+            "points": points,
         }
 
     def add_tool_call_trace(
@@ -109,3 +127,59 @@ def _isoformat(value) -> str | None:
     if callable(iso):
         return iso()
     return str(value)
+
+
+# Tope de puntos por serie en la respuesta: suficiente para un gráfico, evita
+# payloads enormes. Si la serie excede, se conservan los más recientes.
+MAX_SERIES_POINTS = 500
+
+# Mínimo de puntos temporales para que una línea tenga sentido. Por debajo de
+# esto (1-2 cifras), una serie temporal se grafica mejor como barra.
+_MIN_LINE_POINTS = 3
+
+
+def infer_chart_type(points: list[list], *, x_is_date: bool) -> str:
+    """Clasificador determinista del tipo de gráfico según la forma del dato.
+
+    No todo es una línea: el eje X categórico (composiciones, cortes
+    transversales) se grafica como barra; una serie temporal con suficientes
+    puntos como línea. Pocos puntos discretos sobre un eje temporal también
+    rinden mejor como barra que como una "línea" de dos vértices.
+
+    Devuelve ``"line"`` | ``"bar"``. La distinción línea/área la resuelve el
+    frontend (usa área para una sola serie temporal por estética)."""
+    if not x_is_date:
+        return "bar"
+    if len(points) < _MIN_LINE_POINTS:
+        return "bar"
+    return "line"
+
+
+def _extract_points(rows: list[dict]) -> tuple[list[list], bool]:
+    """``([[x, value], ...], x_is_date)`` de las filas con ``value`` numérico.
+
+    ``x`` es la fecha ISO (filas con ``date``) o la etiqueta de categoría (filas
+    con ``category``, p. ej. una composición). Si alguna fila trae ``category``
+    la serie se considera categórica (``x_is_date=False``). Vacío si ninguna fila
+    tiene valor (serie no graficable)."""
+    categorical = any(
+        isinstance(r, dict) and r.get("category") is not None for r in rows
+    )
+    points: list[list] = []
+    for r in rows:
+        if "value" not in r or r["value"] is None:
+            continue
+        try:
+            value = float(r["value"])
+        except (TypeError, ValueError):
+            continue
+        if categorical:
+            cat = r.get("category")
+            x = str(cat) if cat is not None else None
+        else:
+            x = _isoformat(r.get("date"))
+        if x is not None:
+            points.append([x, value])
+    if len(points) > MAX_SERIES_POINTS:
+        points = points[-MAX_SERIES_POINTS:]
+    return points, (not categorical)

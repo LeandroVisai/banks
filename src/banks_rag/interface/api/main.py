@@ -39,7 +39,18 @@ from banks_rag.interface.api.middleware import (
     RateLimitMiddleware,
     RequestIDMiddleware,
 )
-from banks_rag.interface.api.routes import catalog, chat, health, images, kpis, search
+from banks_rag.interface.api.routes import (
+    catalog,
+    chat,
+    health,
+    images,
+    kpis,
+    search,
+    uploads,
+)
+# Paquete AISLADO del core (generador de noticias + TTS JARVIS); la app solo
+# monta su router y le presta el LLM vía app.state.deps.
+from jarvis_news.api import router as jarvis_news_router
 from banks_rag.interface.api.routes import metrics as metrics_route
 
 # Importar el paquete de tools para que el registry quede poblado.
@@ -157,6 +168,8 @@ def create_app(*, deps: AppState | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(metrics_route.router)
     app.include_router(chat.router)
+    app.include_router(uploads.router)
+    app.include_router(jarvis_news_router)   # /v1/news-report, /v1/tts (paquete aislado)
     app.include_router(search.router)
     app.include_router(images.router)
     app.include_router(catalog.router)

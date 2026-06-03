@@ -34,9 +34,42 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     message: str = Field(..., min_length=1, max_length=4000)
-    history: list[ChatMessage] = Field(default_factory=list, max_length=40)
+    # Tope alto; el backend recorta a settings.history_max_turns. Permite que el
+    # frontend envíe conversaciones largas (memoria del chatbot).
+    history: list[ChatMessage] = Field(default_factory=list, max_length=200)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=8192)
+    # Override por request del modo thinking de Qwen3. None → usa el default del
+    # servidor (settings.thinking_mode). Permite al frontend ofrecer un toggle.
+    thinking_mode: Literal["off", "adaptive", "on"] | None = None
+    # upload_ids de archivos adjuntos (POST /v1/upload). Su contenido se inyecta
+    # como contexto efímero del turno (no se indexa).
+    attachments: list[str] = Field(default_factory=list, max_length=5)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Upload (archivos adjuntos del chat — contexto efímero)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class UploadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    filename: str = Field(..., min_length=1, max_length=255)
+    # Contenido del archivo en base64 (evita depender de python-multipart).
+    # ~14 MB de base64 ≈ 10 MB de archivo (el límite real lo valida el store).
+    content_base64: str = Field(..., min_length=1, max_length=14_000_000)
+
+
+class UploadResponse(BaseModel):
+    upload_id: str
+    kind: str            # "document" | "table"
+    name: str
+    chars: int           # tamaño del texto extraído
+    truncated: bool      # True si se acotó el contenido
+    preview: str         # extracto corto para la UI
+
+# Nota: los schemas de noticias/TTS viven en el paquete aislado jarvis_news.schemas.
 
 
 class ChunkSeen(BaseModel):
@@ -63,6 +96,14 @@ class HistoricalSeriesRef(BaseModel):
     n_observations: int
     first_date: str | None
     last_date: str | None
+    # [[x, value], ...] para que el frontend grafique la serie en la respuesta.
+    # `x` es una fecha ISO (serie temporal) o una etiqueta de categoría
+    # (composición). Vacío si la serie no es numérica (no graficable).
+    points: list[list] = Field(default_factory=list)
+    # Tipo de gráfico que el frontend debe usar: "line"/"area" (temporal) o
+    # "bar"/"grouped_bar" (categórico). Lo fija el backend según la forma del
+    # dato (ver domain/agent/agent_state.infer_chart_type).
+    chart_type: str = "line"
 
 
 class ToolTraceEntry(BaseModel):
@@ -76,6 +117,16 @@ class ToolTraceEntry(BaseModel):
     agent: str = ""
 
 
+class AttachmentVisual(BaseModel):
+    """Gráfico/figura extraído de un PDF adjunto por el usuario (modo análisis
+    de documento). El frontend lo renderiza vía ``image_url``."""
+
+    caption: str | None = None
+    page: int | None = None
+    image_url: str        # /v1/uploads/{upload_id}/images/{file}
+    kind: str = "CHART"   # CHART | TABLE | IMAGE
+
+
 class ChatResponse(BaseModel):
     response: str
     iterations: int
@@ -87,6 +138,8 @@ class ChatResponse(BaseModel):
     # que el frontend lo renderice (id, dataset_id, title, chart_type, spec, ...).
     charts: list[dict] = Field(default_factory=list)
     cited_refs: list[int]
+    # Gráficos extraídos de los PDFs adjuntos (modo análisis de documento).
+    attachment_visuals: list[AttachmentVisual] = Field(default_factory=list)
     # Cifras de la respuesta sin respaldo de ninguna herramienta (grounding
     # numérico). Si no está vacío, el frontend debería marcarlas como no
     # verificadas.

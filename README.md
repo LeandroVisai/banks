@@ -20,16 +20,30 @@ Documentos (PDFs + Excel Monitor PM)
                    │
           ┌────────▼────────┐
           │ hybrid_search   │ vector + BM25 → RRF → MMR → reranker
-          └────────┬────────┘  (bge-reranker-v2-m3, opcional)
+          └────────┬────────┘  (bge-reranker-v2-m3, activo por defecto)
                    │
-      ┌────────────▼────────────┐
-      │ Agente (loop tool-call) │ LlamaCppEngine (Qwen3.6 / Gemma 4)
-      │  • search_documents     │
-      │  • search_visuals       │
-      │  • discover_query       │ ← catálogo de 23 series financieras
-      │  • execute_query        │ ← DuckDB sobre parquets offline
-      │  • add_to_context       │
-      └────────────┬────────────┘
+      ┌────────────────────────────────────────────────────────┐
+      │ Router determinista (router-v1)                        │
+      │  selecciona ≥1 especialista por vocabulario            │
+      └──────────┬─────────────────────────────────────────────┘
+                 │ despacha en paralelo
+      ┌──────────▼──────────────────────────────────────────────┐
+      │ 8 Sub-agentes especialistas (LlamaCppEngine)            │
+      │                                                         │
+      │  Mercado Cambiario (FX)  · No Residentes                │
+      │  AFP · Fondos Mutuos (FFMM)                            │
+      │  Renta Fija · Liquidez & Balance                       │
+      │  Analista Documentos · Analista Política Monetaria     │
+      │                                                         │
+      │  Tools cuantitativos: discover_query · execute_query   │
+      │    compute_variation · compute_spread                  │
+      │    compute_composition · compute_aggregate             │
+      │    get_series_stats · detect_anomaly                   │
+      │                                                         │
+      │  Tools documentales: search_documents · search_visuals │
+      │    list_documents · get_document_chunks                │
+      │    compare_meetings · get_recent_policy_decisions      │
+      └────────────┬────────────────────────────────────────────┘
                    │
           ┌────────▼────────┐
           │   FastAPI API   │ /v1/chat · /v1/search · /metrics
@@ -62,6 +76,12 @@ pip install -e ".[dev]"      # desarrollo + tests
 ```bash
 export PGHOST=localhost PGDATABASE=rag_banco PGUSER=<user> PGPASSWORD=<pass>
 export BANKS_LLM_FAMILY=mock   # o 'qwen' con BANKS_LLM_MODEL_PATH=<ruta.gguf>
+```
+
+**Windows (dev box / RTX 3080):** usar `run_local_cpu.ps1` — fija variables de entorno y levanta la API directamente.
+
+```powershell
+.\run_local_cpu.ps1
 ```
 
 ### Ingesta
@@ -97,6 +117,47 @@ PYTHONPATH=src python3 -m banks_rag.interface.api.main
 Notas:
 - La pill superior derecha pasa por `SIN CONEXIÓN → LLM CARGANDO → OK` mientras `llama-cpp` carga. Los charts del catálogo no esperan al LLM; sólo el panel "Agente IA" sí.
 - Los charts usan `/v1/query/{dataset_id}` (DuckDB sobre parquets) y los KPIs son hardcoded en `kpi.js` — no requieren PostgreSQL para renderizar.
+- Bajo el campo de chat hay un **segmented control de razonamiento** (`Rápido` / `Análisis` / `Profundo`) que el usuario elige por consulta: envía `thinking_mode` (`off`/`adaptive`/`on`) en el request; el server cae a `BANKS_THINKING_MODE` si no se especifica. Se persiste en `localStorage`.
+- El agente **grafica las series temporales** que analiza: cuando una respuesta usó datos de un parquet, debajo del texto se renderiza un mini-gráfico de área (ApexCharts) con los puntos que el agente consultó. Backend: `series_used[].points` en `/v1/chat`.
+- **Adjuntar archivos** (botón `+`): PDF/TXT/CSV/Excel se suben a `/v1/upload` (base64) y se inyectan como **contexto efímero** del turno — el agente los analiza sin indexarlos. Ver [`docs/DISENO_UPLOADS.md`](docs/DISENO_UPLOADS.md).
+- **Leer en voz** (🔊): cada respuesta tiene un botón TTS (voz del navegador, offline).
+
+### Reporte de noticias JARVIS (informe diario + audio)
+
+Paquete **aislado** `src/jarvis_news/` (separado de `banks_rag` por seguridad:
+procesa datos externos scrapeados). Analiza un JSON de noticias en
+`data_pipeline/Noticias_scrapping/` y genera un reporte estructurado con las más
+importantes del día (prioriza por tema del dominio × alcance, resume vía
+map-reduce — los ~100 artículos no caben en una sola ventana). Opcionalmente
+produce un **audio con la voz de JARVIS** en español e inglés (motor `sapi`: voz
+del SO + efecto DSP, sin descargar modelos).
+
+```bash
+# CLI: texto + audio (ES y EN)
+python scripts/jarvis_news_report.py --audio --top-n 25
+
+# API
+curl -X POST http://localhost:8080/v1/news-report \
+  -H "Content-Type: application/json" \
+  -d '{"top_n": 25}'   # json_path opcional; por defecto el más reciente
+```
+
+Tarda (varias llamadas al LLM serializado); no es un endpoint interactivo.
+Instalación, `.env`, voz JARVIS offline y roadmap de integración al agente:
+[`docs/SETUP_JARVIS.md`](docs/SETUP_JARVIS.md).
+
+### Verificación de sub-agentes
+
+```bash
+# Verifica los 8 especialistas contra el LLM del .env (local o H100)
+python scripts/verify_subagents.py
+
+# Solo un especialista
+python scripts/verify_subagents.py --subagent fx
+
+# Con techo de iteraciones
+python scripts/verify_subagents.py --max-iters 6
+```
 
 ### Evaluación
 
@@ -120,29 +181,32 @@ El pipeline auto-detecta `models/<owner>--<name>/` antes de descargar desde Hugg
 
 ---
 
-## Catálogo SQL (23 series financieras)
+## Catálogo de parquets (107 datasets)
 
-El agente consulta series del Monitor PM vía DuckDB sobre parquets offline:
+El agente consulta datos del Monitor PM vía DuckDB sobre parquets offline. Los 107 datasets están todos consultables — los 7 snapshots sin columna de fecha (`posicion_rfl_afp`, `cambiario_afp`, `attribution`, `dcv_composicion_ffmm`, `fixing_*`, `variacion_dcv_afp`) usan `build_fetch_sql` sin filtro temporal; los de serie temporal usan `date_column()` estricta para analytics.
 
-| Segmento | Queries |
+| Segmento | Descripción |
 |---|---|
-| Mercado cambiario | `usdclp_historico`, `forwards_clp_curva`, `microestructura_fx`, `indice_monedas_latam` |
-| Renta fija Chile | `curva_btp_clp`, `curva_btu_uf`, `btp_btu_comparado`, `spc_clp_curva`, `spc_uf_curva` |
-| Renta fija EEUU | `curva_ust` |
-| Tasas monetarias | `spreads_dap_swap_clp`, `pdbc_bolsa`, `tib_mercado` |
-| Tasas internacionales | `sofr_plazos`, `prime_usd_plazos`, `curva_ois_sofr`, `spread_onshore_dap_usd`, `tasas_tado` |
-| Política monetaria | `expectativas_tpm_mipr` |
-| Liquidez bancaria | `lcr_mx_bancos`, `nsfr_mx_bancos`, `ratio_liquidez_obligaciones` |
-| Commodities | `precio_cobre` |
+| `mercado_cambiario` | USD/CLP, forwards, microestructura FX, índice monedas LATAM |
+| `posiciones_cambiarias` | RFL AFP, posición cambiaria AFP, no residentes |
+| `fondos_pension` | AFP composición, FFMM composición, DCV, atribución |
+| `renta_fija_chile` | Curvas BTP/BTU, SPC CLP/UF, spreads crédito |
+| `instrumentos_bcch` | PDBC, TIB, DAP vs swap CLP |
+| `renta_fija_eeuu` | Curva UST, OIS SOFR, SOFR plazos, PRIME USD |
+| `liquidez_bancaria` | LCR/NSFR por banco, ratio liquidez/obligaciones |
+| `balance_bancario` | Depósitos, colocaciones, fixing, variación DCV |
+| `tasas_internacionales` | SOFR, PRIME, OIS, spread onshore DAP USD, TADO |
+| `politica_monetaria` | Expectativas TPM (MiPr) |
+| `commodities` | Precio cobre |
 
-Parquets en `data_pipeline/parquet/`. Esquemas (id, columnas, tipos, enums, `date_range`) en [`sql_catalog/parquet_catalog.yaml`](sql_catalog/parquet_catalog.yaml) — 107 datasets. La SQL la arma siempre la tool (`_parquet_query.build_fetch_sql`); el LLM solo elige dataset + filtros.
+Parquets en `data_pipeline/parquet/`. Esquemas completos (id, columnas, tipos, enums, `date_range`) en [`sql_catalog/parquet_catalog.yaml`](sql_catalog/parquet_catalog.yaml). La SQL la arma siempre la tool (`_parquet_query.build_fetch_sql`); el LLM solo elige `dataset_id` + filtros — nunca escribe SQL.
 
 ---
 
 ## Tests
 
 ```bash
-PYTHONPATH=src pytest tests/unit/ -q    # 498 tests, <2s, sin BD ni modelos
+PYTHONPATH=src pytest tests/unit/ -q    # 742 tests, <2s, sin BD ni modelos
 PYTHONPATH=src pytest tests/ -q         # + integración (requiere PostgreSQL)
 ```
 
@@ -162,6 +226,8 @@ PYTHONPATH=src pytest tests/ -q         # + integración (requiere PostgreSQL)
 
 Ver [`docs/DEPLOYMENT_H100.md`](docs/DEPLOYMENT_H100.md): systemd, nginx, logrotate, backup, Prometheus, troubleshooting.
 
+Para el setup inicial del runtime en el servidor (variables de entorno, venv, CUDA DLLs, activar el venv) ver [`docs/SETUP_SERVIDOR.txt`](docs/SETUP_SERVIDOR.txt).
+
 ---
 
 ## Estructura del repo
@@ -170,12 +236,18 @@ Ver [`docs/DEPLOYMENT_H100.md`](docs/DEPLOYMENT_H100.md): systemd, nginx, logrot
 banks/
 ├── src/banks_rag/
 │   ├── domain/          # dataclasses puras
-│   ├── application/     # casos de uso (ingesta, retrieval, agente, evaluación)
+│   ├── application/
+│   │   ├── agent/       # router-v1, 8 sub-agentes, tools, prompts
+│   │   ├── ingestion/   # extract → enrich → vectorize → load
+│   │   ├── retrieval/   # hybrid_search, query_parser, fusion, reranker
+│   │   └── evaluation/  # retrieval_metrics, ragas_runner, golden set
 │   ├── infrastructure/  # adaptadores (embeddings, llm, postgres, reranker, observability)
 │   └── interface/       # FastAPI + CLI
 ├── tests/
-│   ├── unit/            # 498 tests, sin BD ni modelos reales
+│   ├── unit/            # 742 tests, sin BD ni modelos reales
 │   └── integration/     # requieren PostgreSQL + pgvector
+├── scripts/
+│   └── verify_subagents.py   # verificación e2e de los 8 sub-agentes
 ├── sql_catalog/         # parquet_catalog.yaml — 107 datasets con esquema
 ├── data_pipeline/       # parquet/ — 107 datasets crudos del DW (única fuente)
 ├── data/
@@ -187,7 +259,10 @@ banks/
 │   └── grafana/         # dashboard JSON
 ├── docs/
 │   ├── REFACTOR_PLAN.md
-│   └── DEPLOYMENT_H100.md
+│   ├── DEPLOYMENT_H100.md
+│   ├── SETUP_JARVIS.md       # analizador de noticias + voz JARVIS (TTS offline)
+│   └── SETUP_SERVIDOR.txt    # guía de entorno H100 (venv, CUDA, .env)
+├── run_local_cpu.ps1    # script Windows dev box (fija env vars + levanta API)
 ├── pyproject.toml       # única fuente de deps y entry points
 └── Makefile
 ```

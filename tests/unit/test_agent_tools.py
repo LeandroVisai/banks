@@ -87,7 +87,7 @@ class TestSearchDocumentsTool:
     @pytest.mark.asyncio
     async def test_truncates_long_text(self) -> None:
         state = AgentState()
-        long_text = "x" * 1000
+        long_text = "x" * 2000
         sr = SearchResult(
             query="q", clean_query="q",
             hits=[{
@@ -107,11 +107,16 @@ class TestSearchDocumentsTool:
                 "banks_rag.application.agent.tools.search_documents.build_default_embedder",
                 return_value=type("E", (), {"name": "fake"})(),
             ),
+            patch(
+                "banks_rag.application.agent.tools.search_documents.build_default_reranker",
+                return_value=None,
+            ),
             patch("banks_rag.application.agent.tools.search_documents.PostgresRepo"),
         ):
             result, _ = await dispatch(state, "search_documents", {"query": "x"})
 
-        assert len(result["results"][0]["text"]) <= 600
+        # Captura el chunk denso completo (límite subido de 600 a 1500).
+        assert len(result["results"][0]["text"]) <= 1500
         assert result["results"][0]["text"].endswith("...")
 
 

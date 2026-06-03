@@ -15,9 +15,14 @@ import numpy as np
 import pytest
 
 from banks_rag.application.retrieval.query_router import RouteDecision, route_query
+from banks_rag.config import override_settings, reset_settings
+from banks_rag.config.settings import Settings
 from banks_rag.infrastructure.reranker.cross_encoder_reranker import (
     CrossEncoderReranker,
     _extract_text,
+    build_default_reranker,
+    reranking_enabled,
+    reset_default_reranker,
 )
 
 
@@ -111,6 +116,70 @@ class TestCrossEncoderReranker:
     def test_extract_text_without_section(self) -> None:
         c = {"text": "hola"}
         assert _extract_text(c) == "hola"
+
+    def test_load_failure_degrades_not_raises(self) -> None:
+        """Si load() falla (modelo ausente / sin trust_remote_code), rerank NO
+        propaga: devuelve el orden previo recortado a top_k. Crítico para no
+        romper search_documents cuando el modelo de reranker no está disponible."""
+        r = CrossEncoderReranker("inexistente/modelo-que-no-carga")
+        chunks = [_chunk("a"), _chunk("b"), _chunk("c")]
+        with patch.object(r, "load", side_effect=RuntimeError("no model")):
+            out = r.rerank("q", chunks, top_k=2)
+        assert [c["text"] for c in out] == ["a", "b"]  # orden previo, recortado
+        assert r._load_failed is True
+
+    def test_load_failure_not_retried(self) -> None:
+        """Tras un fallo de carga, no se reintenta en cada rerank (queda degradado)."""
+        r = CrossEncoderReranker("inexistente/modelo")
+        load_mock = MagicMock(side_effect=RuntimeError("no model"))
+        with patch.object(r, "load", load_mock):
+            r.rerank("q", [_chunk("a")])
+            r.rerank("q", [_chunk("a")])
+        load_mock.assert_called_once()  # solo el primer intento
+
+    def test_predict_failure_degrades(self) -> None:
+        """Si predict() falla (OOM, par malformado), se mantiene el orden previo."""
+        r = CrossEncoderReranker("BAAI/bge-reranker-v2-m3")
+        r._model = MagicMock()
+        r._model.predict.side_effect = RuntimeError("OOM")
+        r.loaded = True
+        out = r.rerank("q", [_chunk("a"), _chunk("b")], top_k=1)
+        assert [c["text"] for c in out] == ["a"]
+
+
+# ── Tests build_default_reranker (singleton + settings/.env) ──────────────────
+
+@pytest.mark.unit
+class TestBuildDefaultReranker:
+    """El reranker lee de Settings (BANKS_RERANK_*), que carga el .env."""
+
+    def setup_method(self) -> None:
+        reset_default_reranker()
+
+    def teardown_method(self) -> None:
+        reset_default_reranker()
+        reset_settings()
+
+    def test_enabled_by_default(self) -> None:
+        override_settings(Settings(rerank_enabled=True))
+        assert reranking_enabled() is True
+        r = build_default_reranker()
+        assert isinstance(r, CrossEncoderReranker)
+        # No carga el modelo al construir (lazy en el primer rerank).
+        assert r.loaded is False
+
+    def test_disabled_returns_none(self) -> None:
+        override_settings(Settings(rerank_enabled=False))
+        assert reranking_enabled() is False
+        assert build_default_reranker() is None
+
+    def test_singleton_returns_same_instance(self) -> None:
+        override_settings(Settings(rerank_enabled=True))
+        assert build_default_reranker() is build_default_reranker()
+
+    def test_respects_custom_model(self) -> None:
+        override_settings(Settings(rerank_enabled=True, rerank_model="custom/model"))
+        assert build_default_reranker().name == "custom/model"
 
 
 # ── Tests QueryRouter ─────────────────────────────────────────────────────────

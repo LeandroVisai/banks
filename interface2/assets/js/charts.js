@@ -453,4 +453,7 @@ const ChartModal = {
 };
 
 BCCh.ChartModal = ChartModal;
+// Expuesto para que el chat reutilice el theme institucional al graficar las
+// series que el agente analizó (ver chat.js::_renderSeriesCharts).
+BCCh.baseChartConfig = baseChartConfig;
 }());

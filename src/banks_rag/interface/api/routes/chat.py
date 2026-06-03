@@ -12,7 +12,9 @@ from banks_rag.application.agent import (
 )
 from banks_rag.config import get_settings
 from banks_rag.infrastructure.observability import log_chat_error, log_chat_turn
+from banks_rag.infrastructure.uploads import load_upload
 from banks_rag.interface.api.schemas import (
+    AttachmentVisual,
     ChatRequest,
     ChatResponse,
     ChunkSeen,
@@ -39,14 +41,32 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
 
     # Solo se aceptan turnos 'user'/'assistant' del cliente: un mensaje
     # 'system' en el history permitiría sobrescribir el system prompt.
+    # Se recorta a los últimos `history_max_turns` mensajes (memoria del chatbot)
+    # como red de seguridad para no exceder N_CTX en conversaciones largas.
     history = [
         {"role": m.role, "content": m.content}
         for m in body.history
         if m.role != "system"
-    ]
+    ][-settings.history_max_turns:]
 
     model = getattr(deps.llm, "name", settings.llm_family)
     request_id = getattr(request.state, "request_id", "")
+
+    # Resuelve los archivos adjuntos. Cuando hay adjuntos, el agente entra en
+    # modo análisis de documento (lee el archivo entero por lotes y muestra sus
+    # gráficos); ``attachments_context`` queda como fallback liviano. Los uploads
+    # caducados o inexistentes se ignoran en silencio.
+    attachment_records: list[dict] = []
+    attachments_context = ""
+    if body.attachments:
+        blocks = []
+        for upload_id in body.attachments[:5]:
+            rec = load_upload(upload_id)
+            if rec:
+                attachment_records.append(rec)
+                label = "Documento adjunto" if rec.get("kind") == "document" else "Datos adjuntos"
+                blocks.append(f"--- {label}: {rec.get('name', '')} ---\n{rec.get('text', '')}")
+        attachments_context = "\n\n".join(blocks)
 
     try:
         result = await run_agent(
@@ -57,6 +77,15 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
             max_tool_result_tokens=settings.max_tool_result_tokens,
             temperature=body.temperature if body.temperature is not None else settings.llm_temperature,
             max_tokens=body.max_tokens if body.max_tokens is not None else settings.llm_max_tokens,
+            thinking_mode=body.thinking_mode or settings.thinking_mode,
+            attachments_context=attachments_context,
+            synthesis_max_tokens=settings.synthesis_max_tokens,
+            attachment_records=attachment_records,
+            upload_analysis_max_tokens=settings.upload_analysis_max_tokens,
+            upload_map_batch_tokens=settings.upload_map_batch_tokens,
+            upload_map_max_tokens=settings.upload_map_max_tokens,
+            upload_max_map_batches=settings.upload_max_map_batches,
+            upload_max_visuals=settings.upload_max_visuals,
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("run_agent falló en /v1/chat")
@@ -81,7 +110,7 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         tool_trace=[ToolTraceEntry(**t) for t in result.tool_trace],
         chunks_seen=[ChunkSeen(**c) for c in result.chunks_seen],
         series_used=[HistoricalSeriesRef(**s) for s in result.series_used],
-        charts=result.charts,
+        attachment_visuals=[AttachmentVisual(**v) for v in result.attachment_visuals],
         cited_refs=result.cited_refs,
         ungrounded_numbers=result.ungrounded_numbers,
         total_tokens=result.total_tokens,

@@ -78,7 +78,9 @@ banks-chat = "banks_rag.interface.cli.chat:app"
 banks-eval = "banks_rag.interface.cli.evaluate:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/banks_rag"]
+# banks_rag = core RAG/agente. jarvis_news = generador de noticias + TTS JARVIS,
+# aislado del core (procesa datos externos scrapeados); reusa el LLM vía la app.
+packages = ["src/banks_rag", "src/jarvis_news"]
 
 # ── Ruff ────────────────────────────────────────────────────────────────
 [tool.ruff]
@@ -113,7 +115,7 @@ warn_return_any = true
 warn_unused_ignores = true
 no_implicit_optional = true
 ignore_missing_imports = true
-files = ["src/banks_rag"]
+files = ["src/banks_rag", "src/jarvis_news"]
 
 # ── Pytest ─────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
@@ -135,7 +137,7 @@ markers = [
 
 # ── Coverage ───────────────────────────────────────────────────────────
 [tool.coverage.run]
-source = ["src/banks_rag"]
+source = ["src/banks_rag", "src/jarvis_news"]
 branch = true
 
 [tool.coverage.report]

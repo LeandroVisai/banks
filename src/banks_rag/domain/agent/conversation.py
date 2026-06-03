@@ -51,6 +51,12 @@ class AgentResult:
     # herramienta de este turno (grounding numérico). Señal de alucinación de
     # valores; se reportan para evaluación y para que el frontend las marque.
     ungrounded_numbers: list[float] = field(default_factory=list)
-    # Gráficos (specs Vega-Lite) generados por plot_series; el frontend los
-    # renderiza junto a la respuesta.
-    charts: list[dict] = field(default_factory=list)
+    # Análisis crudo de cada especialista (el "proceso de razonamiento"). NO va
+    # en la respuesta al usuario (esa es solo la síntesis); se persiste en el
+    # chat log para trazabilidad/depuración.
+    specialist_analyses: list[dict] = field(default_factory=list)
+    # Gráficos/figuras extraídos de los PDFs adjuntos por el usuario (modo
+    # análisis de documento). Cada item: ``{caption, page, image_url, kind}``;
+    # el frontend los muestra como galería junto a la respuesta. Vacío en el
+    # flujo normal (sin adjuntos).
+    attachment_visuals: list[dict] = field(default_factory=list)

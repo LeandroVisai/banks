@@ -18,6 +18,10 @@ from .registry import register
 if TYPE_CHECKING:
     from banks_rag.domain.agent import AgentState
 
+# Tope de texto por fragmento (igual que search_documents): captura el chunk
+# completo cuando se lee un documento, sin cortar los párrafos densos.
+_MAX_CHUNK_CHARS = 1500
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # list_documents
@@ -161,8 +165,8 @@ async def get_document_chunks(
         }
         ref = state.add_chunk(c_with_meta)
         text = (c.get("text") or "").strip()
-        if len(text) > 600:
-            text = text[:597] + "..."
+        if len(text) > _MAX_CHUNK_CHARS:
+            text = text[: _MAX_CHUNK_CHARS - 3] + "..."
         results.append({
             "ref": ref,
             "text": text,

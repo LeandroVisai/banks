@@ -82,6 +82,26 @@ def _routing_text(message: str, history: list[dict] | None) -> str:
     return f"{message} {last_user}".strip()
 
 
+def _keys_for(text: str) -> list[str]:
+    """Especialistas que dispara un texto: mercado (por concepto) → policy → document."""
+    norm = _norm(text)
+    keys: list[str] = []
+
+    # Mercado: keys de especialista desde los conceptos detectados.
+    for concept in matched_concepts(text):
+        k = concept.specialist
+        if k and k in SUBAGENTS and k not in keys:
+            keys.append(k)
+
+    # Corpus / política monetaria.
+    if _POLICY_RE.search(norm) and "policy" not in keys:
+        keys.append("policy")
+    if (_DOC_RE.search(norm) or _VISUAL_RE.search(norm)) and "document" not in keys:
+        keys.append("document")
+
+    return keys
+
+
 def select_specialists(
     message: str, history: list[dict] | None = None,
 ) -> list[SubAgentSpec]:
@@ -90,29 +110,22 @@ def select_specialists(
     Orden: especialistas de mercado (por concepto) → policy → document. Si nada
     matchea, default a [document, policy] (el corpus cubre lo general).
     """
-    text = _routing_text(message, history)
-    norm = _norm(text)
+    # 1. Rutea sobre el MENSAJE ACTUAL solo. Una pregunta autocontenida no debe
+    # arrastrar el tema del turno anterior: preguntar por política monetaria
+    # justo después de una de FX no debe invocar al especialista FX.
+    keys = _keys_for(message)
 
-    keys: list[str] = []
-
-    # 1. Mercado: keys de especialista desde los conceptos detectados.
-    for concept in matched_concepts(text):
-        k = concept.specialist
-        if k and k in SUBAGENTS and k not in keys:
-            keys.append(k)
-
-    # 2. Corpus / política monetaria.
-    if _POLICY_RE.search(norm) and "policy" not in keys:
-        keys.append("policy")
-    if (_DOC_RE.search(norm) or _VISUAL_RE.search(norm)) and "document" not in keys:
-        keys.append("document")
-
-    # 3a. Saludo/capacidades SIN ninguna señal de dato/corpus → sin especialistas
-    # (la síntesis responde directo). Solo el mensaje actual, no el history.
+    # 2. Saludo/capacidades SIN señal de dato/corpus → sin especialistas (la
+    # síntesis responde directo). Se evalúa antes de mirar el history.
     if not keys and _GREETING_RE.search(_norm(message)):
         return []
 
-    # 3b. Default: substantivo pero sin señales → corpus general.
+    # 3. Mensaje anafórico/corto que por sí solo no rutea → reintenta con el
+    # último turno del usuario ("y en marzo?", "¿de dónde salió ese dato?").
+    if not keys:
+        keys = _keys_for(_routing_text(message, history))
+
+    # 4. Default: substantivo pero sin señales → corpus general.
     if not keys:
         keys = ["document", "policy"]
 

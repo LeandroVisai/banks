@@ -165,7 +165,7 @@ def _register_series(
             "series_name": f"{dataset.name} — {column}{name_suffix}",
             "unit": dataset.unit,
         },
-        [{"date": fecha} for fecha, _ in series],
+        [{"date": fecha, "value": valor} for fecha, valor in series],
     )
 
 
@@ -566,11 +566,18 @@ async def compute_composition(
             ),
         }
 
-    # Traza: registra la serie de valor en la fecha de corte (para series_used).
+    # Traza: registra la composición como serie CATEGÓRICA (una barra por
+    # categoría a la fecha de corte). Antes se registraba un único punto con
+    # fecha y sin valor → el frontend lo graficaba como una "línea" sin sentido.
+    # Ahora `infer_chart_type` la marca como barra (eje X = categorías).
     state.add_series(
         _series_id(dataset_id, series_value_name, filters),
-        {"series_name": f"{dataset.name} — {label}", "unit": dataset.unit},
-        [{"date": comp["fecha"]}],
+        {
+            "series_name": f"{dataset.name} — {label} ({comp['fecha']})",
+            "unit": dataset.unit,
+        },
+        [{"category": b["categoria"], "value": b["valor"]} for b in comp["breakdown"]],
+        chart_type="bar",
     )
     return {
         "dataset_id": dataset_id,

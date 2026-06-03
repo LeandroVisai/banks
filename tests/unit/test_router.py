@@ -64,3 +64,14 @@ class TestSelectSpecialists:
             {"role": "assistant", "content": "El DV01 promedió ..."},
         ]
         assert "afp" in _keys("¿de dónde salió ese dato?", history)
+
+    def test_self_contained_question_ignores_prior_topic(self) -> None:
+        # Pregunta autocontenida de política: NO debe arrastrar el FX del turno
+        # anterior (bug de sobre-ruteo visto en producción).
+        history = [
+            {"role": "user", "content": "que me puedes decir del mercado cambiario?"},
+            {"role": "assistant", "content": "El USD/CLP..."},
+        ]
+        keys = _keys("¿cuáles fueron los últimos acuerdos de política monetaria?", history)
+        assert keys == ["policy"]
+        assert "fx" not in keys

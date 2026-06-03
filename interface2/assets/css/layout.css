@@ -33,7 +33,17 @@ html, body {
     align-items: center;
     gap: 12px;
 }
-.page-top-logo img { width: 44px; height: 44px; flex-shrink: 0; }
+/* Sello del centenario sobre el header navy. El asset es un lockup horizontal
+   (sello dorado + slogan "LA CONFIANZA"); object-fit:cover + object-position:left
+   encuadra SOLO el sello circular y recorta el slogan. El .webp tiene fondo
+   transparente, así el dorado flota sobre el navy. */
+.page-top-logo img {
+    width: 48px; height: 48px;
+    flex-shrink: 0;
+    object-fit: cover;
+    object-position: left center;
+    border-radius: 50%;
+}
 .page-top-brand { line-height: 1.2; color: #fff; }
 .page-top-brand-name {
     font-family: var(--font-mono);
@@ -321,6 +331,26 @@ body[data-chat-open="true"] .main {
     align-items: center;
     gap: 8px;
 }
+
+.chat-panel-header__actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.chat-panel-new {
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-semi);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    color: var(--c-gold);
+    background: transparent;
+    border: 1px solid rgba(191, 156, 105, 0.5);
+    border-radius: var(--r-sm);
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+.chat-panel-new:hover { background: rgba(191, 156, 105, 0.18); color: #fff; }
 
 .chat-panel-close {
     color: rgba(255, 255, 255, 0.55);

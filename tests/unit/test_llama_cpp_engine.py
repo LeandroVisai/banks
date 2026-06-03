@@ -3,7 +3,7 @@
 Todos los accesos a ``llama_cpp.Llama`` se mockean con ``unittest.mock``.
 La suite cubre:
 
-- _detect_chat_format: Qwen3 → chatml, Gemma → gemma, default.
+- _detect_family: Qwen3 → qwen (plantilla nativa GGUF), Gemma → gemma, default qwen.
 - _parse_args: dict passthrough, string-JSON, doble-serialización, malformado.
 - Texto sin tool calls → GenerationResult limpio.
 - <think> strip antes de parsear.
@@ -30,8 +30,9 @@ import pytest
 
 from banks_rag.infrastructure.llm.llama_cpp_engine import (
     LlamaCppEngine,
-    _detect_chat_format,
+    _detect_family,
     _parse_args,
+    _strip_think,
 )
 
 
@@ -79,14 +80,15 @@ def _make_engine(tmp_path: Path) -> tuple[LlamaCppEngine, MagicMock]:
 
 @pytest.mark.unit
 class TestHelpers:
-    def test_detect_chat_format_qwen(self) -> None:
-        assert _detect_chat_format("models/Qwen3.6-27B-Q4_K_XL.gguf") == "chatml"
+    def test_detect_family_qwen(self) -> None:
+        assert _detect_family("models/Qwen3.6-27B-Q4_K_XL.gguf") == "qwen"
 
-    def test_detect_chat_format_gemma(self) -> None:
-        assert _detect_chat_format("models/gemma-4-26B-it.gguf") == "gemma"
+    def test_detect_family_gemma(self) -> None:
+        assert _detect_family("models/gemma-4-26B-it.gguf") == "gemma"
 
-    def test_detect_chat_format_default(self) -> None:
-        assert _detect_chat_format("models/mistral-7b.gguf") == "chatml"
+    def test_detect_family_default(self) -> None:
+        # Cualquier modelo no-gemma se trata como Qwen/ChatML-compatible.
+        assert _detect_family("models/mistral-7b.gguf") == "qwen"
 
     def test_parse_args_dict_passthrough(self) -> None:
         assert _parse_args({"q": "TPM"}) == {"q": "TPM"}
@@ -103,6 +105,21 @@ class TestHelpers:
 
     def test_parse_args_empty_string(self) -> None:
         assert _parse_args("{}") == {}
+
+    def test_strip_think_closed_block(self) -> None:
+        assert _strip_think("<think>razono</think>La TPM es 4,5%.") == "La TPM es 4,5%."
+
+    def test_strip_think_dangling_close(self) -> None:
+        # Qwen3 con plantilla nativa: solo emite el </think> de cierre.
+        raw = "The user asks for X.\nDrafting...\n</think>\n\nEl dólar está en 904,45."
+        assert _strip_think(raw) == "El dólar está en 904,45."
+
+    def test_strip_think_no_thinking(self) -> None:
+        assert _strip_think("Hola, ¿en qué te ayudo?") == "Hola, ¿en qué te ayudo?"
+
+    def test_strip_think_multiline_closed(self) -> None:
+        raw = "<think>\npaso 1\npaso 2\n</think>\nRespuesta final."
+        assert _strip_think(raw) == "Respuesta final."
 
 
 # ── Tests de generación ───────────────────────────────────────────────────────
@@ -278,7 +295,7 @@ class TestLoadAndInfo:
         engine, _ = _make_engine(tmp_path)
         info = engine.info()
         assert info["loaded"] is True
-        assert info["chat_format"] == "chatml"
+        assert info["family"] == "qwen"
         assert info["n_ctx"] == 512
         assert "model_path" in info
         assert "name" in info
@@ -299,4 +316,4 @@ class TestLoadAndInfo:
         assert engine._n_gpu_layers == -1
         assert engine._temperature == 0.1
         assert engine._max_tokens == 1024
-        assert "chatml" == engine._chat_format
+        assert "qwen" == engine._family

@@ -57,10 +57,25 @@ BCCh.API = {
     readyz:  () => _fetch("/readyz"),
 
     // ── Chat ────────────────────────────────────────────────────────────
-    chat: (message, history = []) => _fetch("/v1/chat", {
+    // thinkingMode: "off" | "adaptive" | "on" | null (null → default del server)
+    // attachments: lista de upload_id (contexto efímero)
+    chat: (message, history = [], thinkingMode = null, attachments = []) => {
+        const payload = { message, history };
+        if (thinkingMode) payload.thinking_mode = thinkingMode;
+        if (attachments && attachments.length) payload.attachments = attachments;
+        return _fetch("/v1/chat", {
+            method: "POST",
+            headers: _headers(),
+            body: JSON.stringify(payload),
+        });
+    },
+
+    // ── Upload (archivo como contexto efímero) ───────────────────────────
+    // Envía el archivo en base64 (sin multipart). Devuelve {upload_id, kind, ...}.
+    upload: (filename, contentBase64) => _fetch("/v1/upload", {
         method: "POST",
         headers: _headers(),
-        body: JSON.stringify({ message, history }),
+        body: JSON.stringify({ filename, content_base64: contentBase64 }),
     }),
 
     // ── Search ──────────────────────────────────────────────────────────

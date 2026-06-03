@@ -89,6 +89,8 @@ def build_turn_record(
         "tool_trace": result.tool_trace,
         "chunks_seen": result.chunks_seen,
         "series_used": result.series_used,
+        # Razonamiento de cada especialista (NO va en la respuesta al usuario).
+        "specialist_analyses": getattr(result, "specialist_analyses", []),
     }
 
 

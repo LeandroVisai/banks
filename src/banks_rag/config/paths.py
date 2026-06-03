@@ -28,6 +28,8 @@ DATA_DIR = ROOT / "data"
 DATA_GOLDEN_SET_DIR = DATA_DIR / "golden_set"
 # Logs de conversación del agente (JSONL diario) para evaluación de respuestas.
 DATA_CHAT_LOGS_DIR = DATA_DIR / "chat_logs"
+# Archivos subidos por el usuario en el chat (contexto efímero, con TTL).
+DATA_UPLOADS_DIR = DATA_DIR / "uploads"
 
 # Catálogo parquet (datasets crudos del DW; tools del agente arman SQL safe).
 SQL_CATALOG_DIR = ROOT / "sql_catalog"

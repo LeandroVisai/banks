@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -23,6 +24,10 @@ from typing import Any
 from banks_rag.domain.agent import AgentState
 
 log = logging.getLogger(__name__)
+
+# "foo() missing 1 required positional argument: 'dataset_id'"
+# "foo() missing 2 required positional arguments: 'dataset_id' and 'column'"
+_MISSING_ARGS_RE = re.compile(r"missing .*?argument[s]?: (.+)$")
 
 
 # Registro global { tool_name → callable }
@@ -146,6 +151,12 @@ def signature_hint(name: str) -> dict | None:
     return None
 
 
+def _missing_required_args(exc: TypeError) -> list[str]:
+    """Nombres de los argumentos requeridos faltantes en un ``TypeError`` de Python."""
+    m = _MISSING_ARGS_RE.search(str(exc))
+    return re.findall(r"'([^']+)'", m.group(1)) if m else []
+
+
 async def dispatch(
     state: AgentState,
     name: str,
@@ -170,8 +181,21 @@ async def dispatch(
     try:
         result = await fn(state=state, **norm_args)
     except TypeError as e:
+        # Mensaje directivo (no el TypeError crudo) cuando faltan argumentos
+        # requeridos: los modelos a veces emiten la llamada con args vacíos y se
+        # recuperan más rápido con una instrucción clara que con el error Python.
+        missing = _missing_required_args(e)
+        if missing:
+            error = (
+                f"Faltan argumentos requeridos en {name!r}: {', '.join(missing)}. "
+                f"Vuelve a llamar a {name!r} incluyéndolos — `dataset_id` es el "
+                "`id` que devolvió discover_query y `column` una de sus columnas. "
+                "No repitas la llamada con argumentos vacíos."
+            )
+        else:
+            error = f"Argumentos inválidos para {name!r}: {e}"
         return {
-            "error": f"Argumentos inválidos para {name!r}: {e}",
+            "error": error,
             "expected_signature": signature_hint(name),
         }, int((time.perf_counter() - t0) * 1000)
     except Exception as e:  # noqa: BLE001
