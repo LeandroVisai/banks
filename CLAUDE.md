@@ -8,7 +8,7 @@ Sistema RAG + agente multimodal para el Banco Central de Chile. Procesa PDFs fin
 
 Stack: `sentence-transformers` (Qwen3-VL-Embedding-8B, 4096-dim) + `llama-cpp-python` + PostgreSQL 16 + pgvector (HNSW) + búsqueda híbrida BM25/vector con RRF, MMR y cross-encoder reranking + FastAPI.
 
-**Arquitectura**: Clean Architecture + DDD. Los scripts numerados legacy (`00-05_*.py`, `run.py`, `chatbot/`, `chatbot_calling_tool/`) fueron eliminados. Todo el código productivo vive en `src/banks_rag/`.
+**Arquitectura**: Clean Architecture + DDD. Los scripts numerados legacy (`00-05_*.py`, `run.py`, `chatbot/`, `chatbot_calling_tool/`) fueron eliminados. El core productivo vive en `src/banks_rag/`. El analizador de noticias + voz JARVIS vive **aparte** en `src/jarvis_news/` (paquete aislado por seguridad: procesa datos externos scrapeados; ver [`docs/SETUP_JARVIS.md`](docs/SETUP_JARVIS.md)).
 
 ## Comandos esenciales
 
@@ -23,12 +23,15 @@ banks-search "commodities riesgos" --k 10 --json
 # API
 uvicorn banks_rag.interface.api.main:create_app --factory --port 8080
 
+# Reporte de noticias JARVIS (texto + audio ES/EN, paquete aislado)
+python scripts/jarvis_news_report.py --audio --top-n 25
+
 # Evaluación
 make eval          # golden set completo → eval_report.md
 make eval-ci       # gate CI recall@5
 
 # Tests
-PYTHONPATH=src pytest tests/unit/ -q     # 498 tests, <2s
+PYTHONPATH=src pytest tests/unit/ -q     # ~780 tests, pocos segundos
 make test                                # suite completa
 make lint                                # ruff
 ```
@@ -49,6 +52,7 @@ Datos_prueba/Monitor PM/textos_monitor_pm.xlsx
   → hybrid_search  (HNSW + BM25 → RRF → MMR → reranker)
   → agente tool-calling  (Qwen3.6 / Gemma 4 vía llama.cpp)
   → FastAPI  /v1/chat · /v1/search · /metrics
+             /v1/news-report · /v1/tts  (paquete aislado jarvis_news, reusa el LLM)
 ```
 
 ## Módulos y responsabilidades
@@ -67,6 +71,7 @@ Datos_prueba/Monitor PM/textos_monitor_pm.xlsx
 | `infrastructure/observability/` | logging (structlog), metrics (Prometheus), tracing (OTel) |
 | `interface/api/` | FastAPI app, middlewares, routes |
 | `interface/cli/` | `banks-ingest`, `banks-search`, `banks-eval` |
+| `jarvis_news/` (aislado, **no** `banks_rag`) | Analizador de noticias (`report.py` map-reduce) + voz JARVIS (`tts.py`, `effects.py`, `audio.py`). Reusa el LLM de la app; router `/v1/news-report` · `/v1/tts` |
 
 ## Invariantes críticos
 
@@ -92,7 +97,9 @@ Datos_prueba/Monitor PM/textos_monitor_pm.xlsx
 
 - **Logging de turnos del agente**: cada turno de `/v1/chat` se persiste como una línea JSON en `data/chat_logs/chat-YYYY-MM-DD.jsonl` vía `infrastructure/observability/chat_log.py` (best-effort, nunca tumba el request). Guarda pregunta, respuesta y evidencia (tool_trace, chunks_seen, series_used, citas) para contrastar respuestas reales vs. esperadas. Control: `BANKS_CHAT_LOG_ENABLED` / `BANKS_CHAT_LOG_DIR`.
 
-- **Tests unitarios sin BD ni modelos**: todos los tests en `tests/unit/` usan mocks. `PYTHONPATH=src pytest tests/unit/ -q` debe pasar en < 2s sin internet ni GPU.
+- **`jarvis_news` es un paquete aislado, NO depende de `banks_rag.application/domain`**: vive aparte por seguridad (procesa datos externos scrapeados). Solo importa el LLM ya cargado por la app (`app.state.deps.llm`) y `banks_rag.config` para flags del `.env`. No mover lógica de `banks_rag` a `jarvis_news` ni al revés. La voz JARVIS por defecto (`BANKS_TTS_ENGINE=sapi`) NO descarga modelos: usa la voz del SO (`pyttsx3`) + efecto DSP puro numpy (`effects.py`: band-pass + flanger + reverb). `tts.py`/`audio.py` usan lazy import de `pyttsx3`/`piper` (tests sin TTS instalado). Ver [`docs/SETUP_JARVIS.md`](docs/SETUP_JARVIS.md).
+
+- **Tests unitarios sin BD ni modelos**: todos los tests en `tests/unit/` usan mocks. `PYTHONPATH=src pytest tests/unit/ -q` debe correr en pocos segundos sin internet ni GPU (incluye `jarvis_news` con mocks de TTS).
 
 - **Golden set en `data/golden_set/`**: `retrieval.jsonl` (30 casos), `sql_routing.jsonl` (30 casos), `generation.jsonl` (15 casos). Curado para el dominio BCCh.
 
@@ -162,6 +169,9 @@ chunks    (chunk_id PK, document_id FK,
 | `BANKS_RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | Modelo del reranker (resuelve a `models/<owner>--<name>/`) |
 | `BANKS_CHAT_LOG_ENABLED` | `true` | `false` para no persistir turnos del agente |
 | `BANKS_CHAT_LOG_DIR` | `data/chat_logs` | Otra ruta para los JSONL de chat |
+| `BANKS_TTS_ENABLED` | `false` | `true` para habilitar el audio (voz JARVIS) en `jarvis_news` |
+| `BANKS_TTS_ENGINE` | `sapi` | `sapi` (voz del SO + efecto DSP, sin modelos) o `piper` (neural, solo EN) |
+| `BANKS_TTS_MODEL` | `jgkawell--jarvis/jarvis-medium.onnx` | Modelo `.onnx` (solo si `BANKS_TTS_ENGINE=piper`) |
 
 ## Gemelo de desarrollo
 
