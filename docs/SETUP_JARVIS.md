@@ -60,18 +60,21 @@ mismo Python/arquitectura que el servidor: py3.12 / win_amd64):
 
 (En Linux/macOS para descargar wheels `win_amd64`: `scripts/build_tts_piper_bundle.sh`.)
 
-**Paso 2 — copiar los modelos `.onnx` a `models/`** (NO son wheels, ~120 MB):
+**Paso 2 — copiar los modelos `.onnx` a `models/`** (~120 MB). Los modelos
+**ya vienen incluidos** en el bundle `jarvis_news_piper_wheels/` (subdirectorios
+`jgkawell--jarvis/` y `es_MX-gevy/`); en el servidor solo cópialos a `models/`:
 
+```powershell
+Copy-Item jarvis_news_piper_wheels\jgkawell--jarvis models\ -Recurse -Force
+Copy-Item jarvis_news_piper_wheels\es_MX-gevy       models\ -Recurse -Force
 ```
-models/jgkawell--jarvis/jarvis-medium.onnx           (+ .onnx.json)   # EN
-models/es_MX-gevy/es_MX-gevy-10196-epoch-high.onnx   (+ .onnx.json)   # ES
-```
 
-Descarga (si hay internet en la máquina que arma el bundle):
-- EN: `https://huggingface.co/jgkawell/jarvis` → `en/en_GB/jarvis/medium/jarvis-medium.onnx(.json)`
-- ES: `https://huggingface.co/spaces/HirCoir/Piper-TTS-Spanish` → `es_MX-gevy-10196-epoch-high.onnx(.json)`
+(Origen de los modelos, si necesitas rearmarlos:
+EN `https://huggingface.co/jgkawell/jarvis` ·
+ES `https://huggingface.co/spaces/HirCoir/Piper-TTS-Spanish`.)
 
-**Paso 3 — instalar en el servidor** (offline), copiando el bundle:
+**Paso 3 — instalar en el servidor** (offline), con el bundle (los `.onnx` los
+ignora `pip`; solo instala los wheels):
 
 ```powershell
 pip install --no-index --find-links jarvis_news_piper_wheels -r src/jarvis_news/requirements-tts-piper.txt
