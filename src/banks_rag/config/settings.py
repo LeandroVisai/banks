@@ -63,10 +63,12 @@ class Settings(BaseSettings):
     rerank_enabled: bool = True   # BANKS_RERANK_ENABLED
     rerank_model: str = "BAAI/bge-reranker-v2-m3"  # BANKS_RERANK_MODEL
 
-    # ── TTS (texto→audio con Piper; voz JARVIS en_GB) ─────────────────────────
-    tts_enabled: bool = False     # BANKS_TTS_ENABLED — requiere piper-tts + modelo
-    # Ruta al .onnx de Piper (relativa a models/ o absoluta). Voz JARVIS:
-    # jgkawell/jarvis → models/jgkawell--jarvis/jarvis-medium.onnx
+    # ── TTS (texto→audio; voz JARVIS) ─────────────────────────────────────────
+    tts_enabled: bool = False     # BANKS_TTS_ENABLED
+    # Motor: "sapi" (voz del SO + efecto DSP JARVIS, SIN modelos) o "piper"
+    # (modelo neural jgkawell/jarvis, mejor calidad pero descarga ~60MB).
+    tts_engine: str = "sapi"      # BANKS_TTS_ENGINE
+    # Solo para engine="piper": ruta al .onnx (relativa a models/ o absoluta).
     tts_model: str = "jgkawell--jarvis/jarvis-medium.onnx"  # BANKS_TTS_MODEL
 
     # ── Agente ───────────────────────────────────────────────────────────────

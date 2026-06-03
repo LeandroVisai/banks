@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -24,6 +26,6 @@ class TtsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(..., min_length=1, max_length=20_000)
-    # La voz JARVIS es inglés (en_GB); por defecto se traduce el texto con el LLM
-    # antes de sintetizar. Pon false si el texto ya está en inglés.
+    lang: Literal["en", "es"] = "en"     # idioma del audio
+    # Si lang="en", traduce el texto al inglés con el LLM antes de sintetizar.
     translate_to_en: bool = True

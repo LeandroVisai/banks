@@ -1,0 +1,11 @@
+# Dependencias del TTS de jarvis_news (motor "sapi", SIN modelos descargados).
+# El efecto DSP JARVIS usa numpy, que YA viene con el core (no se repite aquí).
+# Total ~15 MB de wheels. Para instalar OFFLINE en el servidor, genera el bundle
+# con scripts/build_tts_bundle.(ps1|sh) y copia la carpeta de wheels.
+#
+# Motor alternativo (opt-in, NO incluido aquí por peso): piper-tts  → voz neural
+# JARVIS auténtica, requiere descargar el modelo jgkawell/jarvis (~60 MB).
+
+pyttsx3>=2.90
+comtypes>=1.2.0 ; sys_platform == "win32"
+pywin32>=306 ; sys_platform == "win32"

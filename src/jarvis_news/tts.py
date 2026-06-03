@@ -1,12 +1,16 @@
-"""Adapter de TTS con Piper (offline, ONNX). Produce WAV a partir de texto.
+"""Adapters de TTS para la voz JARVIS. Producen WAV a partir de texto.
 
-Voz JARVIS: modelo ``jgkawell/jarvis`` (en_GB) en ``models/jgkawell--jarvis/``.
-Piper habla el idioma del modelo; la voz JARVIS es inglés, así que el texto que
-se le pasa debe estar en inglés (la traducción la hace el endpoint con el LLM).
+Dos motores, elegidos por ``BANKS_TTS_ENGINE``:
 
-Carga perezosa (``piper`` solo se importa al sintetizar) y best-effort: si falta
-la librería o el modelo, lanza ``TTSError`` con un mensaje accionable en vez de
-romper el arranque del server.
+- ``sapi`` (default): voz del SO vía ``pyttsx3`` (SAPI en Windows) + efecto DSP
+  ``apply_jarvis_effect`` (band-pass + flanger + reverb). NO descarga modelos
+  (~15 MB de wheels). Habla EN y ES según la voz instalada en el SO.
+- ``piper``: modelo neural ``jgkawell/jarvis`` (en_GB) en
+  ``models/jgkawell--jarvis/``. Solo inglés; el texto debe ir en inglés.
+
+Carga perezosa (``pyttsx3``/``piper`` solo se importan al sintetizar) y
+best-effort: si falta la librería o el modelo, lanza ``TTSError`` con un mensaje
+accionable en vez de romper el arranque del server.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from .config import MODELS_DIR
 from .config import tts_enabled as _settings_tts_enabled
+from .config import tts_engine as _settings_tts_engine
 from .config import tts_model as _settings_tts_model
 
 log = logging.getLogger(__name__)
@@ -34,9 +39,52 @@ class TTSEngine(Protocol):
     name: str
     loaded: bool
 
-    def synthesize(self, text: str) -> bytes:
-        """Devuelve audio WAV (bytes) para ``text``."""
+    def synthesize(self, text: str, lang: str = "en") -> bytes:
+        """Devuelve audio WAV (bytes) para ``text`` en el idioma ``lang``."""
         ...
+
+
+class SapiTTSEngine:
+    """TTS con la voz del SO (pyttsx3 → SAPI en Windows) + efecto DSP JARVIS.
+
+    NO descarga modelos: usa las voces instaladas en el SO. Aplica el efecto
+    ``apply_jarvis_effect`` (band-pass + flanger + reverb) para el timbre
+    metálico. La voz se elige por idioma con ``voices.pick_voice_id``."""
+
+    name = "sapi+jarvis-fx"
+
+    def __init__(self) -> None:
+        self.loaded = False
+
+    def synthesize(self, text: str, lang: str = "en") -> bytes:
+        if not (text or "").strip():
+            raise TTSError("Texto vacío para sintetizar.")
+        try:
+            import pyttsx3
+        except ImportError as exc:
+            raise TTSError("Falta 'pyttsx3'. Instálalo: pip install pyttsx3") from exc
+
+        import tempfile
+        from pathlib import Path
+
+        from .effects import apply_jarvis_effect
+        from .voices import RATE, pick_voice_id
+
+        try:
+            engine = pyttsx3.init()
+            voice_id = pick_voice_id(engine.getProperty("voices"), lang)
+            if voice_id:
+                engine.setProperty("voice", voice_id)
+            engine.setProperty("rate", RATE)
+            tmp = Path(tempfile.gettempdir()) / f"jarvis_{lang}_{id(text)}.wav"
+            engine.save_to_file(text, str(tmp))
+            engine.runAndWait()
+            raw = tmp.read_bytes()
+            tmp.unlink(missing_ok=True)
+        except Exception as exc:  # noqa: BLE001
+            raise TTSError(f"Falló la síntesis SAPI: {exc}") from exc
+        self.loaded = True
+        return apply_jarvis_effect(raw)
 
 
 class PiperTTSEngine:
@@ -74,7 +122,8 @@ class PiperTTSEngine:
         self.loaded = True
         log.info("Piper TTS cargado: %s", onnx.name)
 
-    def synthesize(self, text: str) -> bytes:
+    def synthesize(self, text: str, lang: str = "en") -> bytes:
+        # El idioma lo define el modelo Piper (lang es para compat con la interfaz).
         if not (text or "").strip():
             raise TTSError("Texto vacío para sintetizar.")
         if not self.loaded:
@@ -97,7 +146,7 @@ class PiperTTSEngine:
 
 
 # ── Singleton + flags (leídos de Settings → .env) ────────────────────────────
-_DEFAULT_TTS: PiperTTSEngine | None = None
+_DEFAULT_TTS: TTSEngine | None = None
 _DEFAULT_TTS_LOCK = threading.Lock()
 
 
@@ -105,9 +154,10 @@ def tts_enabled() -> bool:
     return _settings_tts_enabled()
 
 
-def build_default_tts() -> PiperTTSEngine | None:
+def build_default_tts() -> TTSEngine | None:
     """Engine compartido del proceso, o ``None`` si TTS está deshabilitado.
-    No carga el modelo aquí (lazy en el primer ``synthesize``)."""
+    Elige el motor por BANKS_TTS_ENGINE: 'sapi' (voz del SO + efecto DSP, sin
+    modelos) o 'piper' (modelo neural). Carga perezosa."""
     global _DEFAULT_TTS
     if not tts_enabled():
         return None
@@ -115,7 +165,11 @@ def build_default_tts() -> PiperTTSEngine | None:
         return _DEFAULT_TTS
     with _DEFAULT_TTS_LOCK:
         if _DEFAULT_TTS is None:
-            _DEFAULT_TTS = PiperTTSEngine(_settings_tts_model())
+            engine = (_settings_tts_engine() or "sapi").strip().lower()
+            _DEFAULT_TTS = (
+                PiperTTSEngine(_settings_tts_model()) if engine == "piper"
+                else SapiTTSEngine()
+            )
         return _DEFAULT_TTS
 
 

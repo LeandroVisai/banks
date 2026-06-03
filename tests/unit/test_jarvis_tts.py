@@ -8,6 +8,7 @@ from banks_rag.config import override_settings, reset_settings
 from banks_rag.config.settings import Settings
 from jarvis_news.tts import (
     PiperTTSEngine,
+    SapiTTSEngine,
     TTSError,
     build_default_tts,
     reset_default_tts,
@@ -29,12 +30,18 @@ class TestTtsFlags:
         assert tts_enabled() is False
         assert build_default_tts() is None
 
-    def test_enabled_builds_engine_lazy(self) -> None:
-        override_settings(Settings(tts_enabled=True, tts_model="x/y.onnx"))
+    def test_enabled_builds_sapi_by_default(self) -> None:
+        # Default BANKS_TTS_ENGINE=sapi → voz del SO + efecto DSP (sin modelos).
+        override_settings(Settings(tts_enabled=True))
+        engine = build_default_tts()
+        assert isinstance(engine, SapiTTSEngine)
+        assert build_default_tts() is engine  # singleton
+
+    def test_engine_piper_opt_in(self) -> None:
+        override_settings(Settings(tts_enabled=True, tts_engine="piper", tts_model="x/y.onnx"))
         engine = build_default_tts()
         assert isinstance(engine, PiperTTSEngine)
-        assert engine.loaded is False        # carga perezosa
-        assert build_default_tts() is engine  # singleton
+        assert engine.loaded is False  # carga perezosa
 
 
 @pytest.mark.unit

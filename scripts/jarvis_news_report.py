@@ -7,14 +7,14 @@ cron; luego la misma lógica se integra como funcionalidad del agente.
 
 Uso:
     python scripts/jarvis_news_report.py                 # texto del JSON más reciente
-    python scripts/jarvis_news_report.py --audio         # + audio .wav (voz JARVIS)
+    python scripts/jarvis_news_report.py --audio         # + audio ES y EN (voz JARVIS)
     python scripts/jarvis_news_report.py --json otro.json --top-n 30 --out data/news_reports
-    python scripts/jarvis_news_report.py --audio --no-translate   # no traducir antes del TTS
 
 Requisitos:
     - .env con BANKS_LLM_* (igual que la API).
-    - Para --audio: BANKS_TTS_ENABLED=true + piper-tts + modelo jgkawell/jarvis
-      en models/jgkawell--jarvis/ (ver docs/SETUP_SERVIDOR.txt).
+    - Para --audio: BANKS_TTS_ENABLED=true. Por defecto el motor es "sapi" (voz
+      del SO + efecto DSP JARVIS, SIN modelos; pip install pyttsx3). Genera ES+EN.
+      Alternativa: BANKS_TTS_ENGINE=piper (modelo neural). Ver docs/SETUP_SERVIDOR.txt.
 """
 
 from __future__ import annotations
@@ -30,9 +30,22 @@ if _SRC.is_dir() and str(_SRC) not in sys.path:
 
 from banks_rag.config import get_settings  # noqa: E402
 from banks_rag.infrastructure.llm.llama_cpp_engine import LlamaCppEngine  # noqa: E402
-from jarvis_news.audio import synthesize_wav, translate_to_english  # noqa: E402
+from jarvis_news.audio import synthesize_bilingual  # noqa: E402
 from jarvis_news.report import generate_news_report  # noqa: E402
 from jarvis_news.tts import TTSError  # noqa: E402
+
+
+def _save_text(out: pathlib.Path, stem: str, report: str) -> pathlib.Path:
+    out.mkdir(parents=True, exist_ok=True)
+    txt_path = out / f"reporte_{stem}.md"
+    txt_path.write_text(report, encoding="utf-8")
+    return txt_path
+
+
+def _save_audio(out: pathlib.Path, stem: str, lang: str, wav: bytes) -> pathlib.Path:
+    wav_path = out / f"reporte_{stem}_{lang}.wav"
+    wav_path.write_bytes(wav)
+    return wav_path
 
 
 async def _run(args: argparse.Namespace) -> None:
@@ -52,25 +65,21 @@ async def _run(args: argparse.Namespace) -> None:
     )
 
     out = pathlib.Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
     stem = pathlib.Path(result["source_file"]).stem
-    txt_path = out / f"reporte_{stem}.md"
-    txt_path.write_text(result["report"], encoding="utf-8")
+    txt_path = _save_text(out, stem, result["report"])
     print(f"✓ texto → {txt_path}  ({result['n_used']}/{result['n_total']} noticias)")
 
     if not args.audio:
         return
 
     try:
-        text = result["report"]
-        if not args.no_translate:
-            print("Traduciendo a inglés para la voz JARVIS…", flush=True)
-            text = await translate_to_english(llm, text, max_tokens=settings.synthesis_max_tokens)
-        print("Sintetizando audio (Piper · voz JARVIS)…", flush=True)
-        wav = await asyncio.to_thread(synthesize_wav, text)
-        wav_path = txt_path.with_suffix(".wav")
-        wav_path.write_bytes(wav)
-        print(f"✓ audio → {wav_path}")
+        print("Sintetizando audio JARVIS (ES + EN)…", flush=True)
+        audios = await synthesize_bilingual(
+            result["report"], llm, max_tokens=settings.synthesis_max_tokens,
+        )
+        for lang, wav in audios.items():
+            wav_path = _save_audio(out, stem, lang, wav)
+            print(f"✓ audio {lang.upper()} → {wav_path}")
     except TTSError as exc:
         print(f"⚠️  audio omitido: {exc}")
 
@@ -80,8 +89,7 @@ def main() -> None:
     ap.add_argument("--json", default=None, help="JSON en Noticias_scrapping/ (default: el más reciente).")
     ap.add_argument("--top-n", type=int, default=25, help="Noticias más relevantes a incluir.")
     ap.add_argument("--out", default="data/news_reports", help="Carpeta de salida.")
-    ap.add_argument("--audio", action="store_true", help="Generar también el .wav con voz JARVIS.")
-    ap.add_argument("--no-translate", action="store_true", help="No traducir a inglés antes del TTS.")
+    ap.add_argument("--audio", action="store_true", help="Generar también los .wav (ES + EN) con voz JARVIS.")
     asyncio.run(_run(ap.parse_args()))
 
 

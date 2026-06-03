@@ -59,18 +59,18 @@ async def news_report(request: Request, body: NewsReportRequest) -> NewsReportRe
 
 @router.post("/v1/tts", tags=["jarvis-news"])
 async def tts(request: Request, body: TtsRequest) -> Response:
-    """Texto → audio WAV (voz JARVIS vía Piper). Traduce a inglés si se pide
-    (la voz JARVIS es en_GB)."""
+    """Texto → audio WAV con voz JARVIS (SAPI + efecto DSP, o Piper).
+    Si lang='en' y translate_to_en, traduce el texto con el LLM antes."""
     if build_default_tts() is None:
         raise HTTPException(status_code=503, detail="TTS deshabilitado (BANKS_TTS_ENABLED=false).")
 
     text = body.text
-    if body.translate_to_en:
+    if body.lang == "en" and body.translate_to_en:
         llm = _require_llm(request)
         text = await translate_to_english(llm, text, max_tokens=_synthesis_budget())
 
     try:
-        wav = await asyncio.to_thread(synthesize_wav, text)
+        wav = await asyncio.to_thread(synthesize_wav, text, body.lang)
     except TTSError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001

@@ -34,3 +34,12 @@ def tts_model() -> str:
         return get_settings().tts_model
     except Exception:  # noqa: BLE001
         return os.getenv("BANKS_TTS_MODEL", "jgkawell--jarvis/jarvis-medium.onnx")
+
+
+def tts_engine() -> str:
+    """'sapi' (voz del SO + efecto DSP, sin modelos) o 'piper' (modelo neural)."""
+    try:
+        from banks_rag.config import get_settings
+        return get_settings().tts_engine
+    except Exception:  # noqa: BLE001
+        return os.getenv("BANKS_TTS_ENGINE", "sapi")

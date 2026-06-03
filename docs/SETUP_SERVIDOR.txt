@@ -162,21 +162,30 @@ Lee un JSON de data_pipeline/Noticias_scrapping/ y genera el reporte del día
   python scripts/jarvis_news_report.py --top-n 30 --out data/news_reports
   # → data/news_reports/reporte_<archivo>.md
 
-  # Texto + AUDIO (voz JARVIS):
+  # Texto + AUDIO (voz JARVIS en ES y EN):
   python scripts/jarvis_news_report.py --audio
-  # → además reporte_<archivo>.wav
+  # → además reporte_<archivo>_es.wav y reporte_<archivo>_en.wav
 
-AUDIO — requiere instalar TTS (una vez) y el modelo de voz:
-  pip install piper-tts
-  # Descargar la voz JARVIS (en_GB) a models/jgkawell--jarvis/:
-  #   jarvis-medium.onnx + jarvis-medium.onnx.json  (repo HF: jgkawell/jarvis)
+AUDIO — motor por defecto 'sapi' (SIN modelos descargados, EN + ES):
+  Usa la voz del SO (SAPI) + un efecto DSP JARVIS (band-pass + flanger + reverb,
+  numpy puro). Solo necesita pyttsx3 (~15 MB de wheels).
+
+  # Bundle OFFLINE (en una máquina Windows con internet, mismo Python):
+  #   .\scripts\build_tts_bundle.ps1     →  jarvis_news_tts_wheels\
+  # Copiar al servidor y allí (sin internet):
+  pip install --no-index --find-links jarvis_news_tts_wheels -r src/jarvis_news/requirements-tts.txt
   # Activar en el .env:
   BANKS_TTS_ENABLED=true
-  # (opcional) BANKS_TTS_MODEL=jgkawell--jarvis/jarvis-medium.onnx
+  BANKS_TTS_ENGINE=sapi              # default
+
+  # ALTERNATIVA: motor neural 'piper' (solo EN, ~60 MB):
+  #   pip install piper-tts
+  #   descargar jgkawell/jarvis (jarvis-medium.onnx + .onnx.json) a models/jgkawell--jarvis/
+  #   BANKS_TTS_ENGINE=piper
 
 Notas:
-  - La voz JARVIS es INGLÉS; el script traduce el reporte a inglés antes del TTS
-    (--no-translate para omitir).
+  - 'sapi' genera ES (directo) y EN (el script traduce con el LLM). 'piper' es
+    solo EN. El efecto JARVIS se aplica a ambos.
   - El LLM es serializado: el reporte (map-reduce) compite con el chat. Conviene
     correrlo fuera de horario / por tarea programada.
 ==============================================================================
