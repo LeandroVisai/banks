@@ -52,5 +52,4 @@ eval_baseline.json
 *.swo
 
 # TTS: bundle de wheels generado y reportes de noticias
-jarvis_news_tts_wheels/
 data/news_reports/
