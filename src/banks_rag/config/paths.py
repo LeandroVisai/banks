@@ -13,6 +13,9 @@ ROOT = Path(__file__).resolve().parents[3]
 
 # Inputs
 DATA_RAW_DIR = ROOT / "Datos_prueba"  # legacy; en Fase 8 se mueve a data/raw/
+# JSON diarios de noticias scrapeadas → base aislada "contexto_actual"
+# (un JSON por día, nombrado 'noticias_YYYY_MM_DD.json'). Ver extract_news.py.
+NEWS_RAW_DIR = ROOT / "data_pipeline" / "Noticias_scrapping"
 
 # Outputs intermedios (en Fase 8 se mueven a data/logs_intermedios/)
 LOGS_DIR = ROOT / "logs"

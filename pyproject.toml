@@ -70,9 +70,16 @@ dw = [
     # Solo en máquinas con conectividad al DW SQL Server
     "pyodbc>=5.0.0",
 ]
+tts = [
+    # Voz JARVIS (jarvis_news) + audio FLAC. Para el servidor offline ver los
+    # requirements en src/jarvis_news/ y scripts/build_tts_*_bundle.(sh|ps1).
+    "piper-tts>=1.4",
+    "soundfile>=0.12",  # FLAC; su wheel incluye libsndfile (offline-safe)
+]
 
 [project.scripts]
 banks-ingest = "banks_rag.interface.cli.ingest:app"
+banks-ingest-news = "banks_rag.interface.cli.ingest_news:app"
 banks-search = "banks_rag.interface.cli.search:app"
 banks-chat = "banks_rag.interface.cli.chat:app"
 banks-eval = "banks_rag.interface.cli.evaluate:app"

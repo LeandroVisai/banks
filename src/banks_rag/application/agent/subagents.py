@@ -24,6 +24,7 @@ from banks_rag.application.agent.tools.registry import TOOL_SCHEMAS
 
 from .prompts import (
     AFP_ANALYST_PROMPT,
+    COYUNTURA_ANALYST_PROMPT,
     DOCUMENT_ANALYST_PROMPT,
     FFMM_ANALYST_PROMPT,
     FX_ANALYST_PROMPT,
@@ -142,6 +143,8 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
             "list_documents",
             "get_document_chunks",
             "compare_meetings",
+            # Contexto noticioso para corroborar/explicar la coyuntura (base aislada).
+            "search_current_context",
         ),
     ),
     "policy": SubAgentSpec(
@@ -155,6 +158,17 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
             "get_recent_policy_decisions",
             "discover_query",
             "execute_query",
+            # Contexto noticioso para explicar el porqué del momento (base aislada).
+            "search_current_context",
+        ),
+    ),
+    # ── Especialista de coyuntura (noticias / contexto actual) ────────────────
+    "coyuntura": SubAgentSpec(
+        key="coyuntura",
+        display_name="Analista de Coyuntura",
+        system_prompt=COYUNTURA_ANALYST_PROMPT,
+        tool_names=(
+            "search_current_context",
         ),
     ),
 }

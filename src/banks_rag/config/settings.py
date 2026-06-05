@@ -46,6 +46,19 @@ class Settings(BaseSettings):
     # ── RAG (env legacy sin prefijo) ──────────────────────────────────────────
     rag_table_prefix: str = Field(default_factory=lambda: os.getenv("RAG_TABLE_PREFIX", ""))
 
+    # ── Contexto actual (noticias) — base de datos AISLADA ────────────────────
+    # El corpus de noticias scrapeadas vive en una base de datos Postgres
+    # SEPARADA (mismo servidor, distinto `database`) para que el agente no pueda
+    # cruzarlo por error con el corpus del banco: la tool search_current_context
+    # solo abre conexión a esta base, y search_documents solo a `pg_database`.
+    # Sin prefijo de tabla (la base ya aísla): tablas `documents` / `chunks`.
+    context_db: str = "contexto_actual"           # BANKS_CONTEXT_DB
+    # Ventana por defecto (días) que la tool aplica si el agente no pide fechas.
+    # Ingesta es aditiva (no purga): la ventana solo acota la BÚSQUEDA.
+    context_window_days: int = 20                  # BANKS_CONTEXT_WINDOW_DAYS
+    # Peso de recencia en el ranking de noticias (alto: lo reciente manda).
+    context_recency_weight: float = 0.30           # BANKS_CONTEXT_RECENCY_WEIGHT
+
     # ── LLM ──────────────────────────────────────────────────────────────────
     llm_family: Literal["qwen", "gemma", "mock"] = "mock"
     llm_model_path: str = ""

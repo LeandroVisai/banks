@@ -55,6 +55,10 @@ class AgentResult:
     # en la respuesta al usuario (esa es solo la síntesis); se persiste en el
     # chat log para trazabilidad/depuración.
     specialist_analyses: list[dict] = field(default_factory=list)
+    # Gráficos generados por ``plot_series`` (specs Vega-Lite). Espacio de ids
+    # propio (1, 2, ...), separado de las citas ``[N]`` de chunks. El frontend
+    # los renderiza vía ``ChatResponse.charts``. Vacío si no se graficó nada.
+    charts: list[dict] = field(default_factory=list)
     # Gráficos/figuras extraídos de los PDFs adjuntos por el usuario (modo
     # análisis de documento). Cada item: ``{caption, page, image_url, kind}``;
     # el frontend los muestra como galería junto a la respuesta. Vacío en el

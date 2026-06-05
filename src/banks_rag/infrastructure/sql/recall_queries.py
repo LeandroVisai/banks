@@ -34,7 +34,7 @@ _BASE_COLUMNS = """
     c.image_path,
     c.kind,
     c.visual_caption,
-    d.filename, d.doc_type_category, d.document_date
+    d.filename, d.doc_type_category, d.document_date, d.institution
 """
 
 

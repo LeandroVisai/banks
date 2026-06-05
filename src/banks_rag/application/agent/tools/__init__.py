@@ -29,6 +29,7 @@ from . import (  # noqa: F401
     meeting_lookup,
     plot_series,
     query_parquet,
+    search_current_context,
     search_documents,
     search_visuals,
 )

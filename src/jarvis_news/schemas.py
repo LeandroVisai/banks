@@ -16,10 +16,11 @@ class NewsReportRequest(BaseModel):
 
 
 class NewsReportResponse(BaseModel):
-    report: str
+    report: str              # informe analítico en Markdown estructurado
+    report_html: str         # mismo informe renderizado como HTML (estilo plantilla)
     source_file: str
-    n_total: int        # noticias en el archivo
-    n_used: int         # noticias usadas (top-N)
+    n_total: int             # noticias en el archivo
+    n_used: int              # noticias usadas (top-N)
 
 
 class TtsRequest(BaseModel):

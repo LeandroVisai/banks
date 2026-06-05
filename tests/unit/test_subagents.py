@@ -13,7 +13,7 @@ from banks_rag.application.agent.subagents import (
 
 _EXPECTED_KEYS = {
     "fx", "no_residentes", "afp", "fondos_mutuos", "renta_fija", "liquidez",
-    "document", "policy",
+    "document", "policy", "coyuntura",
 }
 
 

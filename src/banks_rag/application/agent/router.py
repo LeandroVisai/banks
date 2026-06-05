@@ -49,6 +49,16 @@ _VISUAL_RE = re.compile(
     r"diagrama|curva del)\b"
 )
 
+# Señales de COYUNTURA / contexto actual → especialista `coyuntura` (noticias de
+# prensa de la base aislada). Capta tanto la intención causal ("por qué",
+# "a qué se debe") como la noticiosa ("noticias", "prensa", "qué está pasando").
+# Texto sin acentos (ver _norm).
+_CONTEXT_RE = re.compile(
+    r"\b(por que|porque|a que se debe|que esta pasando|que paso|que ocurre|"
+    r"noticia|noticias|prensa|medios|actualidad|coyuntura|contexto actual|"
+    r"ultimas noticias|que se dice|que dicen|contingencia|en estos dias)\b"
+)
+
 # Saludos / preguntas sobre capacidades → SIN especialistas (respuesta directa
 # en la síntesis). Evita correr subagentes inútiles ante "hola" o "qué puedes
 # hacer". Solo aplica si el mensaje es corto y NO trae señales de dato/corpus.
@@ -98,6 +108,11 @@ def _keys_for(text: str) -> list[str]:
         keys.append("policy")
     if (_DOC_RE.search(norm) or _VISUAL_RE.search(norm)) and "document" not in keys:
         keys.append("document")
+
+    # Coyuntura / contexto noticioso. Va al final: complementa (no desplaza) a
+    # los especialistas de dato/corpus cuando el cupo (MAX_SPECIALISTS) lo permite.
+    if _CONTEXT_RE.search(norm) and "coyuntura" not in keys:
+        keys.append("coyuntura")
 
     return keys
 

@@ -9,9 +9,11 @@ import pytest
 import jarvis_news.report as report
 from banks_rag.domain.agent import GenerationResult
 from jarvis_news.report import (
+    _noticia_brief,
     _parse_metric,
     generate_news_report,
     load_news,
+    narrate_report,
     prioritize,
 )
 
@@ -95,3 +97,32 @@ class TestLoadAndReport:
         assert len(llm.calls) == 3   # 2 lotes map + 1 reduce
         assert r["report"] == "out3"
         assert r["source_file"] == "noticias.json"
+
+
+@pytest.mark.unit
+class TestNoticiaBrief:
+    def test_brief_includes_citation_fields(self) -> None:
+        # El reduce arma Referencias en APA → el brief debe llevar medio/título/fecha.
+        brief = _noticia_brief({
+            "title": "Déficit estructural", "source": "El Mercurio",
+            "date": "2026-03-06", "text": "cuerpo de la noticia",
+        })
+        assert "El Mercurio" in brief
+        assert "2026-03-06" in brief
+        assert "Déficit estructural" in brief
+
+
+@pytest.mark.unit
+class TestNarrateReport:
+    @pytest.mark.asyncio
+    async def test_narrate_calls_llm_and_returns_text(self) -> None:
+        llm = _MockLLM()
+        out = await narrate_report(llm, "# Informe\n\n## 1. Tema\n- viñeta")
+        assert out == "out1"
+        assert len(llm.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_narrate_empty_report_skips_llm(self) -> None:
+        llm = _MockLLM()
+        assert await narrate_report(llm, "   ") == ""
+        assert len(llm.calls) == 0

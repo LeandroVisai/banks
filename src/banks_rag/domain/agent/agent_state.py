@@ -55,6 +55,20 @@ class AgentState:
         self.chunk_id_to_ref[cid] = ref
         return ref
 
+    def add_chart(self, chart: dict) -> int:
+        """Registra un gráfico (spec Vega-Lite) generado por ``plot_series``.
+
+        Espacio de ids propio (1, 2, ...), separado de las citas ``[N]`` de
+        chunks para no romper la verificación de citas. El ``chart_id`` se
+        inyecta en el dict almacenado para que el frontend pueda referenciarlo.
+
+        Returns:
+            El ``chart_id`` (1-based) para referenciar el gráfico en la respuesta.
+        """
+        chart_id = len(self.charts) + 1
+        self.charts.append({"chart_id": chart_id, **chart})
+        return chart_id
+
     def add_series(
         self,
         series_id: str,

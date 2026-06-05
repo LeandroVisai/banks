@@ -16,6 +16,10 @@ Stack: `sentence-transformers` (Qwen3-VL-Embedding-8B, 4096-dim) + `llama-cpp-py
 # Ingesta (extracción → enriquecimiento → embeddings → BD)
 banks-ingest run --source Datos_prueba/
 
+# Ingesta de CONTEXTO ACTUAL (noticias) → base Postgres AISLADA (contexto_actual)
+banks-ingest-news full --source data_pipeline/Noticias_scrapping/
+banks-ingest-news stats
+
 # Búsqueda
 banks-search "tasa de interés 2022" --k 5
 banks-search "commodities riesgos" --k 10 --json
@@ -23,7 +27,8 @@ banks-search "commodities riesgos" --k 10 --json
 # API
 uvicorn banks_rag.interface.api.main:create_app --factory --port 8080
 
-# Reporte de noticias JARVIS (texto + audio ES/EN, paquete aislado)
+# Informe analítico JARVIS (markdown + html + audio FLAC ES/EN, paquete aislado)
+# Salidas ordenadas en data/news_reports/{markdown,html,audio}/
 python scripts/jarvis_news_report.py --audio --top-n 25
 
 # Evaluación
@@ -53,6 +58,13 @@ Datos_prueba/Monitor PM/textos_monitor_pm.xlsx
   → agente tool-calling  (Qwen3.6 / Gemma 4 vía llama.cpp)
   → FastAPI  /v1/chat · /v1/search · /metrics
              /v1/news-report · /v1/tts  (paquete aislado jarvis_news, reusa el LLM)
+
+Noticias_scrapping/*.json  (paquete aislado jarvis_news)
+  → report.generate_news_report   map-reduce → INFORME analítico (Markdown estructurado)
+  → html_report.render_html_report → HTML (estilo plantilla: hero + bloques + referencias)
+  → report.narrate_report          → RELATO hablable (prosa, base del audio)
+  → audio.synthesize_bilingual     → audio FLAC ES + EN (voz JARVIS)
+  Salidas: data/news_reports/{markdown,html,audio}/reporte_<fecha>.*
 ```
 
 ## Módulos y responsabilidades
@@ -71,7 +83,7 @@ Datos_prueba/Monitor PM/textos_monitor_pm.xlsx
 | `infrastructure/observability/` | logging (structlog), metrics (Prometheus), tracing (OTel) |
 | `interface/api/` | FastAPI app, middlewares, routes |
 | `interface/cli/` | `banks-ingest`, `banks-search`, `banks-eval` |
-| `jarvis_news/` (aislado, **no** `banks_rag`) | Analizador de noticias (`report.py` map-reduce) + voz JARVIS (`tts.py`, `effects.py`, `audio.py`). Reusa el LLM de la app; router `/v1/news-report` · `/v1/tts` |
+| `jarvis_news/` (aislado, **no** `banks_rag`) | Informe analítico de noticias (`report.py` map-reduce → Markdown estructurado; `html_report.py` MD→HTML; `narrate_report` relato) + voz JARVIS (`tts.py`, `effects.py`, `audio.py`, audio FLAC). Reusa el LLM de la app; router `/v1/news-report` · `/v1/tts` |
 
 ## Invariantes críticos
 
@@ -97,7 +109,9 @@ Datos_prueba/Monitor PM/textos_monitor_pm.xlsx
 
 - **Logging de turnos del agente**: cada turno de `/v1/chat` se persiste como una línea JSON en `data/chat_logs/chat-YYYY-MM-DD.jsonl` vía `infrastructure/observability/chat_log.py` (best-effort, nunca tumba el request). Guarda pregunta, respuesta y evidencia (tool_trace, chunks_seen, series_used, citas) para contrastar respuestas reales vs. esperadas. Control: `BANKS_CHAT_LOG_ENABLED` / `BANKS_CHAT_LOG_DIR`.
 
-- **`jarvis_news` es un paquete aislado, NO depende de `banks_rag.application/domain`**: vive aparte por seguridad (procesa datos externos scrapeados). Solo importa el LLM ya cargado por la app (`app.state.deps.llm`) y `banks_rag.config` para flags del `.env`. No mover lógica de `banks_rag` a `jarvis_news` ni al revés. **Voz JARVIS — dos motores** (en `tts.py`, lazy import de `pyttsx3`/`piper`): `piper` (default, JARVIS auténtico neural) usa **un modelo por idioma** — EN `jgkawell/jarvis` (en_GB RP) con efecto "sala sutil", ES voz latina `gevy` (es_MX) plana; los perfiles por idioma (espeak, length_scale, fx) viven en `voices.py` → `PIPER_PROFILES`. `sapi` (fallback) usa la voz del SO + DSP numpy (`effects.py`). El texto se normaliza con `textnorm.to_speakable_text` antes de sintetizar (la voz NO lee `#`, `*`, `1.`, links). Ver [`docs/SETUP_JARVIS.md`](docs/SETUP_JARVIS.md).
+- **Corpus de "contexto actual" (noticias) en base Postgres AISLADA**: las noticias scrapeadas (un JSON por día, `noticias_YYYY_MM_DD.json`) se ingestan con `banks-ingest-news` a una base de datos SEPARADA (`BANKS_CONTEXT_DB`, default `contexto_actual`), NO al corpus del banco. Aislamiento por construcción: la tool `search_current_context` solo abre conexión a esa base y `search_documents` solo a `rag_banco` — el agente no puede cruzar corpus por error. Pipeline propio (`application/ingestion/extract_news.py` + `enrich_news.py`) con taxonomía noticiera DISTINTA (`doc_type=NOTICIA`, `is_policy_decision` siempre False, sentimiento, `schema_version="news-1.0"`); reusa el embedder Qwen3-VL y `vectorize_corpus`. La fecha de cada noticia sale del campo `date` interno (`DD/MM/YYYY`, un informe diario trae notas de días previos) y cae al NOMBRE del archivo si viene null. **Mojibake**: el texto del scraper viene doble-codificado (UTF-8 leído como cp1252: `inflaciÃ³n`→`inflación`); se repara con `domain_knowledge/text_repair.fix_mojibake` (usa `ftfy` si está, si no round-trip cp1252→utf-8) **por campo**, no sobre texto ya unido — lo comparten `extract_news` y el path de uploads (`infrastructure/uploads/upload_store`). Ingesta aditiva e idempotente (no purga); la frescura la decide el agente con el filtro por fecha + recency a nivel de día. El router dispara el especialista `coyuntura` por señales ("por qué", "noticias", "qué está pasando"); `document`/`policy` también tienen la tool para corroborar.
+
+- **`jarvis_news` es un paquete aislado, NO depende de `banks_rag.application/domain`**: vive aparte por seguridad (procesa datos externos scrapeados). Solo importa el LLM ya cargado por la app (`app.state.deps.llm`) y `banks_rag.config` para flags del `.env`. No mover lógica de `banks_rag` a `jarvis_news` ni al revés. **Pipeline del informe**: `report.py` redacta un **Markdown estructurado** (un `# H1`, bloques `## N. Tema` con `### Síntesis técnica / ### Implicancias económicas / ### Relación entre noticias`, `---` entre bloques y `## Referencias` en APA) → `html_report.render_html_report` lo convierte (determinista, sin librería markdown externa) al HTML de la plantilla (hero + recuadro-disclaimer + `block-heading`/`sub-heading`/`bullet-list`/`separator`) → `report.narrate_report` deriva un **relato hablable** (prosa, sin formato) que es la base del audio. Las salidas se ordenan en `data/news_reports/{markdown,html,audio}/`. **Audio FLAC**: `audio.encode_audio` comprime el WAV a FLAC con `soundfile` (lazy import; su wheel incluye libsndfile → offline); si falta, cae a `.wav` con warning. **Voz JARVIS — dos motores** (en `tts.py`, lazy import de `pyttsx3`/`piper`): `piper` (default, JARVIS auténtico neural) usa **un modelo por idioma** — EN `jgkawell/jarvis` (en_GB RP) con efecto "sala sutil", ES voz latina `gevy` (es_MX) plana; los perfiles por idioma (espeak, length_scale, fx) viven en `voices.py` → `PIPER_PROFILES`. `sapi` (fallback) usa la voz del SO + DSP numpy (`effects.py`). El texto se normaliza con `textnorm.to_speakable_text` antes de sintetizar (la voz NO lee `#`, `*`, `1.`, links). Ver [`docs/SETUP_JARVIS.md`](docs/SETUP_JARVIS.md).
 
 - **Tests unitarios sin BD ni modelos**: todos los tests en `tests/unit/` usan mocks. `PYTHONPATH=src pytest tests/unit/ -q` debe correr en pocos segundos sin internet ni GPU (incluye `jarvis_news` con mocks de TTS).
 
@@ -173,6 +187,9 @@ chunks    (chunk_id PK, document_id FK,
 | `BANKS_TTS_ENGINE` | `piper` | `piper` (neural, JARVIS auténtico EN+ES — default) o `sapi` (voz del SO + efecto DSP, sin modelos; fallback) |
 | `BANKS_TTS_MODEL` | `jgkawell--jarvis/jarvis-medium.onnx` | Modelo `.onnx` voz EN (solo `engine=piper`) |
 | `BANKS_TTS_MODEL_ES` | `es_MX-gevy/es_MX-gevy-10196-epoch-high.onnx` | Modelo `.onnx` voz ES (solo `engine=piper`) |
+| `BANKS_CONTEXT_DB` | `contexto_actual` | Base Postgres AISLADA del corpus de noticias (contexto actual). Solo `search_current_context` la consulta |
+| `BANKS_CONTEXT_WINDOW_DAYS` | `20` | Ventana por defecto (días) que la tool de contexto aplica si el agente no pide fechas (no purga: solo acota la búsqueda) |
+| `BANKS_CONTEXT_RECENCY_WEIGHT` | `0.30` | Peso de recencia (a nivel de día) en el ranking de noticias |
 
 ## Gemelo de desarrollo
 

@@ -13,6 +13,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from .audio import synthesize_wav, translate_to_english
+from .html_report import render_html_report
 from .report import generate_news_report
 from .schemas import NewsReportRequest, NewsReportResponse, TtsRequest
 from .tts import TTSError, build_default_tts
@@ -54,7 +55,7 @@ async def news_report(request: Request, body: NewsReportRequest) -> NewsReportRe
     except Exception as exc:  # noqa: BLE001
         log.exception("Error generando el reporte de noticias")
         raise HTTPException(status_code=502, detail=f"No se pudo generar el reporte: {exc}") from exc
-    return NewsReportResponse(**result)
+    return NewsReportResponse(report_html=render_html_report(result["report"]), **result)
 
 
 @router.post("/v1/tts", tags=["jarvis-news"])

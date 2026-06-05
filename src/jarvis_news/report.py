@@ -16,6 +16,7 @@ tardar minutos porque el LLM es un recurso serializado.
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import re
@@ -124,51 +125,114 @@ def prioritize(news: list[dict], top_n: int = DEFAULT_TOP_N) -> list[dict]:
 
 
 def _noticia_brief(n: dict) -> str:
-    """Encabezado compacto de una noticia para el prompt de map."""
+    """Encabezado compacto de una noticia para el prompt de map.
+
+    Incluye ``date`` además de medio/título: el reduce arma la sección de
+    Referencias en APA y necesita fuente + título + fecha de cada noticia."""
     text = (n.get("text") or "").strip()
     if len(text) > _MAP_TEXT_CHARS:
         text = text[:_MAP_TEXT_CHARS] + "…"
     return (
         f"Título: {n.get('title') or n.get('emailTitle') or '(s/t)'}\n"
-        f"Medio: {n.get('source') or '?'} | Tema: {n.get('topic') or '?'} | "
+        f"Medio: {n.get('source') or '?'} | Fecha: {n.get('date') or '?'} | "
+        f"Tema: {n.get('topic') or '?'} | "
         f"Alcance: {n.get('audience') or '?'} | VPE: {n.get('vpe') or '?'}\n"
         f"Texto: {text}"
     )
 
 
 _MAP_SYSTEM = (
-    "Eres analista de prensa de la División de Mercados Financieros del Banco "
-    "Central de Chile. Resume cada noticia para un brief diario."
+    "Eres analista experto en economía, finanzas y políticas públicas. Resumes "
+    "noticias de prensa con rigor técnico, sin inventar datos."
 )
 _REDUCE_SYSTEM = (
-    "Eres analista senior del Banco Central de Chile. Redactas el reporte de "
-    "prensa del día para el Consejo, claro y jerarquizado."
+    "Eres un analista experto en economía, finanzas y políticas públicas que "
+    "redacta resúmenes de prensa técnicos, profundos y analíticos para analistas "
+    "senior. Escribes en Markdown limpio y bien estructurado."
+)
+# Persona del relato hablado: el mismo informe contado como una narración.
+_NARRATE_SYSTEM = (
+    "Eres un analista económico que NARRA en voz alta el informe del día para un "
+    "panel de analistas senior. Hablas en español, con un relato fluido, claro y "
+    "didáctico, sin leer marcas de formato."
 )
 
 
 def _map_prompt(batch: list[dict]) -> str:
     bloques = "\n\n---\n\n".join(_noticia_brief(n) for n in batch)
     return (
-        "Resume CADA una de las siguientes noticias en 2-3 frases, destacando lo "
-        "relevante para política monetaria, mercados o economía chilena. Para cada "
-        "una indica: **Titular** (medio · tema) y el resumen. NO inventes datos; "
-        "usa solo lo que dice la noticia.\n\n"
+        "Resume CADA una de las siguientes noticias en 2-4 frases, basándote SOLO "
+        "en el campo Texto (no agregues datos externos). Para cada noticia escribe "
+        "exactamente una línea de cabecera con la cita en este formato:\n"
+        "  [CITA] Medio | Título | Fecha\n"
+        "y debajo el resumen técnico, destacando cifras, diagnósticos y efectos "
+        "económicos o financieros mencionados explícitamente.\n\n"
         f"{bloques}"
     )
 
 
+# Texto fijo del recuadro bajo el título (lo pide el usuario; también lo usa el HTML).
+DISCLAIMER = (
+    "Este informe fue generado por IA a partir de fuentes periodísticas incluidas "
+    "en el Informe Diario de Prensa"
+)
+REPORT_TITLE = "Informe Analítico de Coyuntura Económica y Financiera"
+
+
 def _reduce_prompt(summaries: list[str], n_total: int, n_used: int) -> str:
+    hoy = datetime.date.today().strftime("%d de %B de %Y")
     cuerpo = "\n\n".join(summaries)
     return (
-        f"A partir de estos resúmenes de las {n_used} noticias más relevantes del "
-        f"día (de {n_total} del informe), redacta el REPORTE DE PRENSA del día:\n"
-        "- Empieza con un RESUMEN EJECUTIVO (3-5 viñetas con lo más importante).\n"
-        "- Agrupa por temas (Banco Central / política monetaria, economía "
-        "internacional, banca y finanzas, otros).\n"
-        "- Dentro de cada tema, destaca las noticias clave e interpreta su "
-        "relevancia para el BCCh y los mercados.\n"
-        "- Sé concreto y no inventes: usa solo lo de los resúmenes.\n\n"
-        f"RESÚMENES:\n{cuerpo}"
+        "# ROL\n"
+        "Eres un analista experto en economía, finanzas y políticas públicas.\n\n"
+        "# OBJETIVO\n"
+        "Elabora un resumen de prensa técnico, profundo y analítico basado "
+        "EXCLUSIVAMENTE en los resúmenes de noticias que se entregan abajo, con una "
+        "extensión máxima equivalente a 5 páginas. No agregues datos externos, "
+        "proyecciones ni interpretación fuera de lo explícitamente mencionado.\n\n"
+        "# FORMATO DE SALIDA (Markdown estricto)\n"
+        "Responde SOLO con el Markdown del informe, sin texto antes ni después, "
+        "siguiendo EXACTAMENTE esta estructura para que se pueda convertir a HTML:\n"
+        f"- Una única línea de título de nivel 1:  `# {REPORT_TITLE}`\n"
+        "- Luego uno o más bloques temáticos, cada uno con un encabezado de nivel 2 "
+        "numerado:  `## 1. <Tema>`,  `## 2. <Tema>`, … Agrupa noticias afines "
+        "(p. ej. política fiscal, política monetaria, mercados y riesgos "
+        "geopolíticos, mercado laboral, sistema previsional, sectores productivos, "
+        "comercio exterior, energía, etc.).\n"
+        "- Dentro de cada bloque, en este orden, usa encabezados de nivel 3:\n"
+        "    `### Síntesis técnica`  → uno o dos párrafos.\n"
+        "    `### Implicancias económicas`  → viñetas con `- ` (efectos económicos "
+        "o financieros identificados directamente en los textos).\n"
+        "    `### Relación entre noticias`  → un párrafo, SOLO si el tema reúne "
+        "varias noticias relacionadas.\n"
+        "- Separa cada bloque temático del siguiente con una línea `---`.\n"
+        "- Cierra con un bloque  `## Referencias`  y una lista de viñetas `- ` con "
+        "TODAS las noticias citadas en formato APA, usando únicamente la información "
+        "de las cabeceras [CITA] (medio, título, fecha): "
+        "`- Medio. (Fecha). Título.`\n\n"
+        "# REGLAS\n"
+        "- Tono riguroso, objetivo y técnico, para analistas senior.\n"
+        "- Identifica relaciones, diagnósticos y efectos económicos presentes en "
+        "los textos; NO inventes cifras ni fuentes.\n"
+        "- Usa solo viñetas `- ` (no numeradas) dentro de los bloques.\n\n"
+        f"# DATOS (resúmenes de las {n_used} noticias más relevantes de {n_total} "
+        f"del informe del {hoy}; cada noticia trae su línea [CITA])\n{cuerpo}"
+    )
+
+
+def _narrate_prompt(report_md: str) -> str:
+    return (
+        "Convierte el siguiente INFORME en un RELATO HABLADO en español, pensado "
+        "para leerse en voz alta ante analistas. Reglas:\n"
+        "- Es un relato continuo y fluido: nada de títulos, viñetas, numeración, "
+        "asteriscos, enlaces ni la sección de Referencias.\n"
+        "- Usa frases completas y transiciones naturales entre temas ('en materia "
+        "fiscal…', 'por el lado de los mercados…', 'en el plano laboral…').\n"
+        "- Explica con claridad las cifras y sus efectos, pero NO agregues datos "
+        "que no estén en el informe.\n"
+        "- Empieza presentando que es el informe analítico de coyuntura económica y "
+        "financiera del día, y cierra con una frase de síntesis.\n\n"
+        f"INFORME:\n{report_md}"
     )
 
 
@@ -208,7 +272,7 @@ async def generate_news_report(
         return {"report": "No se pudo resumir ninguna noticia.", "source_file": path.name,
                 "n_total": len(news), "n_used": 0}
 
-    # REDUCE: redactar el reporte a partir de los resúmenes.
+    # REDUCE: redactar el informe analítico estructurado a partir de los resúmenes.
     red = await llm.generate(
         [{"role": "system", "content": _REDUCE_SYSTEM},
          {"role": "user", "content": _reduce_prompt(summaries, len(news), len(top))}],
@@ -220,3 +284,25 @@ async def generate_news_report(
         "n_total": len(news),
         "n_used": len(top),
     }
+
+
+async def narrate_report(
+    llm,
+    report_md: str,
+    *,
+    max_tokens: int = 4096,
+    temperature: float = 0.4,
+) -> str:
+    """Convierte el informe estructurado (Markdown) en un RELATO hablado en español.
+
+    El audio se sintetiza a partir de este relato (no del Markdown crudo): prosa
+    fluida, sin títulos/viñetas/links/referencias, para que suene a una narración y
+    no a un documento leído. Se basa SOLO en el informe (no agrega datos)."""
+    if not (report_md or "").strip():
+        return ""
+    res = await llm.generate(
+        [{"role": "system", "content": _NARRATE_SYSTEM},
+         {"role": "user", "content": _narrate_prompt(report_md)}],
+        tools=None, temperature=temperature, max_tokens=max_tokens,
+    )
+    return (res.text or "").strip() or report_md

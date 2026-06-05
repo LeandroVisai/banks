@@ -50,6 +50,27 @@ class TestExtractUpload:
         rec = extract_upload("scrape.json", raw)
         assert "Fed holds" in rec["text"] and "kept rates" in rec["text"]
 
+    def test_json_real_scraper_format_emailtitle_text(self) -> None:
+        """El formato real del scraper (emailTitle/text/source) se reconoce
+        como noticia (no vuelca el JSON crudo) y repara el mojibake por campo."""
+        import json
+
+        def mangle(s: str) -> str:
+            return s.encode("utf-8").decode("cp1252")
+
+        raw = json.dumps([
+            {"emailTitle": mangle("Sube la inflación"),
+             "source": "DIARIO FINANCIERO - CHILE - ECONOMIA",
+             "topic": "Banco Central",
+             "text": mangle("El IPC sorprendió al alza en el país.")},
+        ]).encode()
+        rec = extract_upload("noticias_2026_06_04.json", raw)
+        assert "Sube la inflación" in rec["text"]  # emailTitle reconocido como título
+        assert "El IPC sorprendió" in rec["text"]  # text reconocido como cuerpo
+        assert "país" in rec["text"]
+        assert "{" not in rec["text"]  # formateado como noticia, no JSON crudo
+        assert "Ã" not in rec["text"]  # mojibake reparado
+
     def test_invalid_json_raises(self) -> None:
         with pytest.raises(UploadError, match="JSON inválido"):
             extract_upload("bad.json", b"{not valid json")

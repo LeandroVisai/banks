@@ -31,17 +31,20 @@ from pathlib import Path
 from typing import Any
 
 from banks_rag.config.paths import DATA_UPLOADS_DIR
+from banks_rag.domain_knowledge.text_repair import fix_mojibake
 
 # Campos comunes en JSONs de noticias webscrapeadas (es/en). Se buscan
 # case-insensitive para formatear cada ítem de forma legible para el LLM.
+# Claves en minúscula (el lookup compara contra item keys lowercased). Incluye
+# el formato del scraper real: emailTitle (título) y text (cuerpo).
 _NEWS_FIELDS = {
-    "title": ("title", "titulo", "título", "headline", "titular", "name"),
+    "title": ("emailtitle", "title", "titulo", "título", "headline", "titular", "name"),
     "date": ("date", "fecha", "published", "published_at", "fecha_publicacion",
              "pubdate", "datetime", "timestamp"),
     "source": ("source", "fuente", "medio", "source_name", "publisher", "diario"),
-    "body": ("content", "body", "texto", "contenido", "summary", "resumen",
+    "body": ("text", "content", "body", "texto", "contenido", "summary", "resumen",
              "description", "descripcion", "cuerpo", "articulo", "abstract"),
-    "url": ("url", "link", "enlace", "href", "permalink"),
+    "url": ("url", "link", "enlace", "href", "permalink", "presslink", "detailsurl"),
 }
 
 # Límites (defensivos): tamaño del archivo, texto inyectado y filas de tabla.
@@ -120,10 +123,13 @@ def _news_item_to_text(item: dict) -> str:
     lower = {str(k).lower(): v for k, v in item.items()}
 
     def pick(kind: str) -> str:
+        # Repara el mojibake POR CAMPO: el scraper guarda UTF-8 leído como cp1252
+        # ("inflaciÃ³n"). Hay que repararlo en cada valor (uniformemente mal
+        # codificado), no en el texto ya unido con cabeceras correctas.
         for key in _NEWS_FIELDS[kind]:
             v = lower.get(key)
             if v:
-                return str(v).strip()
+                return fix_mojibake(str(v).strip())
         return ""
 
     title, date, source = pick("title"), pick("date"), pick("source")
@@ -166,9 +172,11 @@ def _read_json(content: bytes, filename: str) -> str:
     if not items:
         raise UploadError(f"El JSON {filename!r} no tiene noticias/objetos para leer.")
 
+    # El mojibake se repara por campo dentro de _news_item_to_text (un campo viene
+    # uniformemente mal codificado; el texto unido mezcla cabeceras correctas).
     blocks = [f"{len(items)} ítem(s) en «{filename}»:"]
     for it in items[:MAX_TABLE_ROWS]:
-        blocks.append(_news_item_to_text(it) if isinstance(it, dict) else str(it))
+        blocks.append(_news_item_to_text(it) if isinstance(it, dict) else fix_mojibake(str(it)))
     if len(items) > MAX_TABLE_ROWS:
         blocks.append(f"[… {len(items) - MAX_TABLE_ROWS} ítem(s) más omitidos]")
     return "\n\n".join(blocks)

@@ -110,6 +110,7 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         tool_trace=[ToolTraceEntry(**t) for t in result.tool_trace],
         chunks_seen=[ChunkSeen(**c) for c in result.chunks_seen],
         series_used=[HistoricalSeriesRef(**s) for s in result.series_used],
+        charts=result.charts,
         attachment_visuals=[AttachmentVisual(**v) for v in result.attachment_visuals],
         cited_refs=result.cited_refs,
         ungrounded_numbers=result.ungrounded_numbers,

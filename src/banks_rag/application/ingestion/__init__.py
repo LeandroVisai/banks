@@ -6,10 +6,21 @@ from .enrich_corpus import (
     enrich_chunk,
     enrich_corpus,
 )
+from .enrich_news import (
+    NewsEnrichmentReport,
+    NewsEnrichmentResult,
+    enrich_news,
+    enrich_news_chunk,
+)
 from .extract_corpus import (
     ExtractionReport,
     ExtractionResult,
     extract_corpus,
+)
+from .extract_news import (
+    NewsExtractionReport,
+    NewsExtractionResult,
+    extract_news,
 )
 from .persist_corpus import (
     PersistenceResult,
@@ -32,6 +43,13 @@ __all__ = [
     "EnrichmentResult",
     "enrich_chunk",
     "enrich_corpus",
+    "NewsExtractionReport",
+    "NewsExtractionResult",
+    "extract_news",
+    "NewsEnrichmentReport",
+    "NewsEnrichmentResult",
+    "enrich_news",
+    "enrich_news_chunk",
     "VectorizationReport",
     "VectorizationResult",
     "vectorize_corpus",

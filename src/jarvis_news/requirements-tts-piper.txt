@@ -13,3 +13,6 @@
 # Instalar en el servidor:    pip install --no-index --find-links <bundle> -r <este archivo>
 
 piper-tts>=1.4
+# soundfile codifica el audio a FLAC (más liviano que WAV). Sus wheels INCLUYEN
+# libsndfile, así que funciona offline. Si falta, el audio cae a WAV (no rompe).
+soundfile>=0.12

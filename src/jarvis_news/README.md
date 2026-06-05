@@ -10,12 +10,17 @@ Lo único que toma del core es:
 
 ## Qué hace
 
-1. **Reporte de prensa** (`report.py`): lee el JSON de noticias, prioriza por
+1. **Informe analítico** (`report.py`): lee el JSON de noticias, prioriza por
    alcance × peso de tópico (banco central, economía internacional…), y genera
-   un informe largo con **map-reduce** sobre el LLM (las ~110 noticias no caben
-   en una sola ventana de contexto).
-2. **Audio JARVIS** (`audio.py` + `tts.py` + `effects.py`): convierte el reporte
-   a voz con el timbre metálico de JARVIS, en **español e inglés**.
+   con **map-reduce** sobre el LLM (las ~110 noticias no caben en una ventana)
+   un informe en **Markdown estructurado** (bloques temáticos con *Síntesis
+   técnica / Implicancias / Relación entre noticias* y *Referencias* en APA).
+2. **HTML** (`html_report.py`): convierte ese Markdown, de forma determinista, al
+   HTML de la plantilla de referencia (hero + recuadro-disclaimer + bloques).
+3. **Audio JARVIS** (`report.narrate_report` + `audio.py` + `tts.py` +
+   `effects.py`): deriva un **relato hablable** del informe y lo convierte a voz
+   con el timbre de JARVIS, en **español e inglés**, codificado en **FLAC**
+   (cae a WAV si falta `soundfile`).
 
 ## Voz JARVIS sin modelos descargados (default)
 
@@ -56,10 +61,13 @@ BANKS_TTS_ENGINE=sapi          # default; voz del SO + efecto DSP JARVIS
 ### CLI (genera archivos de texto y audio)
 
 ```bash
-python scripts/jarvis_news_report.py                 # reporte de texto (JSON más reciente)
-python scripts/jarvis_news_report.py --audio         # + reporte_<fecha>_es.wav y _en.wav
+python scripts/jarvis_news_report.py                 # markdown/ + html/ (JSON más reciente)
+python scripts/jarvis_news_report.py --audio         # + narración + audio/ FLAC (ES y EN)
 python scripts/jarvis_news_report.py --json otro.json --top-n 30 --out data/news_reports
 ```
+
+Salidas ordenadas en `data/news_reports/{markdown,html,audio}/reporte_<fecha>.*`.
+Flags útiles: `--audio-format wav` (en vez de FLAC), `--no-html`.
 
 Requiere `.env` con `BANKS_LLM_*` (igual que la API) y, para `--audio`,
 `BANKS_TTS_ENABLED=true`.
@@ -67,7 +75,7 @@ Requiere `.env` con `BANKS_LLM_*` (igual que la API) y, para `--audio`,
 ### API (montada en la app banks_rag)
 
 ```
-POST /v1/news-report   → {report, source_file, n_used, n_total}
+POST /v1/news-report   → {report (markdown), report_html, source_file, n_used, n_total}
 POST /v1/tts           → audio/wav   (body: {text, lang: "en"|"es", translate_to_en})
 ```
 
@@ -77,19 +85,21 @@ El router se monta en `banks_rag.interface.api.main` y reusa el LLM de la app.
 
 | Archivo | Responsabilidad |
 |---|---|
-| `report.py` | Carga + priorización + map-reduce → reporte de texto |
-| `audio.py` | `synthesize_wav`, `synthesize_bilingual` (ES directo + EN traducido), `translate_to_english` |
-| `tts.py` | `SapiTTSEngine` (default) / `PiperTTSEngine` (opt-in), singleton, flags |
+| `report.py` | Carga + priorización + map-reduce → informe Markdown estructurado; `narrate_report` (relato hablable) |
+| `html_report.py` | `render_html_report`: Markdown → HTML determinista (estilo plantilla) |
+| `audio.py` | `synthesize_wav`, `synthesize_bilingual` (relato ES + EN traducido), `wav_to_flac`/`encode_audio` (FLAC), `translate_to_english` |
+| `tts.py` | `PiperTTSEngine` (default) / `SapiTTSEngine` (fallback), singleton, flags |
 | `effects.py` | `apply_jarvis_effect` (band-pass + flanger + reverb, numpy puro) |
-| `voices.py` | `pick_voice_id` por idioma, `RATE`, `JarvisFx` por defecto |
+| `voices.py` | Perfiles por idioma (`PIPER_PROFILES`), `pick_voice_id`, `RATE`, `JarvisFx` |
 | `config.py` | Rutas propias (modelos, noticias) + flags TTS desde el `.env` |
-| `api.py` / `schemas.py` | Router FastAPI y modelos Pydantic |
-| `requirements-tts.txt` | Deps del TTS `sapi` (offline bundle) |
+| `api.py` / `schemas.py` | Router FastAPI y modelos Pydantic (`report` + `report_html`) |
+| `requirements-tts*.txt` | Deps del TTS (offline bundle); `soundfile` para FLAC |
 
 ## Tests
 
 ```bash
 PYTHONPATH=src pytest tests/unit/test_jarvis_effects.py tests/unit/test_jarvis_tts.py \
+                      tests/unit/test_jarvis_html_report.py tests/unit/test_jarvis_audio.py \
                       tests/unit/test_news_report.py -q
 ```
 

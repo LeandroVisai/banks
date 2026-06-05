@@ -1,8 +1,8 @@
 # Setup JARVIS — Analizador de noticias + voz JARVIS
 
 Guía de instalación y uso del paquete **aislado** `src/jarvis_news/`: genera el
-reporte de prensa del día (texto) y, opcional, un audio con la voz de **JARVIS**
-de Iron Man, en **español e inglés**.
+informe analítico del día (**Markdown** + **HTML**) y, opcional, un audio con la
+voz de **JARVIS** de Iron Man, en **español e inglés** (FLAC).
 
 > Vive aparte de `banks_rag` **por seguridad**: procesa datos externos
 > web-scrapeados (`data_pipeline/Noticias_scrapping/*.json`). Solo toma del core
@@ -14,11 +14,23 @@ de Iron Man, en **español e inglés**.
 
 ```
 data_pipeline/Noticias_scrapping/*.json   (noticias web-scrapeadas)
-  → report.py    prioriza (alcance × peso de tópico) + map-reduce sobre el LLM
-  → reporte de TEXTO  (data/news_reports/reporte_<fecha>.md)
-  → audio.py     traduce a EN con el LLM + TTS + efecto DSP JARVIS
-  → reporte_<fecha>_es.wav  +  reporte_<fecha>_en.wav
+  → report.py        prioriza (alcance × peso de tópico) + map-reduce sobre el LLM
+  → INFORME analítico (Markdown estructurado)   → markdown/reporte_<fecha>.md
+  → html_report.py   MD → HTML (estilo plantilla)→ html/reporte_<fecha>.html
+  → report.narrate   informe → RELATO hablable   → markdown/reporte_<fecha>_narracion.md
+  → audio.py         relato → TTS + efecto JARVIS + FLAC (ES y EN con el LLM)
+                     → audio/reporte_<fecha>_es.flac  +  audio/reporte_<fecha>_en.flac
+
+Todo bajo data/news_reports/{markdown,html,audio}/
 ```
+
+El **informe** sale en Markdown con estructura estricta (un `# H1`, bloques
+`## N. Tema` con `### Síntesis técnica / ### Implicancias económicas /
+### Relación entre noticias`, `---` entre bloques y `## Referencias` en APA), lo
+que permite renderizar el **HTML** de forma determinista. El **audio** se sintetiza
+desde el **relato** (prosa hablable), no del Markdown crudo, para que suene a una
+narración. El FLAC requiere `soundfile` (su wheel incluye libsndfile → offline);
+si falta, el audio cae a `.wav` con un warning.
 
 El LLM es el **mismo Qwen3.6** del agente (se reusa, no se carga otro modelo).
 
@@ -110,16 +122,20 @@ Requiere `.env` con `BANKS_LLM_*` (igual que la API). Para `--audio`,
 `BANKS_TTS_ENABLED=true`.
 
 ```bash
-# Solo texto (al JSON más reciente de Noticias_scrapping/):
+# Markdown + HTML (al JSON más reciente de Noticias_scrapping/):
 python scripts/jarvis_news_report.py
 python scripts/jarvis_news_report.py --top-n 30 --out data/news_reports
-# → data/news_reports/reporte_<archivo>.md
+# → data/news_reports/markdown/reporte_<archivo>.md
+#   data/news_reports/html/reporte_<archivo>.html
 
-# Texto + AUDIO (voz JARVIS en ES y EN):
+# + narración + AUDIO FLAC (voz JARVIS en ES y EN):
 python scripts/jarvis_news_report.py --audio
-# → además reporte_<archivo>_es.wav y reporte_<archivo>_en.wav
+# → además markdown/reporte_<archivo>_narracion.md
+#   audio/reporte_<archivo>_es.flac y audio/reporte_<archivo>_en.flac
 
-# Otro archivo concreto:
+# Variantes: WAV en vez de FLAC, o sin HTML, u otro archivo:
+python scripts/jarvis_news_report.py --audio --audio-format wav
+python scripts/jarvis_news_report.py --no-html
 python scripts/jarvis_news_report.py --json otro.json --top-n 30
 ```
 

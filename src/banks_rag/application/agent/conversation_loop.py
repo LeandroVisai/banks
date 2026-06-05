@@ -693,6 +693,41 @@ def _attachment_block(ctx: str) -> str:
     )
 
 
+# Cuántos mensajes previos (user/assistant) se inyectan como contexto al task
+# del especialista. 2 = el último intercambio (pregunta + respuesta), suficiente
+# para resolver referencias del follow-up ("grafícalo", "y eso?") sin inflar el
+# prompt ni diluir el foco del análisis.
+_CONTEXT_MAX_MESSAGES = 2
+# Tope de caracteres por mensaje del contexto: la respuesta previa puede ser
+# larga, pero al especialista solo le hace falta el referente, no el detalle.
+_CONTEXT_MSG_MAX_CHARS = 600
+
+
+def _recent_context_block(history: list[dict]) -> str:
+    """Resumen compacto de los últimos turnos para anteponer al ``task``.
+
+    Los especialistas no reciben el historial completo (ver ``run_subagent``):
+    el ``task`` debe ser autocontenido. Cuando la pregunta es un follow-up
+    ("¿puedes graficarlo?"), el referente vive en el turno anterior, así que el
+    orquestador inyecta este bloque mínimo para que el especialista resuelva la
+    referencia (y, p. ej., decida llamar ``plot_series``). Vacío si no hay
+    historial — preserva el comportamiento de turno único."""
+    if not history:
+        return ""
+    lines: list[str] = []
+    for msg in history[-_CONTEXT_MAX_MESSAGES:]:
+        content = (msg.get("content") or "").strip()
+        if not content:
+            continue
+        if len(content) > _CONTEXT_MSG_MAX_CHARS:
+            content = content[:_CONTEXT_MSG_MAX_CHARS].rstrip() + "…"
+        label = "Usuario" if msg.get("role") == "user" else "Asistente"
+        lines.append(f"{label}: {content}")
+    if not lines:
+        return ""
+    return "## Contexto de la conversación previa\n" + "\n".join(lines)
+
+
 async def _run_attachment_analysis(
     user_message: str,
     attachment_records: list[dict],
@@ -835,10 +870,21 @@ async def run_agent(
              [s.key for s in specs], thinking_mode, profile.max_specialists,
              bool(attachments_context))
 
-    # Task de los especialistas: la pregunta, precedida por el adjunto si existe.
-    task_message = user_message
+    # Task de los especialistas: la pregunta actual, precedida por (a) el adjunto
+    # si existe y (b) un bloque compacto del último intercambio, para que un
+    # follow-up ("¿puedes graficarlo?") resuelva su referente sin recibir todo
+    # el historial. El especialista NO razona sobre el contexto: solo lo usa
+    # para entender a qué se refiere la pregunta actual.
+    prefixes: list[str] = []
     if attachments_context:
-        task_message = f"{_attachment_block(attachments_context)}\n\nPregunta del usuario:\n{user_message}"
+        prefixes.append(_attachment_block(attachments_context))
+    convo_context = _recent_context_block(history)
+    if convo_context:
+        prefixes.append(convo_context)
+    if prefixes:
+        task_message = "\n\n".join([*prefixes, f"## Pregunta actual\n{user_message}"])
+    else:
+        task_message = user_message
 
     # 1+2. Especialistas en paralelo. Cada uno recibe la pregunta como task
     # autocontenida; comparten el AgentState (refs [N] y grounding globales).
