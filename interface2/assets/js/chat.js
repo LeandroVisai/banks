@@ -542,13 +542,30 @@ class ChatController {
             const chunk = chunksSeen.find((c) => c.ref === refNum);
             if (!chunk) return;
             const cls = DOC_CLASSES[chunk.doc_type] || "";
+            const isNews = chunk.doc_type === "NOTICIA";
+
+            let titleLine, metaLine, scoreLine;
+            if (isNews) {
+                // Noticias: titular + medio (institution) + fecha
+                titleLine = h("div", { "class": "src-card__title" },
+                    `[${refNum}] ${chunk.filename || "Noticia"}`);
+                const medio = chunk.institution || "Prensa";
+                const fecha = chunk.date ? chunk.date.slice(0, 10) : "";
+                metaLine = h("div", { "class": "src-card__meta" },
+                    [medio, fecha].filter(Boolean).join("  ·  "));
+                scoreLine = h("div", { "class": "src-card__score mono" },
+                    `importancia ${(chunk.importance || 0).toFixed(2)}`);
+            } else {
+                titleLine = h("div", { "class": "src-card__title" },
+                    `[${refNum}] ${chunk.doc_type || "—"}${chunk.page_start ? " · pág. " + chunk.page_start : ""}`);
+                metaLine = h("div", { "class": "src-card__meta" },
+                    `${chunk.filename || ""} · ${chunk.section || ""}`);
+                scoreLine = h("div", { "class": "src-card__score mono" },
+                    `importancia ${(chunk.importance || 0).toFixed(2)}`);
+            }
+
             items.push(h("div", { "class": `src-card src-card--${cls}` }, [
-                h("div", { "class": "src-card__title" },
-                    `[${refNum}] ${chunk.doc_type || "—"}${chunk.page_start ? " · pág. " + chunk.page_start : ""}`),
-                h("div", { "class": "src-card__meta" },
-                    `${chunk.filename || ""} · ${chunk.section || ""}`),
-                h("div", { "class": "src-card__score mono" },
-                    `importancia ${(chunk.importance || 0).toFixed(2)}`),
+                titleLine, metaLine, scoreLine,
             ]));
         });
 

@@ -318,6 +318,7 @@ def _format_chunks_seen(state: AgentState) -> list[dict]:
             "doc_type": c.get("doc_type_category"),
             "date": str(c.get("chunk_date") or c.get("document_date") or ""),
             "importance": round(float(c.get("importance_score") or 0.0), 3),
+            "institution": c.get("institution") or "",
             "kind": kind,
         }
         if kind != "TEXT":
