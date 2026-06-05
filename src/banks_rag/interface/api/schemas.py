@@ -81,6 +81,7 @@ class ChunkSeen(BaseModel):
     doc_type: str | None
     date: str
     importance: float
+    institution: str | None = None  # medio/fuente (p.ej. "Diario Financiero")
     # 'TEXT' | 'VISUAL' (gráficos/tablas de IPoM). Para los VISUAL, el frontend
     # puede renderizar la imagen con image_url y mostrar el caption.
     kind: str = "TEXT"
