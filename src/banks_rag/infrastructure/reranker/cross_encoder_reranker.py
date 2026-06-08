@@ -1,6 +1,6 @@
 """CrossEncoderReranker — reranker de segunda pasada para hybrid_search.
 
-Usa ``sentence-transformers`` ``CrossEncoder`` (bge-reranker-v2-m3 por defecto)
+Usa ``sentence-transformers`` ``CrossEncoder`` (jina-reranker-v3 por defecto)
 para re-puntuar los chunks después de RRF + MMR + importance_boost.
 
 El reranker toma los top-N candidatos del pipeline existente, les asigna un
@@ -28,7 +28,7 @@ from banks_rag.config.paths import MODELS_DIR
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "BAAI/bge-reranker-v2-m3"
+_DEFAULT_MODEL = "jinaai/jina-reranker-v3"
 
 # Texto del chunk que se pasa al cross-encoder. El campo "text" es el principal;
 # agregamos section_type como contexto breve si está disponible.
@@ -74,9 +74,9 @@ class CrossEncoderReranker:
     """Reranker basado en ``CrossEncoder`` de sentence-transformers.
 
     Parámetros:
-        model_name: nombre HuggingFace o path local. Default: bge-reranker-v2-m3.
+        model_name: nombre HuggingFace o path local. Default: jina-reranker-v3.
         batch_size: pares (query, text) por batch en ``predict()``. Default 32.
-        max_length: tokens máximos para la concatenación (query, text). Default 512.
+        max_length: tokens máximos para la concatenación (query, text). Default 2048.
         models_dir: directorio raíz para buscar modelos pre-descargados offline.
     """
 
@@ -85,7 +85,7 @@ class CrossEncoderReranker:
         model_name: str = _DEFAULT_MODEL,
         *,
         batch_size: int = 32,
-        max_length: int = 512,
+        max_length: int = 2048,
         models_dir: Path | None = None,
         trust_remote_code: bool = True,
     ) -> None:
@@ -121,17 +121,20 @@ class CrossEncoderReranker:
         log.info("Cargando reranker: %s (trust_remote_code=%s)",
                  resolved, self._trust_remote_code)
         t0 = time.monotonic()
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         try:
             self._model = CrossEncoder(
                 resolved,
                 max_length=self._max_length,
                 trust_remote_code=self._trust_remote_code,
+                device=device,
             )
         except TypeError:
-            # sentence-transformers antiguo: CrossEncoder no acepta el kwarg.
+            # sentence-transformers antiguo: CrossEncoder no acepta esos kwargs.
             self._model = CrossEncoder(resolved, max_length=self._max_length)
         self.loaded = True
-        log.info("Reranker listo en %.1fs", time.monotonic() - t0)
+        log.info("Reranker listo en %.1fs (device=%s)", time.monotonic() - t0, device)
 
     def rerank(
         self,
@@ -228,7 +231,7 @@ def build_default_reranker() -> CrossEncoderReranker | None:
 
     Respeta (desde el ``.env`` vía ``Settings``):
       - ``BANKS_RERANK_ENABLED`` (default true) — apaga el reranker si es false.
-      - ``BANKS_RERANK_MODEL`` (default ``BAAI/bge-reranker-v2-m3``) — resuelve a
+      - ``BANKS_RERANK_MODEL`` (default ``jinaai/jina-reranker-v3``) — resuelve a
         ``models/<owner>--<name>/`` para deploy offline en H100.
 
     No carga el modelo aquí (la carga es lazy en el primer ``rerank``). Es

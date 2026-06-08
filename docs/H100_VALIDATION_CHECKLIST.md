@@ -29,7 +29,7 @@ Transferir desde workstation antes de iniciar el servicio:
 
 ```bash
 # Desde la workstation:
-rsync -avz --progress models/BAAI--bge-reranker-v2-m3/  user@h100:/opt/banks_rag/models/BAAI--bge-reranker-v2-m3/
+rsync -avz --progress models/jinaai--jina-reranker-v3/ user@h100:/opt/banks_rag/models/jinaai--jina-reranker-v3/
 rsync -avz --progress models/Qwen--Qwen3-VL-Embedding-8B/ user@h100:/opt/banks_rag/models/Qwen--Qwen3-VL-Embedding-8B/
 rsync -avz --progress models/Qwen3.6-27B-UD-Q4_K_XL.gguf user@h100:/opt/banks_rag/models/
 rsync -avz --progress data_pipeline/snapshots/           user@h100:/opt/banks_rag/data_pipeline/snapshots/

@@ -20,7 +20,7 @@ Documentos (PDFs + Excel Monitor PM)
                    │
           ┌────────▼────────┐
           │ hybrid_search   │ vector + BM25 → RRF → MMR → reranker
-          └────────┬────────┘  (bge-reranker-v2-m3, activo por defecto)
+          └────────┬────────┘  (jina-reranker-v3, activo por defecto)
                    │
       ┌────────────────────────────────────────────────────────┐
       │ Router determinista (router-v1)                        │
@@ -173,7 +173,7 @@ make eval-ci       # gate CI (falla si recall@5 cae >5%)
 | Rol | Modelo | Tamaño | Ubicación |
 |---|---|---|---|
 | Embedding texto + imagen | `Qwen/Qwen3-VL-Embedding-8B` | ~16GB | `models/Qwen--Qwen3-VL-Embedding-8B/` |
-| Reranker | `BAAI/bge-reranker-v2-m3` | ~1GB | `models/BAAI--bge-reranker-v2-m3/` |
+| Reranker | `jinaai/jina-reranker-v3` | ~1.1GB | `models/jinaai--jina-reranker-v3/` |
 | LLM principal | `Qwen3.6-27B-UD-Q4_K_XL.gguf` | ~16GB | `models/` |
 | LLM alternativo | `gemma-4-26B-A4B-it.gguf` | ~14GB | `models/` |
 

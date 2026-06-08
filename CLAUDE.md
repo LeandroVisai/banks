@@ -180,7 +180,7 @@ chunks    (chunk_id PK, document_id FK,
 | `BANKS_RATE_LIMIT_RPM` | `60` | Requests/minuto por API key |
 | `RAG_VISUAL_IMG_WEIGHT` | `0.7` | Peso imagen en dual embedding |
 | `BANKS_RERANK_ENABLED` | `true` | `false` para apagar el cross-encoder reranker en `search_documents` |
-| `BANKS_RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | Modelo del reranker (resuelve a `models/<owner>--<name>/`) |
+| `BANKS_RERANK_MODEL` | `jinaai/jina-reranker-v3` | Modelo del reranker (resuelve a `models/jinaai--jina-reranker-v3/`) |
 | `BANKS_CHAT_LOG_ENABLED` | `true` | `false` para no persistir turnos del agente |
 | `BANKS_CHAT_LOG_DIR` | `data/chat_logs` | Otra ruta para los JSONL de chat |
 | `BANKS_TTS_ENABLED` | `false` | `true` para habilitar el audio (voz JARVIS) en `jarvis_news` |

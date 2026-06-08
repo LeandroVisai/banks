@@ -908,8 +908,15 @@ async def run_agent(
             think=think,
         )
 
+    t_specialists = time.perf_counter()
     subs: list[SubAgentResult] = list(await asyncio.gather(*(_run(s) for s in specs)))
+    ms_specialists = int((time.perf_counter() - t_specialists) * 1000)
     total_tokens = sum(s.total_tokens for s in subs)
+    log.info(
+        "specialists timing: %s → %dms total (parallel wall-clock)",
+        {s.key: s.iterations for s in subs},
+        ms_specialists,
+    )
 
     # 3. Síntesis: una sola llamada al LLM, SIN tools (no puede entrar en loop).
     # No razona y usa sampling determinista (fiel para citar), independiente del
@@ -928,12 +935,18 @@ async def run_agent(
     # La respuesta final usa un presupuesto propio (mayor): integra varios
     # análisis y con el max_tokens de un paso intermedio se truncaba.
     synth_max = max(synthesis_max_tokens or 0, max_tokens or 0) or None
+    t_synth = time.perf_counter()
     synth = await llm.generate(
         synth_messages, tools=None,
         temperature=_SYNTHESIS_TEMPERATURE, top_p=_SYNTHESIS_TOP_P,
         max_tokens=synth_max,
     )
+    ms_synth = int((time.perf_counter() - t_synth) * 1000)
     total_tokens += synth.n_tokens
+    log.info(
+        "synthesis timing: %dms (%d tokens)",
+        ms_synth, synth.n_tokens,
+    )
     final_text = synth.text or MAX_ITERATIONS_FALLBACK_MESSAGE
     finish_reason = synth.finish_reason
 

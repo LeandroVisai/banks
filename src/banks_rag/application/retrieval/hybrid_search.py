@@ -13,13 +13,20 @@ Acepta filtros adicionales explícitos vía ``extra_filters`` (no detectables de
 
 from __future__ import annotations
 
+import logging
 import os
+import threading
+import time
+from collections import OrderedDict
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+log = logging.getLogger(__name__)
+
 from banks_rag.domain.retrieval import ParsedQuery, SearchFilters, SearchResult
+from banks_rag.infrastructure.persistence.connection_pool import pooled_conn
 from banks_rag.infrastructure.persistence.postgres_repo import PostgresRepo
 from banks_rag.infrastructure.sql.recall_queries import (
     date_importance_fallback,
@@ -45,6 +52,40 @@ if TYPE_CHECKING:
     pass
 
 DEFAULT_RECALL_N = 50
+
+# ── Cache de embeddings de query ──────────────────────────────────────────────
+# Cada request multi-especialista re-embede la misma query N veces (una por
+# especialista × cada call a search_documents). El cache evita la contención en
+# _infer_lock del embedder y ahorra ~100ms por embedding repetido.
+# Key: (texto_con_prefijo, model_name) → evita colisiones si cambia el modelo.
+# Size: configurable con BANKS_EMBED_CACHE_SIZE (default 256 entradas).
+_QUERY_EMB_CACHE: OrderedDict[tuple[str, str], np.ndarray] = OrderedDict()
+_QUERY_EMB_CACHE_MAX: int = int(os.getenv("BANKS_EMBED_CACHE_SIZE", "256"))
+_QUERY_EMB_LOCK = threading.Lock()
+
+
+def _get_query_embedding(embed_text: str, embedder) -> np.ndarray:
+    """Devuelve el embedding de una query, usando el cache LRU cuando es posible.
+
+    Thread-safe: usa un lock exclusivo sobre el dict para mantener la semántica
+    LRU (move_to_end + popitem) sin race conditions.
+    """
+    key = (embed_text, getattr(embedder, "name", ""))
+    with _QUERY_EMB_LOCK:
+        if key in _QUERY_EMB_CACHE:
+            _QUERY_EMB_CACHE.move_to_end(key)
+            return _QUERY_EMB_CACHE[key].copy()
+
+    vec: np.ndarray = embedder.encode_text([embed_text], batch_size=1)[0]
+
+    with _QUERY_EMB_LOCK:
+        _QUERY_EMB_CACHE[key] = vec.copy()
+        _QUERY_EMB_CACHE.move_to_end(key)
+        if len(_QUERY_EMB_CACHE) > _QUERY_EMB_CACHE_MAX:
+            _QUERY_EMB_CACHE.popitem(last=False)
+
+    return vec
+
 
 # Instrucción para Qwen3-Embedding en modo retrieval financiero (queries).
 _QWEN_QUERY_INSTRUCTION = (
@@ -197,19 +238,31 @@ def hybrid_search(
     if repo is None:
         repo = PostgresRepo(prefix=os.getenv("RAG_TABLE_PREFIX", ""))
 
+    t_total = time.perf_counter()
     parsed: ParsedQuery = parse_query(query)
     filters = _merge_filters(parsed.filters, extra_filters)
 
-    # Embed de query
+    # ── Timer 1: embedding de query ───────────────────────────────────────────
+    t_embed = time.perf_counter()
     embed_text = embed_query_text(parsed.clean_query, query_embedder.name)
-    query_vec = query_embedder.encode_text([embed_text], batch_size=1)[0]
+    query_vec = _get_query_embedding(embed_text, query_embedder)
+    ms_embed = int((time.perf_counter() - t_embed) * 1000)
 
     docs_table, chunks_table = repo.docs_table, repo.chunks_table
 
-    with repo.connect() as conn:
+    relaxed_filters: list[str] = []
+    fallback_used = False
+
+    # Una sola conexión del pool para toda la llamada: evita abrir/cerrar hasta
+    # 3 conexiones separadas (búsqueda principal + relajada + fallback).
+    # pooled_conn() usa el pool si está inicializado, o abre una conexión directa
+    # como fallback transparente en tests/CLI (sin pool).
+    with pooled_conn() as conn:
         db_dim = get_db_embedding_dim(conn, chunks_table)
         query_vec = _adjust_query_vec_to_db(query_vec, db_dim)
 
+        # ── Timer 2: recalls SQL (vector + lexical) ───────────────────────────
+        t_sql = time.perf_counter()
         fused = _recall_and_fuse(
             conn,
             query_vec=query_vec, query_text=parsed.clean_query,
@@ -217,17 +270,15 @@ def hybrid_search(
             docs_table=docs_table, chunks_table=chunks_table,
             n=recall_n, rrf_k=rrf_k,
         )
+        ms_sql = int((time.perf_counter() - t_sql) * 1000)
 
-    relaxed_filters: list[str] = []
-    fallback_used = False
-
-    # Si hay filtros estrictos y no hubo resultados, relajar y reintentar.
-    if not fused and filters.has_strict_filters():
-        relaxed_filters = [
-            name for name in ("variables", "sections") if getattr(filters, name)
-        ]
-        relaxed = SearchFilters(**{**asdict(filters), "variables": [], "sections": []})
-        with repo.connect() as conn:
+        # Si hay filtros estrictos y no hubo resultados, relajar y reintentar
+        # en la misma conexión (evita un handshake extra).
+        if not fused and filters.has_strict_filters():
+            relaxed_filters = [
+                name for name in ("variables", "sections") if getattr(filters, name)
+            ]
+            relaxed = SearchFilters(**{**asdict(filters), "variables": [], "sections": []})
             fused = _recall_and_fuse(
                 conn,
                 query_vec=query_vec, query_text=parsed.clean_query,
@@ -236,19 +287,18 @@ def hybrid_search(
                 n=recall_n, rrf_k=rrf_k,
             )
 
-    # Filtro post-SQL por mes (los PDFs sin chunk_date no se filtran en SQL).
-    if filters.month is not None:
-        fused = [hit for hit in fused if row_matches_month(hit, filters.month)]
-    if filters.months:
-        fused = [
-            hit for hit in fused
-            if any(row_matches_month(hit, m) for m in filters.months)
-        ]
+        # Filtro post-SQL por mes (los PDFs sin chunk_date no se filtran en SQL).
+        if filters.month is not None:
+            fused = [hit for hit in fused if row_matches_month(hit, filters.month)]
+        if filters.months:
+            fused = [
+                hit for hit in fused
+                if any(row_matches_month(hit, m) for m in filters.months)
+            ]
 
-    # Fallback final: importance + página
-    if not fused:
-        fallback_used = True
-        with repo.connect() as conn:
+        # Fallback final: importance + página (misma conexión).
+        if not fused:
+            fallback_used = True
             where_sql, where_params = build_filters_sql(
                 filters, docs_table=docs_table, chunks_table=chunks_table,
                 chunks_alias="c", docs_alias="d",
@@ -265,11 +315,21 @@ def hybrid_search(
 
     ranked = importance_boost(fused, weight=importance_weight, recency_weight=recency_weight)
 
-    # Reranker de segunda pasada: re-score con cross-encoder antes de cortar a k.
+    # ── Timer 3: reranker (cross-encoder) ─────────────────────────────────────
+    t_rerank = time.perf_counter()
     if reranker is not None and ranked:
         top = reranker.rerank(parsed.clean_query, ranked, top_k=k)
     else:
         top = ranked[:k]
+    ms_rerank = int((time.perf_counter() - t_rerank) * 1000)
+
+    ms_total = int((time.perf_counter() - t_total) * 1000)
+    log.info(
+        "hybrid_search timing: embed=%dms sql=%dms rerank=%dms total=%dms "
+        "(hits=%d, fallback=%s)",
+        ms_embed, ms_sql, ms_rerank, ms_total,
+        len(top), fallback_used,
+    )
 
     mark_low_confidence(top)
 

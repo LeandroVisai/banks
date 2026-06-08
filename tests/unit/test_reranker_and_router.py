@@ -44,7 +44,7 @@ def _mock_cross_encoder(scores: list[float]) -> MagicMock:
 @pytest.mark.unit
 class TestCrossEncoderReranker:
     def _reranker_with_mock(self, scores: list[float]) -> CrossEncoderReranker:
-        r = CrossEncoderReranker("BAAI/bge-reranker-v2-m3")
+        r = CrossEncoderReranker("jinaai/jina-reranker-v3")
         r._model = _mock_cross_encoder(scores)
         r.loaded = True
         return r
@@ -84,7 +84,7 @@ class TestCrossEncoderReranker:
         assert "reranker_score" in result[0]
 
     def test_load_idempotent(self) -> None:
-        r = CrossEncoderReranker("BAAI/bge-reranker-v2-m3")
+        r = CrossEncoderReranker("jinaai/jina-reranker-v3")
         sentinel = MagicMock()
         r.loaded = True
         r._model = sentinel
@@ -139,7 +139,7 @@ class TestCrossEncoderReranker:
 
     def test_predict_failure_degrades(self) -> None:
         """Si predict() falla (OOM, par malformado), se mantiene el orden previo."""
-        r = CrossEncoderReranker("BAAI/bge-reranker-v2-m3")
+        r = CrossEncoderReranker("jinaai/jina-reranker-v3")
         r._model = MagicMock()
         r._model.predict.side_effect = RuntimeError("OOM")
         r.loaded = True

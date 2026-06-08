@@ -29,9 +29,7 @@ BANKS_MAX_AGENT_ITERATIONS=6
 BANKS_HISTORY_MAX_TURNS=40           # memoria del chatbot: nº de mensajes de la
                                      # conversación que se pasan al LLM. Subir para
                                      # recordar más (usa el N_CTX grande). prompt+salida<=N_CTX
-BANKS_RERANK_ENABLED=false           # NO tenemos bge-reranker-v2-m3; apagado para
-                                     # no intentar cargarlo. Cuando exista el modelo,
-                                     # poner true (o BANKS_RERANK_MODEL=<dir en models/>)
+BANKS_RERANK_ENABLED=true            # jina-reranker-v3 disponible en models/jinaai--jina-reranker-v3/
 BANKS_LOG_LEVEL=INFO
 
 # ---- .env para el PC DEV (RTX 3080 10GB; el 27B-Q4 NO cabe -> 7B) ---------

@@ -146,7 +146,7 @@ Los tres ya existen en este entorno como skills locales (`rag`, `architecture-pa
 | Capa | Componente | Notas |
 |---|---|---|
 | **Embeddings (texto + visual)** | `Qwen3-VL-Embedding-8B` (4096-dim, multimodal) | Reemplaza al text-only Qwen3-Embedding-8B. MTEB multilingual #1. |
-| **Re-ranker** | `BAAI/bge-reranker-v2-m3` o `Qwen3-Reranker-4B` | Cross-encoder cabal pasada final sobre top-50 de hybrid search. |
+| **Re-ranker** | `jinaai/jina-reranker-v3` o `Qwen3-Reranker-4B` | Cross-encoder cabal pasada final sobre top-50 de hybrid search. |
 | **LLM (intercambiables)** | `Qwen3.6-27B-UD-Q4_K_XL.gguf` (Unsloth) **o** `gemma-4-26B-A4B-it.gguf` (MoE 4B activos) | Selección por env `BANKS_LLM_MODEL`. |
 | **Inference engine** | `llama.cpp` (binarios CUDA 12.x) | Reemplaza vLLM porque los modelos ya están en GGUF y llama.cpp es offline-friendly + sin Python en runtime. |
 | **Vector DB** | PostgreSQL 14 + pgvector (HNSW cosine) | Sin cambios. |
@@ -238,7 +238,7 @@ banks/
 │   │   │   ├── multimodal_embedder.py     ← NUEVO: Qwen3-VL-Embedding-8B (texto + img)
 │   │   │   └── instruction_builder.py     ← prefijos por modelo
 │   │   ├── reranker/
-│   │   │   └── cross_encoder.py           ← NUEVO BAAI/bge-reranker-v2-m3
+│   │   │   └── cross_encoder.py           ← NUEVO jinaai/jina-reranker-v3
 │   │   ├── llm/
 │   │   │   ├── base.py                    ← Protocolo LLM (generate, count_tokens)
 │   │   │   ├── llamacpp_engine.py         ← NUEVO (reemplaza vllm_engine)
@@ -661,7 +661,7 @@ Regla clave: **`domain/` y `application/` jamás importan de `infrastructure/`**
 
 ### Fase 5 · Re-ranker y query routing (3 días)
 
-- [ ] **`infrastructure/reranker/cross_encoder.py`**: carga `BAAI/bge-reranker-v2-m3`. Método `rerank(query, documents, top_k=10)`.
+- [ ] **`infrastructure/reranker/cross_encoder.py`**: carga `jinaai/jina-reranker-v3`. Método `rerank(query, documents, top_k=10)`.
 - [ ] **`application/retrieval/reranker.py`**: pipeline `hybrid_search(top=50) → cross_encoder_rerank(top=20) → mmr(top=k)`.
 - [ ] **`application/retrieval/query_router.py`**:
   - Clasifica intent: `RAG_ONLY` (texto narrativo) | `SQL_ONLY` (datos numéricos) | `HYBRID` (combina) | `VISUAL` (gráfico).
@@ -738,7 +738,7 @@ Regla clave: **`domain/` y `application/` jamás importan de `infrastructure/`**
 ### Fase 9 · Deploy y prueba en server H100 (2 días)
 
 - [ ] Empaquetar wheels de todas las deps (con `pip download`).
-- [ ] Sincronizar `models/` con: `Qwen3-VL-Embedding-8B/`, `Qwen3.6-27B-UD-Q4_K_XL.gguf`, `gemma-4-26B-A4B-it.gguf`, `bge-reranker-v2-m3/`.
+- [ ] Sincronizar `models/` con: `Qwen3-VL-Embedding-8B/`, `Qwen3.6-27B-UD-Q4_K_XL.gguf`, `gemma-4-26B-A4B-it.gguf`, `jinaai--jina-reranker-v3/`.
 - [ ] Transferir tarball al server (sftp).
 - [ ] Instalar offline: `pip install --no-index --find-links wheels/ -e .`
 - [ ] Configurar `.env` para H100 (paths absolutos, `BANKS_LLM_FAMILY`, etc.).

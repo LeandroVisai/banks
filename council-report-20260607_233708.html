@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Council Report — Infraestructura Chatbot RAG BCCh</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f8f9fa; color: #1a1a2e; line-height: 1.6; }
+  .header { background: #1a1a2e; color: #fff; padding: 2.5rem 2rem; }
+  .header h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.4rem; }
+  .header .subtitle { color: #a0aec0; font-size: 0.9rem; }
+  .container { max-width: 900px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+  /* Verdict */
+  .verdict-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 2rem; margin-bottom: 2rem; }
+  .verdict-card h2 { font-size: 1.25rem; font-weight: 700; color: #1a1a2e; margin-bottom: 1.25rem; padding-bottom: 0.75rem; border-bottom: 2px solid #e2e8f0; }
+  .section { margin-bottom: 1.75rem; }
+  .section h3 { font-size: 1rem; font-weight: 700; color: #2d3748; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem; }
+  .section h3 .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot-green  { background: #38a169; }
+  .dot-amber  { background: #d69e2e; }
+  .dot-red    { background: #e53e3e; }
+  .dot-blue   { background: #3182ce; }
+  .dot-purple { background: #805ad5; }
+  .section p, .section li { font-size: 0.92rem; color: #4a5568; }
+  .section ul { padding-left: 1.25rem; margin-top: 0.4rem; }
+  .section ul li { margin-bottom: 0.4rem; }
+
+  /* One thing */
+  .one-thing { background: #1a1a2e; color: #fff; border-radius: 10px; padding: 1.75rem 2rem; margin-bottom: 2rem; }
+  .one-thing h2 { font-size: 1rem; color: #a0aec0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem; }
+  .one-thing p { font-size: 1.05rem; font-weight: 600; line-height: 1.5; }
+
+  /* Agreement visual */
+  .agreement-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+  .advisor-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1.25rem; }
+  .advisor-card h4 { font-size: 0.85rem; font-weight: 700; color: #2d3748; margin-bottom: 0.75rem; }
+  .improvement-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem; font-size: 0.82rem; }
+  .improvement-label { color: #4a5568; }
+  .badge { border-radius: 12px; padding: 0.15rem 0.6rem; font-size: 0.75rem; font-weight: 700; }
+  .badge-do     { background: #c6f6d5; color: #276749; }
+  .badge-skip   { background: #fed7d7; color: #9b2c2c; }
+  .badge-defer  { background: #fefcbf; color: #7b6000; }
+  .badge-risky  { background: #feebc8; color: #7b341e; }
+
+  /* Collapsibles */
+  .collapsible-section { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 0.75rem; overflow: hidden; }
+  .collapsible-header { width: 100%; text-align: left; background: none; border: none; padding: 1rem 1.25rem; cursor: pointer; display: flex; align-items: center; justify-content: space-between; font-size: 0.9rem; font-weight: 600; color: #2d3748; }
+  .collapsible-header:hover { background: #f7fafc; }
+  .collapsible-body { display: none; padding: 0 1.25rem 1.25rem; font-size: 0.88rem; color: #4a5568; line-height: 1.65; border-top: 1px solid #e2e8f0; }
+  .collapsible-body.open { display: block; }
+  .chevron { transition: transform 0.2s; }
+  .chevron.open { transform: rotate(180deg); }
+
+  .advisor-tag { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; margin-bottom: 0.75rem; }
+  .tag-contrarian { background: #fed7d7; color: #9b2c2c; }
+  .tag-firstprinciples { background: #bee3f8; color: #2b6cb0; }
+  .tag-expansionist { background: #c6f6d5; color: #276749; }
+  .tag-outsider { background: #e9d8fd; color: #6b46c1; }
+  .tag-executor { background: #fefcbf; color: #7b6000; }
+
+  .footer { text-align: center; padding: 2rem; color: #a0aec0; font-size: 0.8rem; border-top: 1px solid #e2e8f0; margin-top: 1rem; }
+  strong { color: #2d3748; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Council Report — Infraestructura Chatbot RAG</h1>
+  <div class="subtitle">Banco Central de Chile · 7 de junio 2026 · 5 asesores + 5 revisores + chairman</div>
+</div>
+
+<div class="container">
+
+  <!-- THE ONE THING -->
+  <div class="one-thing">
+    <h2>Lo que debes hacer primero</h2>
+    <p>Instala timers de pared en 5 puntos clave del pipeline (embedding, reranker, LLM por especialista, PostgreSQL, total) y corre 10 consultas reales antes de tocar ningún otro código. C se despliega en paralelo — es una línea, riesgo cero. Pero el profiler es lo que valida o invalida todo lo demás.</p>
+  </div>
+
+  <!-- VERDICT -->
+  <div class="verdict-card">
+    <h2>Veredicto del Chairman</h2>
+
+    <div class="section">
+      <h3><span class="dot dot-green"></span> Donde el Council coincide</h3>
+      <ul>
+        <li><strong>C es fix cero.</strong> Todos los asesores coincidieron: el cap de 1500 tokens en settings.py es un bug activo que trunca los chunks al 50% de su tamaño diseñado, degradando la calidad silenciosamente.</li>
+        <li><strong>A (semáforo) es necesario pero no suficiente.</strong> Nadie defendió el comportamiento actual (60s+ de espera silenciosa). El debate fue sobre la forma correcta, no sobre si se necesita.</li>
+        <li><strong>F es operacionalmente peligroso en este momento.</strong> El KV cache durante llamadas multi-especialista puede llevar el VRAM real de 4 workers a 70-76GB, dejando solo 4-10GB de margen. Un OOM mid-inference produce output corrupto, no un 503 limpio.</li>
+        <li><strong>D (connection pool) está subestimado.</strong> Tres revisores lo marcaron independientemente: psycopg3 AsyncConnectionPool ya está en pyproject.toml y el costo de handshake TCP por búsqueda es real y medible.</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h3><span class="dot dot-amber"></span> Donde el Council choca</h3>
+      <ul>
+        <li><strong>F — apuesta estratégica vs. desastre operacional:</strong> The Outsider tiene razón en que F es lo único que permite queries simultáneas reales. The Contrarian tiene razón en que el OOM produce output corrupto. La resolución: F no está mal en principio, está mal <em>ahora</em> sin un budget de VRAM validado.</li>
+        <li><strong>E — UX falsa vs. cambio de comportamiento:</strong> The Executor lo llama "la misma latencia percibida diferente". The Expansionist cita que el streaming cambia de "herramienta que consulto" a "herramienta con la que pienso". Ambos tienen razón — el debate es de filosofía de producto, no de ingeniería.</li>
+        <li><strong>C — bug vs. tradeoff:</strong> The Contrarian plantea que duplicar los tokens de chunk también aumenta la latencia por llamada LLM y puede saturar el contexto. Es un punto válido que merece un A/B de 5 requests, no un veto.</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h3><span class="dot dot-red"></span> Blind spots que encontró el peer review</h3>
+      <ul>
+        <li><strong>El CrossEncoder reranker es el bottleneck no examinado.</strong> bge-reranker-v2-m3 corriendo en CPU a ~50ms/chunk × 50 chunks = ~2.5s por búsqueda, en cada request, antes de que el LLM siquiera arranque. Podría eclipsar las ganancias de A, B y D combinados.</li>
+        <li><strong>Nadie corrió un profiler.</strong> Un trace de nvidia-smi dmon durante un request real te dice si eres GPU-bound, IO-bound o Python-bound. El council construyó un plan de acción sobre un diagnóstico no confirmado por medición.</li>
+        <li><strong>Especialistas especulativos.</strong> El router sabe cuál especialista gana. Disparar todos especulativamente y descartar los perdedores puede ser el 40-60% del compute del LLM desperdiciado — cero cambios de infraestructura requeridos para arreglarlo.</li>
+        <li><strong>La cache key de B omite la versión del modelo.</strong> Si el equipo cambia el modelo de embeddings (RAG_EMBEDDING_MODEL), la cache devuelve vectores de dimensión incorrecta sin error visible.</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h3><span class="dot dot-blue"></span> La Recomendación</h3>
+      <p><strong>Fase 1 — Esta semana, sin debate:</strong></p>
+      <ul>
+        <li>Fix C: cambiar max_tool_result_tokens de 1500 → 3000. Una línea. Verificar con A/B de 5 requests que la latencia no degrada.</li>
+        <li>Fix D: AsyncConnectionPool (5-10 conexiones). 2 horas de trabajo. Ya en pyproject.toml.</li>
+        <li>Profiler: timers de pared en los 5 puntos del pipeline. Correr 10 queries reales. Leer los números antes de cualquier otra decisión.</li>
+      </ul>
+      <p style="margin-top:0.75rem"><strong>Fase 2 — Si el profiler confirma los bottlenecks:</strong></p>
+      <ul>
+        <li>Si el CrossEncoder es el cuello: moverlo a GPU o reducir top_k antes del reranking.</li>
+        <li>Si los especialistas son especulativos: lazy evaluation con threshold de confianza del router.</li>
+        <li>Agregar A: semáforo de 2 + cola acotada (depth=4, timeout=45s). No un 503 puro — una cola corta primero.</li>
+      </ul>
+      <p style="margin-top:0.75rem"><strong>Fase 3 — Solo cuando Fase 2 sea estable:</strong></p>
+      <ul>
+        <li>Validar F con un test controlado de VRAM budget: monitorear KV cache durante un request multi-especialista completo. Si el pico por worker es &lt;18GB → 4 workers es viable. Si supera 20GB → F queda para la próxima cuantización.</li>
+        <li>Diferir E hasta resolver F. Diferir B hasta medir la diversidad de queries vs. hit rate esperado.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- AGREEMENT VISUAL -->
+  <h2 style="font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:#1a1a2e;">Posiciones por asesor</h2>
+  <div class="agreement-grid">
+    <div class="advisor-card">
+      <h4>⚙️ The Executor</h4>
+      <div class="improvement-row"><span class="improvement-label">A — Semáforo</span><span class="badge badge-do">HACER</span></div>
+      <div class="improvement-row"><span class="improvement-label">B — Cache embeddings</span><span class="badge badge-do">HACER</span></div>
+      <div class="improvement-row"><span class="improvement-label">C — Fix 1500→3000</span><span class="badge badge-do">HACER</span></div>
+      <div class="improvement-row"><span class="improvement-label">D — Pool PostgreSQL</span><span class="badge badge-do">HACER</span></div>
+      <div class="improvement-row"><span class="improvement-label">E — Streaming SSE</span><span class="badge badge-defer">DIFERIR</span></div>
+      <div class="improvement-row"><span class="improvement-label">F — Multi-worker</span><span class="badge badge-skip">MATAR</span></div>
+    </div>
+    <div class="advisor-card">
+      <h4>🚀 The Expansionist</h4>
+      <div class="improvement-row"><span class="improvement-label">A — Semáforo</span><span class="badge badge-defer">HYGIENE</span></div>
+      <div class="improvement-row"><span class="improvement-label">B — Cache embeddings</span><span class="badge badge-do">ANALYTICS</span></div>
+      <div class="improvement-row"><span class="improvement-label">C — Fix 1500→3000</span><span class="badge badge-do">HACER</span></div>
+      <div class="improvement-row"><span class="improvement-label">D — Pool PostgreSQL</span><span class="badge badge-defer">HYGIENE</span></div>
+      <div class="improvement-row"><span class="improvement-label">E — Streaming SSE</span><span class="badge badge-do">HACER</span></div>
+      <div class="improvement-row"><span class="improvement-label">F — Multi-worker</span><span class="badge badge-do">APUESTA</span></div>
+    </div>
+    <div class="advisor-card">
+      <h4>🔍 First Principles</h4>
+      <div class="improvement-row"><span class="improvement-label">A — Semáforo</span><span class="badge badge-do">HACER</span></div>
+      <div class="improvement-row"><span class="improvement-label">B — Cache embeddings</span><span class="badge badge-defer">–</span></div>
+      <div class="improvement-row"><span class="improvement-label">C — Fix 1500→3000</span><span class="badge badge-do">HACER</span></div>
+      <div class="improvement-row"><span class="improvement-label">D — Pool PostgreSQL</span><span class="badge badge-defer">–</span></div>
+      <div class="improvement-row"><span class="improvement-label">E — Streaming SSE</span><span class="badge badge-defer">–</span></div>
+      <div class="improvement-row"><span class="improvement-label">F — Multi-worker</span><span class="badge badge-skip">SKIP</span></div>
+    </div>
+    <div class="advisor-card">
+      <h4>⚠️ The Contrarian</h4>
+      <div class="improvement-row"><span class="improvement-label">A — Semáforo</span><span class="badge badge-risky">MEJORAR</span></div>
+      <div class="improvement-row"><span class="improvement-label">B — Cache embeddings</span><span class="badge badge-risky">RIESGO</span></div>
+      <div class="improvement-row"><span class="improvement-label">C — Fix 1500→3000</span><span class="badge badge-risky">VALIDAR</span></div>
+      <div class="improvement-row"><span class="improvement-label">D — Pool PostgreSQL</span><span class="badge badge-defer">–</span></div>
+      <div class="improvement-row"><span class="improvement-label">E — Streaming SSE</span><span class="badge badge-defer">–</span></div>
+      <div class="improvement-row"><span class="improvement-label">F — Multi-worker</span><span class="badge badge-skip">PELIGRO</span></div>
+    </div>
+    <div class="advisor-card">
+      <h4>👁️ The Outsider</h4>
+      <div class="improvement-row"><span class="improvement-label">A — Semáforo</span><span class="badge badge-skip">INSTITUCIONALIZA</span></div>
+      <div class="improvement-row"><span class="improvement-label">B — Cache embeddings</span><span class="badge badge-defer">SECUNDARIO</span></div>
+      <div class="improvement-row"><span class="improvement-label">C — Fix 1500→3000</span><span class="badge badge-do">HACER</span></div>
+      <div class="improvement-row"><span class="improvement-label">D — Pool PostgreSQL</span><span class="badge badge-defer">SECUNDARIO</span></div>
+      <div class="improvement-row"><span class="improvement-label">E — Streaming SSE</span><span class="badge badge-defer">COSMÉTICO</span></div>
+      <div class="improvement-row"><span class="improvement-label">F — Multi-worker</span><span class="badge badge-do">LA SOLUCIÓN</span></div>
+    </div>
+  </div>
+
+  <!-- ADVISOR DETAILS (collapsible) -->
+  <h2 style="font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:#1a1a2e;">Respuestas completas de los asesores</h2>
+
+  <div class="collapsible-section">
+    <button class="collapsible-header" onclick="toggle(this)">
+      ⚙️ The Executor <span class="chevron">▼</span>
+    </button>
+    <div class="collapsible-body">
+      <span class="advisor-tag tag-executor">Executor</span>
+      <p>Do A and C Monday. Ship B and D by end of week. Defer E. Kill F.</p>
+      <p>A is a 20-line fix. One semaphore in AppState, one middleware check, one 503 response. No risk. Do it first because silent 60s+ hangs are a trust-killer with compliance-minded banking analysts.</p>
+      <p>C is a one-line fix that's currently silently degrading retrieval quality. Change 1500→3000 in settings.py. This is a bug, not a feature. Fix it before anything else changes retrieval behavior. Risk: zero.</p>
+      <p>B is an afternoon's work. OrderedDict LRU in hybrid_search.py, keyed on (query_text, model_name). The win is real because the multi-specialist architecture re-embeds the same query multiple times per request.</p>
+      <p>D is two days max. psycopg3 is already in pyproject.toml. E is a UX lie — same total latency, just perceived differently. F is a VRAM math exercise that turns into an ops nightmare — OOM kills workers mid-inference, not a clean 503.</p>
+    </div>
+  </div>
+
+  <div class="collapsible-section">
+    <button class="collapsible-header" onclick="toggle(this)">
+      🚀 The Expansionist <span class="chevron">▼</span>
+    </button>
+    <div class="collapsible-body">
+      <span class="advisor-tag tag-expansionist">Expansionist</span>
+      <p>The framing here is too small. You're optimizing for 20 analysts when the real question is: what happens when this works?</p>
+      <p>F is the one everyone's nervous about, but it's the one that matters most strategically. Four parallel 27B instances isn't just a throughput fix — it's the foundation for serving 200 analysts across Chilean public finance (Superintendencia, Hacienda, CORFO).</p>
+      <p>E changes how analysts use the tool. When they see tokens appearing, they start reading and thinking in parallel. This is how you go from "tool I consult" to "tool I think with." B enables query analytics — cached embeddings are a natural corpus of what analysts ask. C is the highest-leverage line of code in the entire list.</p>
+      <p>Priority: C immediately, E in parallel, F as the expansion bet. A and D are hygiene. B is your future analytics layer.</p>
+    </div>
+  </div>
+
+  <div class="collapsible-section">
+    <button class="collapsible-header" onclick="toggle(this)">
+      🔍 The First Principles Thinker <span class="chevron">▼</span>
+    </button>
+    <div class="collapsible-body">
+      <span class="advisor-tag tag-firstprinciples">First Principles</span>
+      <p>The real problem is misdiagnosed. The team is treating symptoms when the actual failure is architectural: a batch-processing workload dressed up as an interactive service. Every proposal accepts the fundamental constraint — serial LLM calls — and optimizes around it.</p>
+      <p>Strip assumptions: Do analysts actually need all N specialists per query? The router knows which one wins — the others are speculative computation. Is the 27B-Q4 model actually necessary for specialist calls, or only for synthesis?</p>
+      <p>What to do: C first (it's a bug). A second (silent 60s waits are a trust-destroying UX failure). Skip F entirely (OOM risk). Then rethink specialist architecture — lazy evaluation, only invoke specialists the router scores above threshold. This cuts LLM calls 40-60% without any infrastructure change.</p>
+    </div>
+  </div>
+
+  <div class="collapsible-section">
+    <button class="collapsible-header" onclick="toggle(this)">
+      ⚠️ The Contrarian <span class="chevron">▼</span>
+    </button>
+    <div class="collapsible-body">
+      <span class="advisor-tag tag-contrarian">Contrarian</span>
+      <p><strong>F is the sleeper disaster nobody is stress-testing.</strong> Q4 quantization memory estimates are optimistic. KV cache at 10-20 LLM calls per request spikes 2-4GB per active request, per worker. Four workers mid-inference = 70-76GB realistically — OOM crashes produce partial corrupt output, not a clean 503.</p>
+      <p><strong>C has an unverified assumption.</strong> Doubling token budget doubles prompt length, increases latency per call, and could crowd context. This is a tuning decision masquerading as a bug fix. It needs a 5-request A/B, not an automatic deploy.</p>
+      <p><strong>A's retry interval is wrong.</strong> "Retry in ~30s" when processing takes 15-30s trains users to hammer the endpoint. Expose queue depth, not a fixed estimate.</p>
+      <p><strong>B's cache key omits embedding model version.</strong> If the model is swapped (RAG_EMBEDDING_MODEL), stale cached embeddings silently corrupt retrieval. Financial analysis with wrong embeddings is the exact failure mode stakes section calls worse than being slow.</p>
+    </div>
+  </div>
+
+  <div class="collapsible-section">
+    <button class="collapsible-header" onclick="toggle(this)">
+      👁️ The Outsider <span class="chevron">▼</span>
+    </button>
+    <div class="collapsible-body">
+      <span class="advisor-tag tag-outsider">Outsider</span>
+      <p>The curse of knowledge is all over this proposal. F is listed last with a "technically feasible" hedge. That hedge is backwards. F is the only improvement that actually solves the stated problem: multiple analysts querying simultaneously during meetings. Everything else optimizes a single-lane road.</p>
+      <p>20 users, 2-4 req/min capacity, 10-20 LLM calls per request. The math is broken by design.</p>
+      <p>A (503) is institutionalizing the failure. "Please retry in 30 seconds" during a meeting is just a slower way to frustrate analysts. C is the highest-stakes bug — it should be fix zero, today, before anything else ships. E is pure perception management — same wrong answer, delivered token by token.</p>
+      <p>Priority reframe: Fix C immediately. Ship F. Then A becomes moot and B, D become nice-to-haves.</p>
+    </div>
+  </div>
+
+  <!-- PEER REVIEW HIGHLIGHTS -->
+  <h2 style="font-size:1.1rem; font-weight:700; margin:1.5rem 0 1rem; color:#1a1a2e;">Highlights del Peer Review</h2>
+
+  <div class="collapsible-section">
+    <button class="collapsible-header" onclick="toggle(this)">
+      Ver resumen de las 5 revisiones <span class="chevron">▼</span>
+    </button>
+    <div class="collapsible-body">
+      <p><strong>Respuesta más votada como más fuerte:</strong> The Contrarian (3/5 revisores) y The Executor (2/5). Divergencia real.</p>
+      <p style="margin-top:0.75rem"><strong>Blind spot más votado:</strong> The Expansionist — propone expansión a 200 analistas sin resolver el baseline de 20. Visto por 4 de 5 revisores.</p>
+      <p style="margin-top:0.75rem"><strong>Lo que todos los asesores perdieron (emergió solo en review):</strong></p>
+      <ul>
+        <li>El <strong>CrossEncoder reranker</strong> corriendo en CPU puede ser el bottleneck real (~2.5s por búsqueda), no mencionado por ningún asesor.</li>
+        <li>Nadie pidió un <strong>profiler trace</strong> antes de proponer cambios. "nvidia-smi dmon" durante un request real invalida o valida la mayoría de las propuestas.</li>
+        <li>Los <strong>especialistas especulativos</strong> del router son la mayor oportunidad de latencia sin infraestructura — 40-60% de las llamadas LLM pueden ser descartables.</li>
+        <li>La <strong>cache de embeddings (B)</strong> con vectores de 4096 dimensiones y solo 20 analistas con queries diversas puede tener economics negativos — costo de memoria > ahorro en cómputo.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    Council generado el 7 de junio 2026 · 5 asesores · 5 revisores · 1 chairman · banks_rag@BCCh
+  </div>
+</div>
+
+<script>
+function toggle(btn) {
+  const body = btn.nextElementSibling;
+  const chevron = btn.querySelector('.chevron');
+  body.classList.toggle('open');
+  chevron.classList.toggle('open');
+}
+</script>
+</body>
+</html>

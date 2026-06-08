@@ -74,7 +74,7 @@ class Settings(BaseSettings):
 
     # ── Reranker (cross-encoder de segunda pasada en search_documents) ────────
     rerank_enabled: bool = True   # BANKS_RERANK_ENABLED
-    rerank_model: str = "BAAI/bge-reranker-v2-m3"  # BANKS_RERANK_MODEL
+    rerank_model: str = "jinaai/jina-reranker-v3"  # BANKS_RERANK_MODEL
 
     # ── TTS (texto→audio; voz JARVIS) ─────────────────────────────────────────
     tts_enabled: bool = False     # BANKS_TTS_ENABLED
@@ -88,7 +88,7 @@ class Settings(BaseSettings):
 
     # ── Agente ───────────────────────────────────────────────────────────────
     max_agent_iterations: int = 6
-    max_tool_result_tokens: int = 1500
+    max_tool_result_tokens: int = 3000
     # Máximo de MENSAJES de historial que se pasan al LLM (memoria conversacional
     # del chatbot). BANKS_HISTORY_MAX_TURNS. Cabe holgado en N_CTX; subir para que
     # el chatbot recuerde conversaciones más largas (ojo: prompt+salida <= N_CTX).
@@ -111,6 +111,18 @@ class Settings(BaseSettings):
     upload_map_max_tokens: int = 1024        # output de cada análisis parcial
     upload_max_map_batches: int = 24         # techo de lotes (docs gigantes)
     upload_max_visuals: int = 6              # gráficos del PDF a mostrar en la UI
+
+    # Máximo de requests /v1/chat en vuelo simultáneamente. Cuando se alcanza el
+    # límite, los nuevos requests esperan hasta BANKS_CHAT_QUEUE_TIMEOUT_S antes
+    # de recibir un 503. Evita que requests concurrentes encolen silenciosamente
+    # durante 60s+. Default 2: permite dos análisis paralelos en la H100.
+    chat_concurrency: int = 2              # BANKS_CHAT_CONCURRENCY
+    # Segundos que un request espera en cola antes de recibir 503 "ocupado".
+    chat_queue_timeout_s: float = 8.0     # BANKS_CHAT_QUEUE_TIMEOUT_S
+
+    # ── PostgreSQL pool ───────────────────────────────────────────────────────
+    pg_pool_min: int = 2    # BANKS_PG_POOL_MIN — conexiones mínimas siempre abiertas
+    pg_pool_max: int = 10   # BANKS_PG_POOL_MAX — techo de conexiones en el pool
 
     # ── API ──────────────────────────────────────────────────────────────────
     api_host: str = "0.0.0.0"

@@ -48,7 +48,7 @@ Orquesta dominio + Protocols. Sin acoplarse a libs concretas.
 Implementa los Protocols con librerías concretas.
 - `persistence/` — postgres_repo (psycopg3), parquet_store, image_store
 - `embeddings/` — multimodal_embedder (Qwen3-VL-Embedding-8B)
-- `reranker/` — cross_encoder (BAAI/bge-reranker-v2-m3)
+- `reranker/` — cross_encoder (jinaai/jina-reranker-v3)
 - `llm/` — llamacpp_engine, chat_templates (Qwen/Gemma), tool_call_parser
 - `extractors/` — pdf, excel, chart_detector, encoding_fixers
 - `chunking/` — text_chunker, monitor_pm_chunker
@@ -70,7 +70,7 @@ Compartido por `application` y `infrastructure`:
 | Componente | Implementación |
 |---|---|
 | Embeddings | Qwen3-VL-Embedding-8B (4096-dim, texto + imagen) |
-| Reranker | BAAI/bge-reranker-v2-m3 (cross-encoder) |
+| Reranker | jinaai/jina-reranker-v3 (cross-encoder) |
 | LLM | llama.cpp + Qwen3.6-27B-UD-Q4_K_XL (Gemma 4 26B-A4B-it como segundo backend) |
 | Vector DB | PostgreSQL 14 + pgvector (HNSW cosine) |
 | Series | Parquets en `data/snapshots/` (DuckDB para queries SQL sobre parquet) |

@@ -150,7 +150,7 @@ export BANKS_EMBEDDING_MODEL=intfloat/multilingual-e5-large
 ```
 > Nota: si cambias el modelo después de cargar chunks a la BD, debes re-vectorizar e re-indexar todo.
 
-### 3.2 Reranker — bge-reranker-v2-m3 (opcional)
+### 3.2 Reranker — jina-reranker-v3
 
 **Uso**: reordenar los top-N chunks recuperados por relevancia cruzada (query, chunk)
 
@@ -158,8 +158,8 @@ export BANKS_EMBEDDING_MODEL=intfloat/multilingual-e5-large
 python -c "
 from huggingface_hub import snapshot_download
 snapshot_download(
-    'BAAI/bge-reranker-v2-m3',
-    local_dir='models/BAAI--bge-reranker-v2-m3'
+    'jinaai/jina-reranker-v3',
+    local_dir='models/jinaai--jina-reranker-v3'
 )
 "
 ```
@@ -893,7 +893,7 @@ PYTHONPATH=src pytest tests/unit/ -q
 # El sistema los auto-detecta antes de ir a HuggingFace
 ls models/
 # models/Qwen--Qwen3-VL-Embedding-8B/
-# models/BAAI--bge-reranker-v2-m3/
+# models/jinaai--jina-reranker-v3/
 ```
 
 ### llama-cpp-python no usa GPU

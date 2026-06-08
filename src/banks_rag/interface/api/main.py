@@ -86,6 +86,25 @@ async def lifespan(app: FastAPI):
     setup_tracing()
     log.info("API iniciando — version=%s", __version__)
 
+    # Semáforo de concurrencia: limita los requests /v1/chat en vuelo simultáneos.
+    # Debe inicializarse dentro del event loop (asyncio.Semaphore es loop-local).
+    if deps.chat_semaphore is None:
+        deps.chat_semaphore = asyncio.Semaphore(settings.chat_concurrency)
+        log.info("Chat semaphore inicializado (concurrencia máx=%d)", settings.chat_concurrency)
+
+    # Pool de conexiones PostgreSQL: reutiliza conexiones entre requests.
+    # Elimina el overhead de TCP handshake + auth (~10-15ms) por cada búsqueda.
+    from banks_rag.infrastructure.persistence.connection_pool import init_pool
+    init_pool(
+        min_conn=settings.pg_pool_min,
+        max_conn=settings.pg_pool_max,
+        host=settings.pg_host,
+        port=settings.pg_port,
+        user=settings.pg_user,
+        password=settings.pg_password,
+        database=settings.pg_database,
+    )
+
     # PostgresRepo es barato (sin conexión hasta ser usado).
     if deps.repo is None:
         from banks_rag.infrastructure.persistence import PostgresRepo
@@ -124,6 +143,9 @@ async def lifespan(app: FastAPI):
             await deps.llm.unload()
         except Exception:  # noqa: BLE001
             log.exception("Error al unload LLM")
+
+    from banks_rag.infrastructure.persistence.connection_pool import close_pool
+    close_pool()
 
 
 def create_app(*, deps: AppState | None = None) -> FastAPI:

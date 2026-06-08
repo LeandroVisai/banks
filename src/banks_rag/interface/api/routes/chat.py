@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -38,6 +39,27 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=503, detail="LLM no inicializado")
     if not getattr(deps.llm, "loaded", False):
         raise HTTPException(status_code=503, detail="LLM cargando — reintenta en breve")
+
+    # Gate de concurrencia: intenta adquirir el semáforo dentro del timeout de
+    # cola. Si expira, retorna 503 con el tiempo de reintento correcto — evita
+    # que el 3er usuario quede esperando 60s+ en silencio (comportamiento previo).
+    semaphore = getattr(deps, "chat_semaphore", None)
+    if semaphore is not None:
+        try:
+            await asyncio.wait_for(semaphore.acquire(), timeout=settings.chat_queue_timeout_s)
+        except TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "servidor_ocupado",
+                    "message": (
+                        "El servidor está procesando el número máximo de consultas. "
+                        "Reintenta en unos segundos."
+                    ),
+                    "retry_after_seconds": int(settings.chat_queue_timeout_s) + 2,
+                },
+                headers={"Retry-After": str(int(settings.chat_queue_timeout_s) + 2)},
+            )
 
     # Solo se aceptan turnos 'user'/'assistant' del cliente: un mensaje
     # 'system' en el history permitiría sobrescribir el system prompt.
@@ -97,6 +119,10 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
             status_code=502,
             detail=f"El agente no pudo completar el turno: {exc}",
         ) from exc
+    finally:
+        # Libera el slot del semáforo independientemente del resultado.
+        if semaphore is not None:
+            semaphore.release()
 
     log_chat_turn(
         body.message, history, result,
