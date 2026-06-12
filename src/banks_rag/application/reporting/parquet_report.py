@@ -366,7 +366,8 @@ async def _describe_dataset(
     section.paragraph = _clean_paragraph(result.text)
     if not section.paragraph:
         section.status = "error"
-        section.paragraph = _ERROR_PARAGRAPH
+        log.error("[%s] el LLM respondió con texto vacío (raw=%r)", dataset.id, result.text)
+        section.paragraph = _error_paragraph("LLM", RuntimeError("el modelo respondió con texto vacío"))
     return section
 
 

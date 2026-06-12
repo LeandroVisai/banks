@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
+import logging
 import pathlib
 import sys
 
@@ -39,6 +40,23 @@ from banks_rag.application.reporting import (  # noqa: E402
     render_parquet_report_html,
 )
 from banks_rag.config import get_settings  # noqa: E402
+
+
+def _setup_logging(out: pathlib.Path) -> pathlib.Path:
+    """Redirige todos los loggers a consola Y a un fichero en out/logs/."""
+    log_dir = out / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"parquet_report_{datetime.date.today().isoformat()}.log"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stderr),
+            logging.FileHandler(log_path, encoding="utf-8"),
+        ],
+        force=True,
+    )
+    return log_path
 
 
 def _write(path: pathlib.Path, data: str) -> pathlib.Path:
@@ -60,6 +78,11 @@ def _build_llm(settings):
 
 
 async def _run(args: argparse.Namespace) -> None:
+    out = pathlib.Path(args.out)
+    log_path = _setup_logging(out)
+    log = logging.getLogger(__name__)
+    log.info("Log de esta corrida: %s", log_path)
+
     settings = get_settings()
     if settings.llm_family in ("mock", ""):
         print("WARN BANKS_LLM_FAMILY es 'mock'/vacío: configura qwen + el backend en .env.")
