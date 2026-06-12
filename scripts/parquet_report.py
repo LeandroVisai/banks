@@ -100,6 +100,12 @@ async def _run(args: argparse.Namespace) -> None:
     windows = tuple(s.strip() for s in args.windows.split(",") if s.strip())
 
     print(f"Generando informe descriptivo (ventanas {', '.join(windows)}, concurrencia {concurrency})…", flush=True)
+    map_max = args.map_max_tokens
+    synth_max = args.synth_max_tokens or settings.synthesis_max_tokens
+    log.info(
+        "Tokens MAP=%d  SYNTH=%d  concurrencia=%d",
+        map_max, synth_max, concurrency,
+    )
     report = await generate_parquet_report(
         llm,
         segment=args.segment,
@@ -108,7 +114,8 @@ async def _run(args: argparse.Namespace) -> None:
         windows=windows,
         top_k=args.top_k,
         concurrency=concurrency,
-        synthesis_max_tokens=settings.synthesis_max_tokens,
+        map_max_tokens=map_max,
+        synthesis_max_tokens=synth_max,
         think=args.think,
     )
 
@@ -140,6 +147,14 @@ def main() -> None:
     ap.add_argument("--top-k", type=int, default=12, help="Máx. datasets cuando la selección es --query.")
     ap.add_argument("--concurrency", type=int, default=0, help="Datasets en paralelo (0 = auto según backend).")
     ap.add_argument("--think", action="store_true", help="Activa el thinking del LLM en el map (más lento, más profundo).")
+    ap.add_argument(
+        "--map-max-tokens", type=int, default=32768,
+        help="Tokens máx por dataset en el MAP (default 32768; sube si el modelo se queda sin espacio para pensar).",
+    )
+    ap.add_argument(
+        "--synth-max-tokens", type=int, default=0,
+        help="Tokens máx para la síntesis global (0 = usar BANKS_SYNTHESIS_MAX_TOKENS del .env).",
+    )
     ap.add_argument("--no-html", action="store_true", help="No generar el HTML (solo markdown).")
     asyncio.run(_run(ap.parse_args()))
 

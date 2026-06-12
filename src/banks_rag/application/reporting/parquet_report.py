@@ -325,7 +325,7 @@ async def _describe_dataset(
     llm,
     window_specs: Sequence[tuple[str, int]],
     parquet_dir: Path,
-    map_max_tokens: int = 700,
+    map_max_tokens: int = 32768,
     think: bool = False,
 ) -> DatasetSection:
     """Genera la sección de un dataset: facts en Python + UNA llamada al LLM."""
@@ -499,8 +499,8 @@ async def generate_parquet_report(
     windows: Sequence[str] = ("7d", "30d"),
     top_k: int = 12,
     concurrency: int = 1,
-    map_max_tokens: int = 700,
-    synthesis_max_tokens: int = 2048,
+    map_max_tokens: int = 32768,
+    synthesis_max_tokens: int = 8192,
     think: bool = False,
     catalog_path: Path | str | None = None,
     entries: list[ParquetDataset] | None = None,
