@@ -35,12 +35,13 @@ class TestAliasHelpers:
 
     def test_dataset_hints(self) -> None:
         assert "dv01" in dataset_hints("DV01 fondos de pensiones")
-        assert any("_nr" in h for h in dataset_hints("posicion de no residentes"))
+        assert any("nr" in h for h in dataset_hints("posicion de no residentes"))
 
     def test_resolve_segment_alias(self) -> None:
-        segs = {"fondos_pension", "mercado_cambiario", "renta_fija_chile"}
-        assert resolve_segment("AFP", segs) == "fondos_pension"
-        assert resolve_segment("fondos_pension", segs) == "fondos_pension"
+        # Segmentos canónicos del nuevo catálogo (diccionario_parquets.yaml).
+        segs = {"afp", "fx", "rf_tasas"}
+        assert resolve_segment("AFP", segs) == "afp"
+        assert resolve_segment("afp", segs) == "afp"
         assert resolve_segment("desconocido", segs) is None
         assert resolve_segment(None, segs) is None
 

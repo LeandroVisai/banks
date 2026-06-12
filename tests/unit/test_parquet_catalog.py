@@ -361,8 +361,9 @@ class TestDiscoverQuery:
         # catálogo de prueba (sin fondos_pension) cae al aviso de no-reconocido,
         # así que validamos contra el catálogo real vía search_datasets aparte.
         from banks_rag.domain_knowledge.financial_aliases import resolve_segment
-        assert resolve_segment("AFP", {"fondos_pension"}) == "fondos_pension"
-        assert resolve_segment("fx", {"mercado_cambiario"}) == "mercado_cambiario"
+        # Segmentos canónicos del nuevo catálogo (diccionario_parquets.yaml).
+        assert resolve_segment("AFP", {"afp"}) == "afp"
+        assert resolve_segment("fx", {"fx"}) == "fx"
 
     def test_top_k_limits_results(self, datasets: list[ParquetDataset]) -> None:
         from banks_rag.application.agent.tools.discover_query import discover_query

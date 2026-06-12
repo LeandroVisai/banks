@@ -1,0 +1,546 @@
+"""Informe descriptivo de datasets parquet (map-reduce SIN tools).
+
+Análogo al informe de noticias de ``jarvis_news`` pero sobre los datos del
+catálogo de parquets: el usuario pide por segmento ("ffmm" / "fondos mutuos"),
+por lista de ids/archivos, o por texto libre, y el proceso genera un Markdown
+con una síntesis global y UN párrafo descriptivo por dataset que describe SOLO
+el comportamiento relevante de los datos (nivel, variación última semana/mes,
+máximos/mínimos, composición, anomalías) — NO qué mide la variable.
+
+Pipeline:
+    select_datasets        → resuelve la selección (segmento | ids | query)
+    MAP  _describe_dataset → Python lee el parquet REAL y calcula los hechos
+                             (``parquet_facts.compute_facts``, reutilizando
+                             ``series_analytics``); luego UNA llamada al LLM SIN
+                             tools redacta el párrafo a partir de esos números.
+    REDUCE _synthesize_overview → una llamada al LLM SIN tools que sintetiza
+    ParquetReport.to_markdown   → ensamblado determinista (sin LLM)
+
+El cómputo en Python (no tool-calling) elimina el loop multi-paso contra el
+llama-server, que se caía sistemáticamente, y ancla las ventanas a la última
+fecha REAL de cada parquet (no a "hoy" ni al date_range del catálogo).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+from banks_rag.application.agent.prompts import PARQUET_REPORTER_PROMPT, apply_thinking
+from banks_rag.application.reporting.parquet_facts import compute_facts, facts_to_text
+from banks_rag.domain_knowledge.financial_aliases import expand_query, resolve_segment
+from banks_rag.infrastructure.sql.parquet_catalog_loader import (
+    ParquetDataset,
+    get_dataset,
+    get_parquet_dir,
+    load_parquet_catalog,
+    search_datasets,
+)
+
+log = logging.getLogger(__name__)
+
+# Sampling del MAP (redacción del párrafo desde hechos ya calculados):
+# perfil no-thinking de Qwen3 (MODE_PROFILES["off"]).
+_MAP_TEMPERATURE = 0.4
+_MAP_TOP_P = 0.80
+# Sampling del REDUCE: igual que la síntesis del agente (fiel/determinista).
+_SYNTH_TEMPERATURE = 0.3
+_SYNTH_TOP_P = 0.8
+
+_NO_DATA_PARAGRAPH = (
+    "Los datos de este dataset aún no están disponibles localmente (el archivo "
+    "parquet no se ha copiado); la sección se completará en la próxima "
+    "actualización de datos."
+)
+_ERROR_PARAGRAPH = (
+    "La consulta de este dataset falló durante la generación del informe; "
+    "revisar los logs para el detalle."
+)
+
+
+def _error_paragraph(stage: str, exc: Exception) -> str:
+    """Mensaje de error que NOMBRA la etapa que reventó y el error real.
+
+    ``stage='datos'`` → falló ``compute_facts`` (DuckDB/parquet en esta máquina).
+    ``stage='LLM'``   → falló ``llm.generate`` (servidor llama-server / backend).
+    Antes ambas etapas devolvían el mismo texto genérico y el informe no permitía
+    distinguir un problema de datos de uno del modelo.
+    """
+    detail = f"{type(exc).__name__}: {exc}".strip()
+    if len(detail) > 300:
+        detail = detail[:297] + "…"
+    if stage == "LLM":
+        return (
+            "Los datos de este dataset SÍ se calcularon, pero el modelo no pudo "
+            f"redactar el párrafo (error del servidor LLM): {detail}."
+        )
+    return (
+        "No se pudieron calcular los hechos de este dataset a partir del parquet "
+        f"(error de datos, no del modelo): {detail}."
+    )
+_EMPTY_OVERVIEW = (
+    "No fue posible obtener datos de ningún dataset de la selección; el informe "
+    "no incluye síntesis."
+)
+
+_REPORT_SYNTHESIS_SYSTEM = """\
+Eres un analista senior de la División de Mercados Financieros del BCCh. \
+Recibes los párrafos descriptivos de un informe (uno por dataset del catálogo) \
+y redactas la SÍNTESIS EJECUTIVA que los encabeza: 2-3 párrafos de prosa que \
+resuman el estado del segmento y los movimientos más relevantes, conectando \
+los datasets entre sí cuando corresponda.
+
+Reglas:
+- Usa SOLO las cifras que aparecen en los párrafos recibidos: NO inventes ni \
+recalcules números, y conserva su unidad y fecha al citarlos.
+- Prioriza los movimientos más significativos; no repitas cada párrafo.
+- Si te indican que algunos datasets quedaron sin datos, menciónalo en una \
+frase al final.
+- Prosa corrida, sin títulos, viñetas ni tablas."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Selección de datasets
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class DatasetSelection:
+    """Resultado de resolver la selección del usuario contra el catálogo."""
+
+    datasets: tuple[ParquetDataset, ...]
+    selector_label: str  # slug corto para el nombre de archivo ("ffmm", "ids", …)
+    selector_desc: str   # texto legible para el título del informe
+    missing_ids: tuple[str, ...] = ()
+
+
+def _slug(text: str) -> str:
+    out = re.sub(r"[^a-z0-9_-]+", "_", text.lower()).strip("_")
+    return out[:40] or "informe"
+
+
+def _tokens(text: str) -> set[str]:
+    return {t for t in re.findall(r"[a-záéíóúüñ0-9]+", text.lower()) if len(t) >= 3}
+
+
+def select_datasets(
+    entries: list[ParquetDataset],
+    *,
+    segment: str | None = None,
+    dataset_ids: Sequence[str] | None = None,
+    query: str | None = None,
+    top_k: int = 12,
+) -> DatasetSelection:
+    """Resuelve la selección de datasets por exactamente UNA de las tres vías.
+
+    - ``segment``: nombre canónico o alias del dominio ("ffmm", "fondos mutuos").
+    - ``dataset_ids``: ids del catálogo o nombres de archivo (``flujos_ffmm`` /
+      ``flujos_ffmm.parquet``). Los no hallados van a ``missing_ids``.
+    - ``query``: texto libre, resuelto con el descubrimiento del catálogo.
+    """
+    provided = [name for name, value in (
+        ("segment", segment), ("dataset_ids", dataset_ids), ("query", query),
+    ) if value]
+    if len(provided) != 1:
+        raise ValueError(
+            "Indica exactamente UNA vía de selección: segment, dataset_ids o "
+            f"query (recibí: {provided or 'ninguna'})."
+        )
+
+    if segment:
+        valid = {e.segment for e in entries if e.segment}
+        canonical = resolve_segment(segment, valid_segments=valid)
+        if canonical is None:
+            raise ValueError(
+                f"Segmento {segment!r} no reconocido. Segmentos del catálogo: "
+                f"{', '.join(sorted(valid))}."
+            )
+        datasets = tuple(e for e in entries if e.segment == canonical)
+        desc = f"segmento {canonical}"
+        if segment.strip().lower() != canonical:
+            desc += f" ({segment.strip()})"
+        return DatasetSelection(datasets=datasets, selector_label=_slug(canonical), selector_desc=desc)
+
+    if dataset_ids:
+        found: list[ParquetDataset] = []
+        seen: set[str] = set()
+        missing: list[str] = []
+        for item in dataset_ids:
+            ds = _match_id_or_file(entries, item.strip())
+            if ds is None:
+                missing.append(item.strip())
+            elif ds.id not in seen:
+                seen.add(ds.id)
+                found.append(ds)
+        if not found:
+            raise ValueError(
+                f"Ningún dataset del catálogo coincide con: {', '.join(missing)}."
+            )
+        if missing:
+            log.warning("Datasets pedidos no hallados en el catálogo: %s", missing)
+        return DatasetSelection(
+            datasets=tuple(found),
+            selector_label="ids",
+            selector_desc="datasets: " + ", ".join(d.id for d in found),
+            missing_ids=tuple(missing),
+        )
+
+    assert query is not None
+    candidates = search_datasets(entries, query, top_k=top_k)
+    # search_datasets siempre devuelve top_k aunque el score sea 0: filtramos
+    # los que no comparten ningún token con la query expandida por el dominio
+    # (así "fondos mutuos" alcanza ids con "ffmm" pero no arrastra ruido).
+    query_tokens = _tokens(expand_query(query))
+    relevant = tuple(
+        e for e in candidates
+        if _tokens(f"{e.id} {e.name} {e.description} {e.segment} {e.unit}") & query_tokens
+    )
+    if not relevant:
+        raise ValueError(f"Ningún dataset del catálogo coincide con la consulta {query!r}.")
+    return DatasetSelection(
+        datasets=relevant,
+        selector_label=_slug(query),
+        selector_desc=f'consulta "{query.strip()}"',
+    )
+
+
+def _match_id_or_file(entries: list[ParquetDataset], item: str) -> ParquetDataset | None:
+    """Matchea un item del usuario por id exacto o por nombre de archivo (con
+    o sin ruta, con o sin extensión)."""
+    if not item:
+        return None
+    ds = get_dataset(entries, item)
+    if ds is not None:
+        return ds
+    base = item.replace("\\", "/").rsplit("/", 1)[-1]
+    stem = base[:-len(".parquet")] if base.endswith(".parquet") else base
+    for e in entries:
+        e_base = e.file.replace("\\", "/").rsplit("/", 1)[-1]
+        if e.file == item or e_base == base or e_base == f"{stem}.parquet":
+            return e
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ventanas de análisis
+# ─────────────────────────────────────────────────────────────────────────────
+
+_WINDOW_RE = re.compile(r"^(\d+)\s*([dwmy])$", re.IGNORECASE)
+_WINDOW_DAYS = {"d": 1, "w": 7, "m": 30, "y": 365}
+
+
+def _parse_window(token: str) -> tuple[int, str]:
+    """``"7d"/"30d"/"2w"/"3m"`` → (días, etiqueta legible en español)."""
+    m = _WINDOW_RE.match(token.strip())
+    if not m:
+        raise ValueError(f"Ventana {token!r} inválida (usa Nd, Nw, Nm o Ny — ej. 7d, 30d).")
+    n = int(m.group(1))
+    days = n * _WINDOW_DAYS[m.group(2).lower()]
+    if days == 7:
+        return days, "última semana"
+    if days == 30:
+        return days, "último mes"
+    if days == 365:
+        return days, "último año"
+    return days, f"últimos {days} días"
+
+
+def _window_specs(windows: Sequence[str]) -> list[tuple[str, int]]:
+    """``["7d","30d"]`` → ``[("última semana", 7), ("último mes", 30)]``."""
+    out = []
+    for token in windows:
+        days, label = _parse_window(token)
+        out.append((label, days))
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAP — un párrafo por dataset: Python calcula los hechos, el LLM solo redacta
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class DatasetSection:
+    """Una sección del informe: el párrafo descriptivo de un dataset."""
+
+    dataset_id: str
+    name: str
+    chart_type: str
+    unit: str
+    segment: str
+    last_date: str | None
+    paragraph: str
+    status: str  # "ok" | "no_data" | "error"
+    total_tokens: int = 0
+
+
+def _build_user_prompt(dataset: ParquetDataset, facts: dict) -> str:
+    """Mensaje de usuario para el LLM: identidad del dataset + hechos calculados."""
+    head = [
+        f"Dataset: {dataset.name} (`{dataset.id}`)",
+        f"Unidad: {dataset.unit}" if dataset.unit else "",
+        f"Segmento: {dataset.segment}" if dataset.segment else "",
+        "",
+        "DATOS YA CALCULADOS (úsalos tal cual, no recalcules):",
+        facts_to_text(facts),
+        "",
+        "Redacta UN párrafo describiendo SOLO el comportamiento relevante de "
+        "estos datos. No expliques qué mide la variable ni para qué sirve la serie.",
+    ]
+    return "\n".join(line for line in head if line != "")
+
+
+def _clean_paragraph(text: str) -> str:
+    """Colapsa la salida del LLM a un párrafo: quita encabezados/viñetas que
+    haya metido pese al formato pedido y une los saltos de línea."""
+    parts: list[str] = []
+    for raw in (text or "").splitlines():
+        s = raw.strip()
+        if not s or re.fullmatch(r"[-*_]{3,}", s):
+            continue
+        s = re.sub(r"^#{1,6}\s+", "", s)
+        s = re.sub(r"^[-*+]\s+", "", s)
+        parts.append(s)
+    return " ".join(parts)
+
+
+async def _describe_dataset(
+    dataset: ParquetDataset,
+    *,
+    llm,
+    window_specs: Sequence[tuple[str, int]],
+    parquet_dir: Path,
+    map_max_tokens: int = 700,
+    think: bool = False,
+) -> DatasetSection:
+    """Genera la sección de un dataset: facts en Python + UNA llamada al LLM."""
+    section = DatasetSection(
+        dataset_id=dataset.id,
+        name=dataset.name,
+        chart_type=dataset.chart_type,
+        unit=dataset.unit,
+        segment=dataset.segment,
+        last_date=None,
+        paragraph="",
+        status="ok",
+    )
+    try:
+        facts = compute_facts(dataset, parquet_dir, list(window_specs))
+    except Exception as exc:
+        log.exception("[%s] el cálculo de hechos falló", dataset.id)
+        section.status = "error"
+        section.paragraph = _error_paragraph("datos", exc)
+        return section
+
+    # Sin parquet (None) o sin datos útiles → sección "sin datos".
+    if facts is None or facts.get("shape") in (None, "empty", "unknown") or _facts_empty(facts):
+        section.status = "no_data"
+        section.paragraph = _NO_DATA_PARAGRAPH
+        return section
+
+    section.last_date = facts.get("last_date")
+
+    try:
+        result = await llm.generate(
+            [
+                {"role": "system", "content": apply_thinking(PARQUET_REPORTER_PROMPT, think=think)},
+                {"role": "user", "content": _build_user_prompt(dataset, facts)},
+            ],
+            tools=None,
+            temperature=_MAP_TEMPERATURE,
+            top_p=_MAP_TOP_P,
+            max_tokens=map_max_tokens,
+        )
+    except Exception as exc:
+        log.exception("[%s] la redacción del párrafo falló", dataset.id)
+        section.status = "error"
+        section.paragraph = _error_paragraph("LLM", exc)
+        return section
+
+    section.total_tokens = getattr(result, "n_tokens", 0) or 0
+    section.paragraph = _clean_paragraph(result.text)
+    if not section.paragraph:
+        section.status = "error"
+        section.paragraph = _ERROR_PARAGRAPH
+    return section
+
+
+def _facts_empty(facts: dict) -> bool:
+    """True si los hechos no traen ningún número útil (parquet vacío/sin señal)."""
+    shape = facts.get("shape")
+    if shape == "snapshot":
+        return not facts.get("composition")
+    if shape == "timeseries_categorical":
+        return not facts.get("por_categoria") and not facts.get("composicion_corte")
+    if shape == "timeseries_wide":
+        return not facts.get("por_columna")
+    if shape == "timeseries_single":
+        return not facts.get("estadisticas")
+    return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REDUCE — síntesis global sin tools
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _synthesize_overview(
+    sections: Sequence[DatasetSection],
+    *,
+    llm,
+    selector_desc: str,
+    max_tokens: int = 2048,
+) -> str:
+    ok = [s for s in sections if s.status == "ok"]
+    if not ok:
+        return _EMPTY_OVERVIEW
+    parts = [f"Informe descriptivo — {selector_desc}.", "", "Párrafos por dataset:"]
+    for s in ok:
+        parts.append(f"\n[{s.dataset_id}] {s.name}\n{s.paragraph}")
+    skipped = len(sections) - len(ok)
+    if skipped:
+        parts.append(f"\n(Nota: {skipped} dataset(s) de la selección quedaron sin datos.)")
+    parts.append("\nRedacta ahora la síntesis ejecutiva (2-3 párrafos).")
+    result = await llm.generate(
+        [
+            {"role": "system", "content": apply_thinking(_REPORT_SYNTHESIS_SYSTEM, think=False)},
+            {"role": "user", "content": "\n".join(parts)},
+        ],
+        tools=None,
+        temperature=_SYNTH_TEMPERATURE,
+        top_p=_SYNTH_TOP_P,
+        max_tokens=max_tokens,
+    )
+    return (result.text or "").strip() or _EMPTY_OVERVIEW
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Orquestador + ensamblado Markdown
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class ParquetReport:
+    """Informe completo: síntesis + secciones por dataset + metadata."""
+
+    title: str
+    selector_label: str
+    selector_desc: str
+    generated_at: str
+    windows: tuple[str, ...]
+    overview_md: str
+    sections: list[DatasetSection] = field(default_factory=list)
+    missing_ids: tuple[str, ...] = ()
+
+    def status_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for s in self.sections:
+            counts[s.status] = counts.get(s.status, 0) + 1
+        return counts
+
+    def to_markdown(self) -> str:
+        lines = [f"# {self.title}", "", "## Síntesis", "", self.overview_md.strip(), ""]
+        for i, s in enumerate(self.sections, 1):
+            meta = [f"Dataset `{s.dataset_id}`"]
+            if s.unit:
+                meta.append(s.unit)
+            if s.segment:
+                meta.append(s.segment)
+            if s.last_date:
+                meta.append(f"datos hasta {s.last_date}")
+            lines.append(f"## {i}. {s.name}")
+            lines.append("")
+            lines.append(f"*{' · '.join(meta)}*")
+            lines.append("")
+            lines.append(s.paragraph)
+            lines.append("")
+        counts = self.status_counts()
+        lines.append("## Referencias y metodología")
+        lines.append("")
+        lines.append(
+            f"- Datasets analizados: {len(self.sections)} "
+            f"(ok: {counts.get('ok', 0)}, sin datos: {counts.get('no_data', 0)}, "
+            f"con error: {counts.get('error', 0)})"
+        )
+        if self.missing_ids:
+            lines.append(f"- No hallados en el catálogo: {', '.join(self.missing_ids)}")
+        lines.append(
+            f"- Ventanas de análisis: {', '.join(self.windows)} "
+            "(ancladas a la última fecha disponible de cada dataset)"
+        )
+        lines.append(f"- Generado: {self.generated_at}")
+        lines.append("- Fuente: sql_catalog/parquet_catalog.yaml")
+        lines.append("")
+        return "\n".join(lines)
+
+
+async def generate_parquet_report(
+    llm,
+    *,
+    segment: str | None = None,
+    dataset_ids: Sequence[str] | None = None,
+    query: str | None = None,
+    windows: Sequence[str] = ("7d", "30d"),
+    top_k: int = 12,
+    concurrency: int = 1,
+    map_max_tokens: int = 700,
+    synthesis_max_tokens: int = 2048,
+    think: bool = False,
+    catalog_path: Path | str | None = None,
+    entries: list[ParquetDataset] | None = None,
+    parquet_dir: Path | None = None,
+) -> ParquetReport:
+    """Genera el informe descriptivo completo (map-reduce SIN tools).
+
+    ``entries``/``catalog_path``/``parquet_dir`` son inyectables para tests; por
+    defecto se carga ``sql_catalog/parquet_catalog.yaml`` y su ``parquet_dir``.
+    """
+    window_specs = _window_specs(windows)  # valida temprano, antes de cargar nada
+
+    if entries is None:
+        entries = load_parquet_catalog(catalog_path)
+    selection = select_datasets(
+        entries, segment=segment, dataset_ids=dataset_ids, query=query, top_k=top_k,
+    )
+    if parquet_dir is None:
+        parquet_dir = get_parquet_dir(catalog_path)
+
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+
+    async def _bounded(ds: ParquetDataset) -> DatasetSection:
+        async with semaphore:
+            return await _describe_dataset(
+                ds,
+                llm=llm,
+                window_specs=window_specs,
+                parquet_dir=parquet_dir,
+                map_max_tokens=map_max_tokens,
+                think=think,
+            )
+
+    log.info(
+        "Informe parquet (%s): %d datasets, ventanas %s, concurrencia %d",
+        selection.selector_desc, len(selection.datasets), list(windows), concurrency,
+    )
+    sections = list(await asyncio.gather(*(_bounded(ds) for ds in selection.datasets)))
+
+    overview = await _synthesize_overview(
+        sections, llm=llm, selector_desc=selection.selector_desc,
+        max_tokens=synthesis_max_tokens,
+    )
+
+    return ParquetReport(
+        title=f"Informe descriptivo — {selection.selector_desc}",
+        selector_label=selection.selector_label,
+        selector_desc=selection.selector_desc,
+        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        windows=tuple(windows),
+        overview_md=overview,
+        sections=sections,
+        missing_ids=selection.missing_ids,
+    )

@@ -80,7 +80,6 @@ _QUANT_TOOLS = (
     "compute_aggregate",
     "get_series_stats",
     "detect_anomaly",
-    "plot_series",
 )
 
 SUBAGENTS: dict[str, SubAgentSpec] = {
@@ -90,7 +89,9 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
         display_name="Analista de Mercado Cambiario (FX)",
         system_prompt=FX_ANALYST_PROMPT,
         tool_names=(*_QUANT_TOOLS, "get_market_snapshot"),
-        default_segments=("mercado_cambiario", "posiciones_cambiarias"),
+        # color_mercados: tablas-monitor cm_* (bolsas, FX, riesgo país,
+        # tasas 10Y globales) — el color de mercados lo lee este especialista.
+        default_segments=("fx", "fx_diferencial", "color_mercados"),
         multi_step=True,
     ),
     "no_residentes": SubAgentSpec(
@@ -98,6 +99,7 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
         display_name="Analista de No Residentes",
         system_prompt=NR_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
+        default_segments=("no_residentes",),
         multi_step=True,
     ),
     "afp": SubAgentSpec(
@@ -105,7 +107,7 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
         display_name="Analista de Fondos de Pensiones (AFP)",
         system_prompt=AFP_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
-        default_segments=("fondos_pension",),
+        default_segments=("afp",),
         multi_step=True,
     ),
     "fondos_mutuos": SubAgentSpec(
@@ -113,7 +115,7 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
         display_name="Analista de Fondos Mutuos (FFMM)",
         system_prompt=FFMM_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
-        default_segments=("fondos_pension",),
+        default_segments=("ffmm",),
         multi_step=True,
     ),
     "renta_fija": SubAgentSpec(
@@ -121,7 +123,7 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
         display_name="Analista de Renta Fija",
         system_prompt=RENTA_FIJA_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
-        default_segments=("renta_fija_chile", "instrumentos_bcch", "spreads_credito"),
+        default_segments=("rf_tasas", "rf_volumenes", "spc_ois"),
         multi_step=True,
     ),
     "liquidez": SubAgentSpec(
@@ -129,7 +131,7 @@ SUBAGENTS: dict[str, SubAgentSpec] = {
         display_name="Analista de Liquidez y Balance",
         system_prompt=LIQUIDEZ_ANALYST_PROMPT,
         tool_names=_QUANT_TOOLS,
-        default_segments=("liquidez_bancaria", "balance_bancario"),
+        default_segments=("liquidez_mn", "liquidez_mx", "mercado_monetario", "bancos"),
         multi_step=True,
     ),
     # ── Especialistas del corpus documental ──────────────────────────────────

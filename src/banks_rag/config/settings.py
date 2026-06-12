@@ -61,6 +61,23 @@ class Settings(BaseSettings):
 
     # ── LLM ──────────────────────────────────────────────────────────────────
     llm_family: Literal["qwen", "gemma", "mock"] = "mock"
+    # Backend de inferencia:
+    #   inprocess     → llama-cpp-python dentro del proceso API (legacy/fallback).
+    #                   UNA instancia del modelo, requests serializadas.
+    #   openai_compat → servidor externo OpenAI-compatible (llama-server con
+    #                   continuous batching + cache-reuse; ver
+    #                   docs/SETUP_LLAMA_SERVER.md). Concurrencia real entre
+    #                   usuarios y especialistas. Rollback = volver a inprocess.
+    llm_backend: Literal["inprocess", "openai_compat"] = "inprocess"  # BANKS_LLM_BACKEND
+    llm_base_url: str = "http://127.0.0.1:8081"   # BANKS_LLM_BASE_URL (solo openai_compat)
+    # Techo por request de generación contra el servidor. Debe cubrir el peor
+    # caso de síntesis (4096 tokens) compartiendo slots bajo carga.
+    llm_request_timeout_s: float = 300.0          # BANKS_LLM_REQUEST_TIMEOUT_S
+    # API key del llama-server (--api-key); vacío = sin auth (server solo en loopback).
+    llm_server_api_key: str = ""                  # BANKS_LLM_SERVER_API_KEY
+    # Slots del servidor (--parallel). La app lo usa para dimensionar el
+    # semáforo de /v1/chat cuando llm_backend=openai_compat.
+    llm_server_slots: int = 4                     # BANKS_LLM_SERVER_SLOTS
     llm_model_path: str = ""
     llm_n_ctx: int = 16384
     llm_n_gpu_layers: int = -1  # todo a GPU

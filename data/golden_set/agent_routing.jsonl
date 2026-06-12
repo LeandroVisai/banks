@@ -12,7 +12,7 @@
 {"query": "Duración de los fondos mutuos", "expected_specialist": "fondos_mutuos", "expected_dataset": "duracion_ffmm"}
 {"query": "¿Cómo está la curva BTP a 10 años?", "expected_specialist": "renta_fija"}
 {"query": "Spread entre el swap y el OIS", "expected_specialist": "renta_fija", "expected_dataset": "spread_swap_ois"}
-{"query": "¿Cuál es el stock de PDBC por agente?", "expected_specialist": "renta_fija"}
+{"query": "¿Cuál es el stock de PDBC por agente?", "expected_specialist": "liquidez", "expected_dataset": "stock_pdbc_agente"}
 {"query": "¿Cómo está el LCR del sistema bancario?", "expected_specialist": "liquidez", "expected_dataset": "lcr"}
 {"query": "Composición de activos bancarios en moneda nacional", "expected_specialist": "liquidez"}
 {"query": "¿Cuál es el spread de crédito de los DAP?", "expected_specialist": "renta_fija"}

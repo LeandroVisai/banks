@@ -1,8 +1,9 @@
 """Loader del catálogo de parquets analíticos (sql_catalog/parquet_catalog.yaml).
 
-Carga la metadata de los ~100 datasets en data_pipeline/parquet/ y expone
+Carga la metadata de los ~144 datasets en data_pipeline/parquet/ y expone
 funciones de búsqueda por keyword para que el agente pueda descubrir qué
-parquet usar antes de ejecutar SQL libre con query_parquet.
+dataset usar (``discover_query``) antes de leerlo con ``execute_query`` —
+la SQL la arma siempre la tool (``_parquet_query``), nunca el LLM.
 
 Funciones públicas:
     load_parquet_catalog(path)        → list[ParquetDataset]
@@ -54,6 +55,11 @@ class ParquetDataset:
     unit: str
     date_range: list[str] | None
     columns: list[ColumnSpec]
+    # Tipo de gráfico canónico del tablero para este dataset (diccionario de
+    # parquets): "line", "stacked_area", "grouped_bar", "market_monitor_table",
+    # etc. Las tools lo usan como default al graficar; el frontend lo reduce a
+    # una familia renderizable vía domain/agent/chart_types.chart_family.
+    chart_type: str = "line"
 
     def parquet_path(self, parquet_dir: Path) -> Path:
         return parquet_dir / self.file
@@ -73,6 +79,7 @@ class ParquetDataset:
             "segment": self.segment,
             "unit": self.unit,
             "date_range": self.date_range,
+            "chart_type": self.chart_type,
             "columns": [
                 {"name": c.name, "type": c.type, **({"values": c.values} if c.values else {})}
                 for c in self.columns
@@ -151,11 +158,23 @@ def search_datasets(
 
     scored: list[tuple[float, int, ParquetDataset]] = []
     for idx, entry in enumerate(entries):
+        # Los matches en id+name pesan doble: el nombre identifica el dataset,
+        # mientras la descripción suele ENUMERAR conceptos vecinos (p.ej. las
+        # familias spreads_* listan "DAP, prime, TADO, SOFR" y empataban con el
+        # dataset cuyo nombre es exactamente "Spread DAP-SOFR por plazo").
+        id_name_tokens = _tokenize(f"{entry.id} {entry.name}")
         text = f"{entry.id} {entry.name} {entry.description} {entry.segment} {entry.unit}"
         score = float(len(_tokenize(text) & query_tokens))
+        score += len(id_name_tokens & query_tokens)
         if effective_hints:
+            # Boost de hint a lo sumo UNA vez por dataset: un id que matchea
+            # tanto el prefijo genérico (``spreads_``) como su hint específico
+            # (``spreads_12m``) no debe duplicar el boost y enterrar al dataset
+            # cuyo nombre responde literalmente la pregunta (``spreads_dap`` =
+            # "Spread DAP-SOFR por plazo").
             id_lower = entry.id.lower()
-            score += _HINT_WEIGHT * sum(1 for h in effective_hints if h in id_lower)
+            if any(h in id_lower for h in effective_hints):
+                score += _HINT_WEIGHT
         score += extra_scores.get(entry.id, 0.0)
         # idx como tie-break estable (preserva el orden del catálogo).
         scored.append((score, -idx, entry))
@@ -197,4 +216,5 @@ def _parse_dataset(raw: dict) -> ParquetDataset:
         unit=raw.get("unit", ""),
         date_range=raw.get("date_range"),
         columns=columns,
+        chart_type=raw.get("chart_type") or "line",
     )

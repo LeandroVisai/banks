@@ -12,6 +12,7 @@ from banks_rag.application.agent import (
     run_agent,
 )
 from banks_rag.config import get_settings
+from banks_rag.infrastructure.llm.base import LLMUnavailableError
 from banks_rag.infrastructure.observability import log_chat_error, log_chat_turn
 from banks_rag.infrastructure.uploads import load_upload
 from banks_rag.interface.api.schemas import (
@@ -109,6 +110,18 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
             upload_max_map_batches=settings.upload_max_map_batches,
             upload_max_visuals=settings.upload_max_visuals,
         )
+    except LLMUnavailableError as exc:
+        # Backend de inferencia caído/saturado (llama-server): 503 explícito
+        # para que el frontend distinga "reintenta" de un error del agente.
+        log.exception("Backend LLM no disponible en /v1/chat")
+        log_chat_error(
+            body.message, history, str(exc),
+            model=model, prompt_version=PROMPT_VERSION, request_id=request_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=f"Motor de inferencia no disponible: {exc}",
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         log.exception("run_agent falló en /v1/chat")
         log_chat_error(

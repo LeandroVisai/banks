@@ -166,6 +166,8 @@ def _register_series(
             "unit": dataset.unit,
         },
         [{"date": fecha, "value": valor} for fecha, valor in series],
+        # chart_type canónico del catálogo → gráfico consistente con el tablero.
+        chart_hint=dataset.chart_type,
     )
 
 

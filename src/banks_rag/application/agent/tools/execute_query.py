@@ -94,9 +94,12 @@ def _register_series(
     date_col: str,
     select_cols: list[str],
     rows: list[dict],
+    chart_hint: str | None = None,
 ) -> None:
     """Registra una entrada en ``state.series_used`` por cada columna no-fecha
-    devuelta. Mirror del patrón usado en analytics.py."""
+    devuelta. Mirror del patrón usado en analytics.py. ``chart_hint`` es el
+    ``chart_type`` canónico del catálogo para el dataset: el frontend grafica
+    la serie de forma consistente con el tablero (área apilada, barras, ...)."""
     if not rows:
         return
     for col in select_cols:
@@ -111,6 +114,7 @@ def _register_series(
                 "unit": dataset_unit,
             },
             col_rows,
+            chart_hint=chart_hint,
         )
 
 
@@ -145,6 +149,7 @@ async def execute_query(
 
     _register_series(
         state, dataset.name, dataset.unit, dataset.id, date_col, select_cols, rows,
+        chart_hint=dataset.chart_type,
     )
 
     last_date = _last_date(rows)

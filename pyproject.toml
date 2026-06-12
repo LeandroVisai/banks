@@ -37,6 +37,8 @@ dependencies = [
 
     # LLM (llama.cpp como inference engine — sin vLLM)
     "llama-cpp-python>=0.3.0",
+    # Cliente del backend openai_compat (llama-server) + load test
+    "httpx>=0.27.0",
 
     # Extracción
     "pypdf>=4.0.0",

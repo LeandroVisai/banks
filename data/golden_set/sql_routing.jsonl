@@ -1,30 +1,30 @@
-{"query": "¿Cuánto vale el USD/CLP hoy?", "expected_query_id": "usdclp_historico", "expected_route": "sql"}
-{"query": "Dame la serie histórica del dólar contra el peso chileno", "expected_query_id": "usdclp_historico", "expected_route": "sql"}
-{"query": "Muéstrame los forwards del CLP a distintos plazos", "expected_query_id": "forwards_clp_curva", "expected_route": "sql"}
-{"query": "¿Cuál es la microestructura del mercado FX en Chile?", "expected_query_id": "microestructura_fx", "expected_route": "sql"}
-{"query": "Dame el índice de monedas latinoamericanas", "expected_query_id": "indice_monedas_latam", "expected_route": "sql"}
-{"query": "Muéstrame la curva BTP en pesos a distintos plazos", "expected_query_id": "curva_btp_clp", "expected_route": "sql"}
-{"query": "¿Cuál es la curva BTU en UF?", "expected_query_id": "curva_btu_uf", "expected_route": "sql"}
-{"query": "Compara los BTP y BTU por plazo", "expected_query_id": "btp_btu_comparado", "expected_route": "sql"}
-{"query": "Muéstrame la curva SPC en pesos", "expected_query_id": "spc_clp_curva", "expected_route": "sql"}
-{"query": "Dame la curva SPC en UF", "expected_query_id": "spc_uf_curva", "expected_route": "sql"}
-{"query": "¿Cuál es la curva de Treasuries de EEUU?", "expected_query_id": "curva_ust", "expected_route": "sql"}
-{"query": "Muéstrame los spreads DAP vs swap CLP", "expected_query_id": "spreads_dap_swap_clp", "expected_route": "sql"}
-{"query": "¿Cómo se comportó el mercado del PDBC esta semana?", "expected_query_id": "pdbc_bolsa", "expected_route": "sql"}
-{"query": "Dame el TIB del mercado interbancario", "expected_query_id": "tib_mercado", "expected_route": "sql"}
-{"query": "¿Cuál es el spread onshore del DAP en dólares?", "expected_query_id": "spread_onshore_dap_usd", "expected_route": "sql"}
-{"query": "Muéstrame las tasas TADO", "expected_query_id": "tasas_tado", "expected_route": "sql"}
-{"query": "Dame el SOFR a distintos plazos", "expected_query_id": "sofr_plazos", "expected_route": "sql"}
-{"query": "¿Cuál es la prime rate y plazos USD?", "expected_query_id": "prime_usd_plazos", "expected_route": "sql"}
-{"query": "Muéstrame la curva OIS sobre SOFR", "expected_query_id": "curva_ois_sofr", "expected_route": "sql"}
-{"query": "¿Cuáles son las expectativas de TPM según el MIPR?", "expected_query_id": "expectativas_tpm_mipr", "expected_route": "sql"}
-{"query": "Dame el LCR de los bancos sistémicos", "expected_query_id": "lcr_mx_bancos", "expected_route": "sql"}
-{"query": "¿Cuál es el NSFR de los bancos más grandes?", "expected_query_id": "nsfr_mx_bancos", "expected_route": "sql"}
+{"query": "¿Cuánto vale el USD/CLP hoy?", "expected_query_id": "clp_monto", "expected_route": "sql"}
+{"query": "¿Cuáles fueron los flujos semanales de los fondos mutuos?", "expected_query_id": "flujos_ffmm", "expected_route": "sql"}
+{"query": "Muéstrame los puntos forward del CLP", "expected_query_id": "forward_points", "expected_route": "sql"}
+{"query": "¿Cómo está la amplitud de puntas bid-ask del mercado cambiario?", "expected_query_id": "bid_ask", "expected_route": "sql"}
+{"query": "¿Cómo han variado las monedas en la última semana?", "expected_query_id": "var_moneda_1w", "expected_route": "sql"}
+{"query": "Muéstrame la curva BTP en pesos a distintos plazos", "expected_query_id": "btp_curva", "expected_route": "sql"}
+{"query": "¿Cuál es la curva BTU en UF?", "expected_query_id": "btu_curva", "expected_route": "sql"}
+{"query": "Dame el break-even inflacionario BTP-BTU por plazo", "expected_query_id": "bei_btp_btu_plazo", "expected_route": "sql"}
+{"query": "Muéstrame la curva SPC", "expected_query_id": "spc_curve", "expected_route": "sql"}
+{"query": "Dame las tasas SPC por plazo", "expected_query_id": "spc_plazo", "expected_route": "sql"}
+{"query": "¿Cómo están las tasas 10Y de los mercados globales?", "expected_query_id": "cm_tasas", "expected_route": "sql"}
+{"query": "Muéstrame los spreads DAP vs swap CLP", "expected_query_id": "spread_dap_swap", "expected_route": "sql"}
+{"query": "¿Cómo varió el stock de PDBC esta semana?", "expected_query_id": "var_stock_pdbc", "expected_route": "sql"}
+{"query": "Dame el TIB del mercado interbancario", "expected_query_id": "tib_monto_transado", "expected_route": "sql"}
+{"query": "¿Cuál es el spread onshore por plazo?", "expected_query_id": "spreads_sos", "expected_route": "sql"}
+{"query": "Muéstrame el spread TADO-SOFR", "expected_query_id": "spreads_tado", "expected_route": "sql"}
+{"query": "Dame el spread DAP-SOFR a distintos plazos", "expected_query_id": "spreads_dap", "expected_route": "sql"}
+{"query": "¿Cómo está el spread Prime-SOFR por plazo?", "expected_query_id": "spreads_prime", "expected_route": "sql"}
+{"query": "Muéstrame las tasas OIS por plazo", "expected_query_id": "ois_plazo", "expected_route": "sql"}
+{"query": "¿Cuál es la TPM implícita en Chile según el MIPR?", "expected_query_id": "mipr_cl_curve", "expected_route": "sql"}
+{"query": "Dame el LCR de los bancos sistémicos", "expected_query_id": "lcr", "expected_route": "sql"}
+{"query": "¿Cuál es el NSFR de los bancos más grandes?", "expected_query_id": "nsfr", "expected_route": "sql"}
 {"query": "Muéstrame el ratio de liquidez sobre obligaciones bancarias", "expected_query_id": "ratio_liquidez_obligaciones", "expected_route": "sql"}
-{"query": "¿Cuál es el precio del cobre?", "expected_query_id": "precio_cobre", "expected_route": "sql"}
-{"query": "Dame el histórico del cobre en los últimos 6 meses", "expected_query_id": "precio_cobre", "expected_route": "sql"}
-{"query": "¿Cuánto vale el dólar en los forwards a 30 días?", "expected_query_id": "forwards_clp_curva", "expected_route": "sql"}
-{"query": "Muéstrame el BTP 5Y y 10Y del último mes", "expected_query_id": "curva_btp_clp", "expected_route": "sql"}
-{"query": "¿Cuál es la tasa SPC 3M?", "expected_query_id": "spc_clp_curva", "expected_route": "sql"}
-{"query": "Dame el spread del UST 2Y y 10Y", "expected_query_id": "curva_ust", "expected_route": "sql"}
-{"query": "¿Cuál es el nivel actual de la TPM según las expectativas de mercado?", "expected_query_id": "expectativas_tpm_mipr", "expected_route": "sql"}
+{"query": "¿Cuál es el precio del cobre?", "expected_query_id": "cobre_dxy", "expected_route": "sql"}
+{"query": "Dame la distribución internacional vs local de las AFP", "expected_query_id": "allocation_int_nac", "expected_route": "sql"}
+{"query": "¿Cómo está la posición en derivados de los no residentes?", "expected_query_id": "posicion_nr_derivados", "expected_route": "sql"}
+{"query": "Muéstrame el BTP 5Y y 10Y del último mes", "expected_query_id": "btp_plazo", "expected_route": "sql"}
+{"query": "Dame el spread SPC-OIS", "expected_query_id": "spread_swap_ois", "expected_route": "sql"}
+{"query": "Dame el spread BTP-UST a 5 y 10 años", "expected_query_id": "spread_btp_ust", "expected_route": "sql"}
+{"query": "¿Cuál es el nivel actual de la TPM según las expectativas de mercado?", "expected_query_id": "mipr_cl_plazo", "expected_route": "sql"}

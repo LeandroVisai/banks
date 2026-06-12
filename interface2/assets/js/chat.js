@@ -437,9 +437,10 @@ class ChatController {
     _renderSeriesCharts(seriesUsed, msgEl) {
         // Series con ≥2 puntos. ApexCharts y baseChartConfig deben estar
         // cargados; si no, se omite en silencio. El TIPO de gráfico lo decide el
-        // backend (chart_type): "bar"/"grouped_bar" para datos categóricos
-        // (composiciones, cortes) y "line"/"area" para series temporales — así
-        // no todo sale como línea.
+        // backend (chart_type, derivado del chart_type canónico del dataset en
+        // el parquet_catalog): "bar"/"grouped_bar"/"stacked_bar" para datos
+        // categóricos o temporales cortos y "line"/"area" para series
+        // temporales — así no todo sale como línea.
         if (!window.ApexCharts || !BCCh.baseChartConfig) return;
         const plottable = (seriesUsed || []).filter((s) => (s.points || []).length >= 2);
         if (!plottable.length) return;
@@ -457,7 +458,7 @@ class ChatController {
             // El primero más alto; los apilados, compactos (no enterrar las citas).
             const height = idx === 0 ? 160 : 132;
             const type = s.chart_type || "line";
-            const isBar = type === "bar" || type === "grouped_bar";
+            const isBar = type === "bar" || type === "grouped_bar" || type === "stacked_bar";
 
             let cfg;
             if (isBar) {

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .chart_types import chart_family
+
 
 @dataclass
 class AgentState:
@@ -76,6 +78,7 @@ class AgentState:
         rows: list[dict],
         *,
         chart_type: str | None = None,
+        chart_hint: str | None = None,
     ) -> None:
         """Registra una serie consultada para que el frontend la grafique.
 
@@ -88,13 +91,16 @@ class AgentState:
         ``[[x, value], ...]`` (``x`` = ISO date o etiqueta). Se capan a
         ``MAX_SERIES_POINTS`` para no inflar el payload.
 
-        ``chart_type`` (``"line"``/``"area"``/``"bar"``/``"grouped_bar"``) lo fija
-        el llamador o, si es ``None``, lo infiere :func:`infer_chart_type` según
-        la forma del dato (temporal → ``line``; categórico → ``bar``). El frontend
-        respeta este tipo en vez de graficar todo como línea."""
+        ``chart_type`` (``"line"``/``"area"``/``"bar"``/``"grouped_bar"``/
+        ``"stacked_bar"``) lo fija el llamador o, si es ``None``, lo infiere
+        :func:`infer_chart_type` según la forma del dato (temporal → ``line``;
+        categórico → ``bar``) y el ``chart_hint`` — el ``chart_type`` canónico
+        que el catálogo de parquets declara para el dataset de origen
+        (``stacked_area``, ``grouped_bar``, ...). El frontend respeta este
+        tipo en vez de graficar todo como línea."""
         points, x_is_date = _extract_points(rows)
         if chart_type is None:
-            chart_type = infer_chart_type(points, x_is_date=x_is_date)
+            chart_type = infer_chart_type(points, x_is_date=x_is_date, hint=chart_hint)
         first_date = _isoformat(rows[0].get("date")) if (x_is_date and rows) else None
         last_date = _isoformat(rows[-1].get("date")) if (x_is_date and rows) else None
         self.series_used[series_id] = {
@@ -151,8 +157,15 @@ MAX_SERIES_POINTS = 500
 # esto (1-2 cifras), una serie temporal se grafica mejor como barra.
 _MIN_LINE_POINTS = 3
 
+# Máximo de puntos temporales que rinden como barras. Una familia de barras
+# (flujos semanales, variaciones) con más observaciones que esto se degrada a
+# línea: cientos de barras son ilegibles en el panel compacto del chat.
+_MAX_BAR_POINTS = 31
 
-def infer_chart_type(points: list[list], *, x_is_date: bool) -> str:
+
+def infer_chart_type(
+    points: list[list], *, x_is_date: bool, hint: str | None = None,
+) -> str:
     """Clasificador determinista del tipo de gráfico según la forma del dato.
 
     No todo es una línea: el eje X categórico (composiciones, cortes
@@ -160,12 +173,24 @@ def infer_chart_type(points: list[list], *, x_is_date: bool) -> str:
     puntos como línea. Pocos puntos discretos sobre un eje temporal también
     rinden mejor como barra que como una "línea" de dos vértices.
 
-    Devuelve ``"line"`` | ``"bar"``. La distinción línea/área la resuelve el
-    frontend (usa área para una sola serie temporal por estética)."""
+    ``hint`` es el ``chart_type`` canónico que el catálogo de parquets declara
+    para el dataset de origen (``stacked_area``, ``grouped_bar``, ...). Cuando
+    la forma del dato lo permite, la familia del hint manda: así el gráfico es
+    consistente con el que el tablero construye para ese dataset.
+
+    Devuelve ``"line"`` | ``"area"`` | ``"bar"``. La distinción fina (apilado,
+    agrupado) la resuelve el frontend con el chart_type explícito."""
     if not x_is_date:
         return "bar"
     if len(points) < _MIN_LINE_POINTS:
         return "bar"
+    if hint:
+        family = chart_family(hint)
+        if family == "area":
+            return "area"
+        if family in ("bar", "grouped_bar", "stacked_bar"):
+            # Barras solo si son pocas observaciones; si no, línea legible.
+            return "bar" if len(points) <= _MAX_BAR_POINTS else "line"
     return "line"
 
 

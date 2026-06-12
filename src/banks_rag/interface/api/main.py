@@ -88,9 +88,17 @@ async def lifespan(app: FastAPI):
 
     # Semáforo de concurrencia: limita los requests /v1/chat en vuelo simultáneos.
     # Debe inicializarse dentro del event loop (asyncio.Semaphore es loop-local).
+    # Con backend openai_compat el cuello de botella son los slots del servidor
+    # (--parallel), no el proceso API: se dimensiona al máximo entre ambos.
     if deps.chat_semaphore is None:
-        deps.chat_semaphore = asyncio.Semaphore(settings.chat_concurrency)
-        log.info("Chat semaphore inicializado (concurrencia máx=%d)", settings.chat_concurrency)
+        concurrency = settings.chat_concurrency
+        if settings.llm_backend == "openai_compat":
+            concurrency = max(concurrency, settings.llm_server_slots)
+        deps.chat_semaphore = asyncio.Semaphore(concurrency)
+        log.info(
+            "Chat semaphore inicializado (concurrencia máx=%d, backend=%s)",
+            concurrency, settings.llm_backend,
+        )
 
     # Pool de conexiones PostgreSQL: reutiliza conexiones entre requests.
     # Elimina el overhead de TCP handshake + auth (~10-15ms) por cada búsqueda.
@@ -125,13 +133,23 @@ async def lifespan(app: FastAPI):
         except Exception:
             log.exception("Warmup del embedder falló — se cargará en la 1ª búsqueda")
 
-    # LLM: instancia LlamaCppEngine para familias qwen/gemma.
+    # LLM para familias qwen/gemma, según backend:
+    #   openai_compat → OpenAICompatEngine contra llama-server (concurrencia real,
+    #                   batching + cache-reuse server-side). El servidor se arranca
+    #                   aparte: deploy/start_llama_server.ps1.
+    #   inprocess     → LlamaCppEngine dentro del proceso (legacy/fallback).
     if deps.llm is None and settings.llm_family not in ("mock", ""):
         try:
-            from banks_rag.infrastructure.llm.llama_cpp_engine import LlamaCppEngine
-            deps.llm = LlamaCppEngine.from_settings(settings)
+            if settings.llm_backend == "openai_compat":
+                from banks_rag.infrastructure.llm.openai_compat_engine import (
+                    OpenAICompatEngine,
+                )
+                deps.llm = OpenAICompatEngine.from_settings(settings)
+            else:
+                from banks_rag.infrastructure.llm.llama_cpp_engine import LlamaCppEngine
+                deps.llm = LlamaCppEngine.from_settings(settings)
             await deps.llm.load()
-            log.info("LLM cargado: %s", deps.llm.name)
+            log.info("LLM cargado: %s (backend=%s)", deps.llm.name, settings.llm_backend)
         except Exception:
             log.exception("Error cargando LLM — /v1/chat retornará 503")
 

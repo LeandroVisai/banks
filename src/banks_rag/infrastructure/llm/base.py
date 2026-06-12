@@ -14,6 +14,14 @@ from typing import Protocol, runtime_checkable
 from banks_rag.domain.agent import GenerationResult
 
 
+class LLMUnavailableError(RuntimeError):
+    """El backend LLM no está disponible (timeout, conexión rechazada, 5xx).
+
+    La capa API la traduce a HTTP 503 con mensaje claro, en vez de propagar
+    una excepción genérica de red o devolver una respuesta vacía silenciosa.
+    """
+
+
 @runtime_checkable
 class LLMEngine(Protocol):
     """Motor de inferencia LLM con soporte de tool calling.

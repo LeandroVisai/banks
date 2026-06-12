@@ -102,8 +102,9 @@ class HistoricalSeriesRef(BaseModel):
     # (composición). Vacío si la serie no es numérica (no graficable).
     points: list[list] = Field(default_factory=list)
     # Tipo de gráfico que el frontend debe usar: "line"/"area" (temporal) o
-    # "bar"/"grouped_bar" (categórico). Lo fija el backend según la forma del
-    # dato (ver domain/agent/agent_state.infer_chart_type).
+    # "bar"/"grouped_bar"/"stacked_bar" (categórico o temporal corto). Lo fija
+    # el backend según la forma del dato y el chart_type canónico del dataset
+    # en el catálogo (ver domain/agent/agent_state.infer_chart_type).
     chart_type: str = "line"
 
 
@@ -229,6 +230,10 @@ class DatasetEntry(BaseModel):
     segment: str
     unit: str
     date_range: list[str] | None = None
+    # Tipo de gráfico canónico del tablero para este dataset (parquet_catalog):
+    # "line", "stacked_area", "grouped_bar", "market_monitor_table", ... El
+    # frontend lo reduce a una familia renderizable (domain/agent/chart_types).
+    chart_type: str = "line"
     columns: list[DatasetColumn]
 
 
@@ -242,6 +247,9 @@ class QueryResponse(BaseModel):
     name: str
     unit: str
     segment: str
+    # chart_type canónico del dataset (parquet_catalog) para que el frontend
+    # construya el gráfico consistente con el tablero.
+    chart_type: str = "line"
     date_column: str | None = None  # None para datasets snapshot sin fecha
     columns: list[str]
     rows: list[dict]

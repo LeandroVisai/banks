@@ -27,9 +27,29 @@ banks-search "commodities riesgos" --k 10 --json
 # API
 uvicorn banks_rag.interface.api.main:create_app --factory --port 8080
 
+# LLM serving (backend openai_compat — producción H100; ver docs/SETUP_LLAMA_SERVER.md)
+powershell -ExecutionPolicy Bypass -File deploy/start_llama_server.ps1
+
+# Load test de /v1/chat (comparar backends/quants; baseline en data/bench/)
+python scripts/load_test_chat.py --users 2 --out data/bench/u2.json
+
 # Informe analítico JARVIS (markdown + html + audio FLAC ES/EN, paquete aislado)
 # Salidas ordenadas en data/news_reports/{markdown,html,audio}/
 python scripts/jarvis_news_report.py --audio --top-n 25
+
+# Cargar datos REALES del servidor: cada hoja de parquets_unificados.xlsx → un
+# parquet en data_pipeline/parquet/ (DuckDB excel ext; sin pandas). Tras correr,
+# ejecutar refresh_catalog_dates.py y revisar con audit_parquets.py.
+python scripts/xlsx_to_parquet.py
+python scripts/refresh_catalog_dates.py
+python scripts/audit_parquets.py            # roles + mismatches catálogo↔parquet
+
+# Informe descriptivo de datasets parquet (SIN tools: Python calcula los hechos
+# del parquet real vía parquet_facts + series_analytics, y el LLM solo redacta 1
+# párrafo de movimientos relevantes por dataset; síntesis global; salidas en
+# data/parquet_reports/{markdown,html}/)
+python scripts/parquet_report.py --segment ffmm                 # o "fondos mutuos"
+python scripts/parquet_report.py --datasets flujos_ffmm,duracion_ffmm --windows 7d,30d,90d
 
 # Evaluación
 make eval          # golden set completo → eval_report.md
@@ -101,11 +121,15 @@ Noticias_scrapping/*.json  (paquete aislado jarvis_news)
 
 - **LlamaCppEngine usa lazy import**: `from llama_cpp import Llama` solo en `_sync_load()`. Permite tests sin el binario instalado.
 
+- **Dos backends LLM detrás del Protocol `LLMEngine`** (`BANKS_LLM_BACKEND`): `inprocess` (llama-cpp-python, UNA instancia, requests serializadas — legacy/fallback) y `openai_compat` (`OpenAICompatEngine` vía httpx contra `llama-server` externo con continuous batching + `--cache-reuse` + `--jinja`; producción H100, ver `docs/SETUP_LLAMA_SERVER.md`). Los helpers de comportamiento (`strip_think`, `detect_family`, `flatten_for_gemma`, `parse_args`) viven en `infrastructure/llm/_common.py` y son COMPARTIDOS: nunca duplicarlos en un engine. `llama_cpp_engine` re-exporta los nombres `_strip_think` etc. por compatibilidad. Errores de red/5xx del servidor → `LLMUnavailableError` → HTTP 503 en `/v1/chat`. El semáforo de chat se dimensiona con `BANKS_LLM_SERVER_SLOTS` cuando el backend es `openai_compat`.
+
 - **CrossEncoderReranker usa lazy import**: `from sentence_transformers import CrossEncoder` solo en `load()`.
 
-- **Catálogo de datasets en `sql_catalog/parquet_catalog.yaml`**: 107 datasets sobre parquets en `data_pipeline/parquet/`, con esquema completo (columnas, tipos, valores de enum, `date_range`). El LLM elige `dataset_id` + columnas/filtros vía `discover_query`/`execute_query`/analytics; **la SQL la arma siempre la tool** (`_parquet_query.build_fetch_sql`) — el LLM NUNCA escribe SQL.
+- **Catálogo de datasets en `sql_catalog/parquet_catalog.yaml`**: 144 datasets sobre parquets en `data_pipeline/parquet/`, con esquema completo (columnas, tipos, valores de enum, `date_range`) y **`chart_type` canónico** (del diccionario del tablero: `stacked_area`, `grouped_bar`, `market_monitor_table`, …). El LLM elige `dataset_id` + columnas/filtros vía `discover_query`/`execute_query`/analytics; **la SQL la arma siempre la tool** (`_parquet_query.build_fetch_sql`) — el LLM NUNCA escribe SQL. Algunos datasets del catálogo pueden no tener parquet local todavía (llegan en la próxima copia); las tools devuelven error controlado y los tests de integración los saltan.
 
-- **`data_pipeline/` ya NO extrae de SQL**: la extracción en vivo del DW (`dw_store`, `extract.py`), los snapshots y `series_catalog.yaml` fueron eliminados. Los parquets en `data_pipeline/parquet/` son la única fuente; se regeneran fuera del repo y se copian. No quedan tools que consulten el SQL Server (la antigua `historical_series` se eliminó).
+- **`chart_type` del catálogo manda en los gráficos**: el mapping canónico → familia renderizable (`line`/`area`/`bar`/`grouped_bar`/`stacked_bar`/`point`/`pie`/`table`) vive SOLO en `domain/agent/chart_types.py` (`chart_family`, `vega_mark`) — no duplicarlo. `plot_series` usa el `chart_type` del dataset como default (el LLM solo puede forzar marcas simples); `execute_query`/analytics pasan `chart_hint=dataset.chart_type` a `state.add_series`, e `infer_chart_type` lo respeta cuando la forma del dato lo permite (categórico → bar; familias de barra con muchas observaciones degradan a línea). `/v1/catalog` y `/v1/query/{id}` exponen `chart_type` para que el frontend construya el gráfico consistente con el tablero. Tipos desconocidos degradan a `line` (guard en `tests/unit/test_catalog_chart_types.py`).
+
+- **`data_pipeline/` ya NO extrae de SQL**: la extracción en vivo del DW (`dw_store`, `extract.py`), los snapshots y `series_catalog.yaml` fueron eliminados. Los parquets en `data_pipeline/parquet/` son la única fuente; se regeneran fuera del repo y se copian. No quedan tools que consulten el SQL Server (la antigua `historical_series` se eliminó). **Tras cada copia de parquets nuevos, correr `python scripts/refresh_catalog_dates.py`** para actualizar los `date_range` del catálogo desde los datos reales: si quedan desactualizados, el agente en modo thinking se los toma literal, acota sus queries a la fecha vieja y responde con datos antiguos aunque el parquet tenga filas más recientes.
 
 - **Logging de turnos del agente**: cada turno de `/v1/chat` se persiste como una línea JSON en `data/chat_logs/chat-YYYY-MM-DD.jsonl` vía `infrastructure/observability/chat_log.py` (best-effort, nunca tumba el request). Guarda pregunta, respuesta y evidencia (tool_trace, chunks_seen, series_used, citas) para contrastar respuestas reales vs. esperadas. Control: `BANKS_CHAT_LOG_ENABLED` / `BANKS_CHAT_LOG_DIR`.
 
@@ -128,7 +152,7 @@ Noticias_scrapping/*.json  (paquete aislado jarvis_news)
 ## Agregar nuevos datasets al catálogo de parquets
 
 1. Dejar el parquet en `data_pipeline/parquet/<nombre>.parquet` con sus columnas reales (no es necesario un schema canónico).
-2. Añadir entrada en `sql_catalog/parquet_catalog.yaml` bajo `datasets:` con `id`, `file`, `name`, `description`, `segment`, `unit`, `date_range` y `columns` (cada columna con `name` + `type`; si es categórica, opcionalmente `values:` para enum).
+2. Añadir entrada en `sql_catalog/parquet_catalog.yaml` bajo `datasets:` con `id`, `file`, `chart_type` (el tipo canónico del tablero; si es nuevo, mapearlo en `domain/agent/chart_types.py`), `name`, `description`, `segment`, `unit`, `date_range` y `columns` (cada columna con `name` + `type`; si es categórica, opcionalmente `values:` para enum — NO declarar `values` en columnas payload volátiles tipo `_sparkline_json`/`_title_override`).
 3. Añadir caso a `data/golden_set/sql_routing.jsonl` validando que `discover_query` + el nuevo `dataset_id` respondan la pregunta.
 
 ## Ajustar parámetros de búsqueda
@@ -168,7 +192,12 @@ chunks    (chunk_id PK, document_id FK,
 | `PGDATABASE` | `rag_banco` | Usar otra BD |
 | `PGUSER` / `PGPASSWORD` | SO / vacío | Servidor con auth |
 | `BANKS_LLM_FAMILY` | `mock` | `qwen` o `gemma` en producción |
-| `BANKS_LLM_MODEL_PATH` | `` | Ruta al `.gguf` |
+| `BANKS_LLM_BACKEND` | `inprocess` | `openai_compat` para servir con llama-server (concurrencia real; producción) |
+| `BANKS_LLM_BASE_URL` | `http://127.0.0.1:8081` | URL del llama-server (solo `openai_compat`) |
+| `BANKS_LLM_REQUEST_TIMEOUT_S` | `300` | Techo por request de generación contra el servidor |
+| `BANKS_LLM_SERVER_SLOTS` | `4` | Slots `--parallel` del servidor; dimensiona el semáforo de `/v1/chat` |
+| `BANKS_LLM_SERVER_API_KEY` | `` | API key del llama-server (`--api-key`); vacío = sin auth |
+| `BANKS_LLM_MODEL_PATH` | `` | Ruta al `.gguf` (solo backend `inprocess`) |
 | `BANKS_LLM_MAX_TOKENS` | `2048` | Tokens máx por paso (especialistas/iteración) |
 | `BANKS_SYNTHESIS_MAX_TOKENS` | `4096` | Tokens máx de la respuesta final (síntesis); subir si se trunca |
 | `BANKS_THINKING_MODE` | `adaptive` | `off`/`adaptive`/`on`: **perfil completo** velocidad↔profundidad (no solo thinking). Define `MODE_PROFILES` en `conversation_loop.py`: nº de especialistas (1/2/3), iteraciones (3/4/5) y sampling según la model card de Qwen3 (thinking→temp0.6/top_p0.95; no-thinking→0.4/0.8). El toggle del frontend lo overridea por consulta. La síntesis nunca razona y usa sampling determinista (0.3/0.8) |

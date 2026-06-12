@@ -30,7 +30,7 @@ _FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```")
 # Formato XML/Hermes de Qwen3 (plantilla nativa del GGUF):
 #   <function=discover_query>
 #     <parameter=query>spread BTP vs SPC a 10 años</parameter>
-#     <parameter=segment>renta_fija_chile</parameter>
+#     <parameter=segment>rf_tasas</parameter>
 #   </function>
 # El nombre va en la apertura; cada arg es un <parameter=...>. Lenient: tolera
 # que falten los tags de cierre (generación truncada por max_tokens).

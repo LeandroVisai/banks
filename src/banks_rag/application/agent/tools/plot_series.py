@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from banks_rag.domain.agent.chart_types import vega_mark
+
 from ._parquet_query import fetch_rows_from_dataset, find_date_column  # noqa: F401
 from .registry import register
 
@@ -66,7 +68,11 @@ _SCHEMA = {
                 "chart_type": {
                     "type": "string",
                     "enum": ["line", "area", "bar", "point"],
-                    "description": "Tipo de gráfico (default 'line').",
+                    "description": (
+                        "Tipo de gráfico. Si lo omites se usa el tipo "
+                        "canónico que el catálogo declara para el dataset "
+                        "(recomendado: deja que el catálogo decida)."
+                    ),
                 },
                 "title": {"type": "string", "description": "Título del gráfico (opcional)."},
             },
@@ -143,7 +149,7 @@ async def plot_series(
     columns: list[str] | None = None,
     fecha_inicio: str | None = None,
     fecha_fin: str | None = None,
-    chart_type: str = "line",
+    chart_type: str | None = None,
     title: str | None = None,
 ) -> dict[str, Any]:
     try:
@@ -184,7 +190,16 @@ async def plot_series(
     keep = [date_col, *numeric] + ([cat_col] if cat_col else [])
     data = [{k: _isoval(r.get(k)) for k in keep} for r in rows]
 
-    mark = chart_type if chart_type in _MARKS else "line"
+    # El tipo canónico lo decide el catálogo (gráfico consistente con el
+    # tablero); el LLM solo puede forzar una marca simple explícita. La marca
+    # Vega-Lite se deriva del tipo canónico (stacked_area → area, *_bar → bar;
+    # el apilado lo resuelve el encoding `color` de Vega por defecto).
+    if chart_type in _MARKS:
+        canonical = chart_type
+        mark = chart_type
+    else:
+        canonical = dataset.chart_type or "line"
+        mark = vega_mark(canonical)
     chart_title = title or f"{dataset.name}"
     spec = _build_vegalite(
         title=chart_title, mark=mark, data=data,
@@ -194,7 +209,8 @@ async def plot_series(
     chart_id = state.add_chart({
         "dataset_id": dataset.id,
         "title": chart_title,
-        "chart_type": mark,
+        "chart_type": canonical,
+        "mark": mark,
         "unit": dataset.unit,
         "n_points": len(data),
         "spec": spec,
@@ -208,7 +224,8 @@ async def plot_series(
         "dataset_id": dataset.id,
         "name": dataset.name,
         "unit": dataset.unit,
-        "chart_type": mark,
+        "chart_type": canonical,
+        "mark": mark,
         "series": numeric if cat_col is None else f"{numeric[0]} por {cat_col}",
         "n_points": len(data),
         "last_date_in_data": _isoval(last_row.get(date_col)),

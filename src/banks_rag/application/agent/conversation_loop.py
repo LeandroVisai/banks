@@ -155,7 +155,6 @@ EVIDENCE_TOOLS: frozenset[str] = frozenset({
     "search_visuals",
     "get_document_chunks",
     "compare_meetings",
-    "plot_series",
 })
 
 # Mensaje con que se reemplaza el análisis de un especialista que emitió cifras
@@ -657,9 +656,13 @@ async def run_subagent(
 
 
 def _build_synthesis_user_message(
-    user_message: str, subs: list[SubAgentResult],
+    user_message: str, subs: list[SubAgentResult], *, concise: bool = False,
 ) -> str:
-    """Mensaje de usuario para la síntesis: la pregunta + los análisis etiquetados."""
+    """Mensaje de usuario para la síntesis: la pregunta + los análisis etiquetados.
+
+    ``concise=True`` (modo rápido/``off``): pide explícitamente una respuesta
+    corta. La síntesis es decode-bound (~50 t/s) y domina la latencia total;
+    "Rápido" debe ser rápido también en el largo de la respuesta."""
     if not subs:
         # Saludo / pregunta sobre capacidades: no se consultó a especialistas.
         return (
@@ -674,10 +677,17 @@ def _build_synthesis_user_message(
     parts = [f"Pregunta del usuario:\n{user_message}", "", "Análisis de tus especialistas:"]
     for sub in subs:
         parts.append(f"\n## {sub.display_name}\n{sub.analysis.strip()}")
-    parts.append(
+    closing = (
         "\nRedacta ahora la respuesta final para el usuario siguiendo tus reglas "
         "(conclusión primero, conserva las citas [N], no inventes cifras)."
     )
+    if concise:
+        closing += (
+            " El usuario eligió el modo RÁPIDO: responde SOLO lo esencial — "
+            "conclusión, cifras clave con fecha/unidad/fuente y sus citas [N]. "
+            "Sin secciones extra ni desarrollo extenso."
+        )
+    parts.append(closing)
     return "\n".join(parts)
 
 
@@ -711,7 +721,7 @@ def _recent_context_block(history: list[dict]) -> str:
     el ``task`` debe ser autocontenido. Cuando la pregunta es un follow-up
     ("¿puedes graficarlo?"), el referente vive en el turno anterior, así que el
     orquestador inyecta este bloque mínimo para que el especialista resuelva la
-    referencia (y, p. ej., decida llamar ``plot_series``). Vacío si no hay
+    referencia y pueda consultar el dataset relevante. Vacío si no hay
     historial — preserva el comportamiento de turno único."""
     if not history:
         return ""
@@ -922,7 +932,9 @@ async def run_agent(
     # No razona y usa sampling determinista (fiel para citar), independiente del
     # perfil; el largo lo da synthesis_max_tokens (output completo).
     synth_think = _should_think(thinking_mode, "synthesis")
-    synth_user = _build_synthesis_user_message(user_message, subs)
+    synth_user = _build_synthesis_user_message(
+        user_message, subs, concise=(thinking_mode == "off"),
+    )
     if attachments_context:
         # La síntesis también ve el adjunto (clave si no se ruteó a especialistas,
         # p. ej. "resume este documento").

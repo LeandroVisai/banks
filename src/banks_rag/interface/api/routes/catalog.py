@@ -49,6 +49,7 @@ async def list_catalog() -> DatasetListResponse:
             segment=e.segment,
             unit=e.unit,
             date_range=e.date_range,
+            chart_type=e.chart_type,
             columns=[
                 DatasetColumn(name=c.name, type=c.type, values=c.values)
                 for c in e.columns
@@ -91,6 +92,7 @@ async def execute_catalog_query(
         name=dataset.name,
         unit=dataset.unit,
         segment=dataset.segment,
+        chart_type=dataset.chart_type,
         date_column=date_col,
         columns=select_cols,
         rows=rows,
