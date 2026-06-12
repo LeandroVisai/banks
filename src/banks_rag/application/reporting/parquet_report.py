@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from banks_rag.application.agent.prompts import PARQUET_REPORTER_PROMPT, apply_thinking
+from banks_rag.application.agent.prompts import NO_THINK_DIRECTIVE, PARQUET_REPORTER_PROMPT
 from banks_rag.application.reporting.parquet_facts import compute_facts, facts_to_text
 from banks_rag.domain_knowledge.financial_aliases import expand_query, resolve_segment
 from banks_rag.infrastructure.sql.parquet_catalog_loader import (
@@ -279,8 +279,15 @@ class DatasetSection:
     total_tokens: int = 0
 
 
-def _build_user_prompt(dataset: ParquetDataset, facts: dict) -> str:
-    """Mensaje de usuario para el LLM: identidad del dataset + hechos calculados."""
+def _build_user_prompt(dataset: ParquetDataset, facts: dict, *, think: bool = True) -> str:
+    """Mensaje de usuario para el LLM: identidad del dataset + hechos calculados.
+
+    Con ``think=False`` antepone ``/no_think`` al turno de usuario — es el
+    único lugar donde el template Jinja de Qwen3 lo lee para suprimir la
+    inyección de ``<think>``. En el system message el template lo ignora y el
+    modelo piensa de todas formas, consumiendo los tokens y dejando ``content``
+    vacío en la respuesta.
+    """
     head = [
         f"Dataset: {dataset.name} (`{dataset.id}`)",
         f"Unidad: {dataset.unit}" if dataset.unit else "",
@@ -292,7 +299,10 @@ def _build_user_prompt(dataset: ParquetDataset, facts: dict) -> str:
         "Redacta UN párrafo describiendo SOLO el comportamiento relevante de "
         "estos datos. No expliques qué mide la variable ni para qué sirve la serie.",
     ]
-    return "\n".join(line for line in head if line != "")
+    text = "\n".join(line for line in head if line != "")
+    if not think:
+        text = f"{NO_THINK_DIRECTIVE}\n\n{text}"
+    return text
 
 
 def _clean_paragraph(text: str) -> str:
@@ -348,8 +358,8 @@ async def _describe_dataset(
     try:
         result = await llm.generate(
             [
-                {"role": "system", "content": apply_thinking(PARQUET_REPORTER_PROMPT, think=think)},
-                {"role": "user", "content": _build_user_prompt(dataset, facts)},
+                {"role": "system", "content": PARQUET_REPORTER_PROMPT},
+                {"role": "user", "content": _build_user_prompt(dataset, facts, think=think)},
             ],
             tools=None,
             temperature=_MAP_TEMPERATURE,
@@ -409,8 +419,8 @@ async def _synthesize_overview(
     parts.append("\nRedacta ahora la síntesis ejecutiva (2-3 párrafos).")
     result = await llm.generate(
         [
-            {"role": "system", "content": apply_thinking(_REPORT_SYNTHESIS_SYSTEM, think=False)},
-            {"role": "user", "content": "\n".join(parts)},
+            {"role": "system", "content": _REPORT_SYNTHESIS_SYSTEM},
+            {"role": "user", "content": f"{NO_THINK_DIRECTIVE}\n\n" + "\n".join(parts)},
         ],
         tools=None,
         temperature=_SYNTH_TEMPERATURE,
