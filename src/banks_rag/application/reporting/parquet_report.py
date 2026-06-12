@@ -374,6 +374,11 @@ async def _describe_dataset(
 
     section.total_tokens = getattr(result, "n_tokens", 0) or 0
     section.paragraph = _clean_paragraph(result.text)
+    # Si completion_tokens >> len(párrafo)/4, el extra son tokens de thinking.
+    # Un párrafo de 600 chars ≈ 150 tokens; si completion_tokens es 5000+, pensó.
+    _think_indicator = " (thinking)" if section.total_tokens > len(section.paragraph) // 4 + 400 else ""
+    log.info("[%s] %d completion_tokens → %d chars párrafo%s",
+             dataset.id, section.total_tokens, len(section.paragraph), _think_indicator)
     if not section.paragraph:
         section.status = "error"
         log.error("[%s] el LLM respondió con texto vacío (raw=%r)", dataset.id, result.text)
