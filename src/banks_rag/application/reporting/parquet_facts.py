@@ -30,6 +30,13 @@ _NUMERIC_PREFIXES = ("DOUBLE", "FLOAT", "DECIMAL", "BIGINT", "INTEGER", "HUGEINT
 _MAX_CATEGORY_CARDINALITY = 60
 # Tope de categorías/columnas que se detallan en los facts (las de mayor nivel).
 _TOP_CATEGORIES = 8
+# Tope de series por gráfico (legibilidad de un multi-línea) y de puntos por
+# serie (downsample): el gráfico es para verificar la prosa de un vistazo, no
+# un tablero interactivo.
+_MAX_PLOT_SERIES = 6
+_MAX_PLOT_POINTS = 200
+# Tope de categorías en un gráfico de composición (snapshot / pie).
+_MAX_PLOT_CATEGORIES = 12
 
 
 @dataclass
@@ -416,6 +423,185 @@ def _wide_facts(
         "por_columna": por_columna,
         "composicion_corte": sa.composition_wide(rows, date_col, value_cols, fecha=last_date),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Series para graficar — leídas del parquet REAL, no de los agregados del LLM
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# El gráfico del informe es una verificación INDEPENDIENTE de la prosa del LLM:
+# lee la serie directo del parquet (la fuente de verdad), no re-dibuja los
+# agregados que vio el modelo. La consistencia con los números del párrafo se
+# garantiza por CÓDIGO COMPARTIDO — ``compute_series`` reusa ``detect_roles``,
+# así elige la misma columna de fecha/valor/categoría que ``compute_facts`` —
+# no por pasar datos de un proceso a otro. Si la curva discrepa del párrafo es
+# porque hay un problema real de datos (p.ej. fecha que no castea a DATE), y eso
+# se quiere ver, no esconder.
+
+
+@dataclass
+class PlotSeries:
+    """Una serie a dibujar: una línea (por categoría/columna) o un grupo de
+    barras (composición). ``points`` es ``[(x, y)]`` ya ordenado: ``x`` es fecha
+    ISO en series temporales y nombre de categoría en snapshots."""
+
+    label: str
+    points: list[tuple[str, float]]
+
+
+@dataclass
+class PlotData:
+    """Datos listos para el renderer SVG. ``kind='timeseries'`` → multi-línea
+    (eje X temporal); ``kind='snapshot'`` → barras de composición (eje X
+    categórico). ``family`` es la familia renderizable del catálogo
+    (``chart_family``); ``table`` => el caller cae a una mini-tabla HTML."""
+
+    dataset_id: str
+    family: str
+    kind: str  # "timeseries" | "snapshot"
+    unit: str
+    series: list[PlotSeries]
+
+    def is_empty(self) -> bool:
+        return not self.series or all(len(s.points) < 1 for s in self.series)
+
+
+def _downsample(points: list[tuple[str, float]], max_points: int = _MAX_PLOT_POINTS) -> list[tuple[str, float]]:
+    """Reduce a lo más ``max_points`` por muestreo uniforme, conservando SIEMPRE
+    el primer y el último punto (el dato más reciente importa)."""
+    n = len(points)
+    if n <= max_points:
+        return points
+    step = (n - 1) / (max_points - 1)
+    idx = sorted({round(i * step) for i in range(max_points)} | {0, n - 1})
+    return [points[i] for i in idx if 0 <= i < n]
+
+
+def _read_series_rows(
+    con: duckdb.DuckDBPyConnection,
+    parquet_path: Path,
+    *,
+    date_col: str,
+    columns: list[str],
+) -> list[dict]:
+    """Como ``_read_rows`` pero con ``TRY_CAST`` de la fecha a DATE: una fecha
+    que no castea (VARCHAR en formato no-ISO) queda en NULL y la fila se descarta
+    en ``clean_series`` — la serie se ve recortada, señal visible del problema."""
+    src = f"read_parquet({_quote_str(parquet_path.as_posix())})"
+    select_parts = []
+    for c in columns:
+        if c == date_col:
+            select_parts.append(f"TRY_CAST({_quote_ident(c)} AS DATE) AS {_quote_ident(c)}")
+        else:
+            select_parts.append(_quote_ident(c))
+    rel = con.sql(f"SELECT {', '.join(select_parts)} FROM {src}")
+    names = rel.columns
+    out: list[dict] = []
+    for row in rel.fetchall():
+        d = dict(zip(names, row, strict=False))
+        if d.get(date_col) is not None:
+            d[date_col] = str(d[date_col])
+        out.append(d)
+    return out
+
+
+def _aggregate_by_category(
+    rows: list[dict], date_col: str, cat_col: str, val_col: str,
+) -> dict[str, list[sa.Point]]:
+    """Serie por categoría sumando por fecha (mismo criterio que _categorical_facts:
+    si hay más de una categórica, varias filas por fecha se agregan)."""
+    agg: dict[str, dict[str, float]] = {}
+    for row in rows:
+        cat, f, raw = row.get(cat_col), row.get(date_col), row.get(val_col)
+        if cat is None or f is None or raw is None:
+            continue
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            continue
+        per_date = agg.setdefault(str(cat), {})
+        per_date[str(f)] = per_date.get(str(f), 0.0) + val
+    return {
+        cat: sorted(per_date.items(), key=lambda kv: kv[0])
+        for cat, per_date in agg.items()
+    }
+
+
+def compute_series(
+    dataset: ParquetDataset,
+    parquet_dir: Path,
+) -> PlotData | None:
+    """Lee del parquet REAL la(s) serie(s) a graficar, reusando ``detect_roles``.
+
+    Devuelve ``None`` si el parquet no existe (→ sin gráfico). La familia
+    renderizable sale del ``chart_type`` del catálogo vía ``chart_family``; el
+    renderer decide la marca concreta y degrada barras-con-muchos-puntos a línea.
+    """
+    from banks_rag.domain.agent.chart_types import chart_family
+
+    parquet_path = dataset.parquet_path(parquet_dir)
+    if not parquet_path.exists():
+        return None
+
+    family = chart_family(dataset.chart_type)
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(parquet_path, con)
+
+        # ── Snapshot transversal (sin fecha) → composición categórica ────────
+        if roles.date_col is None:
+            if not (roles.category_cols and roles.value_cols):
+                return None
+            cat_col, val_col = roles.category_cols[0], roles.value_cols[0]
+            rows = _read_rows(con, parquet_path, date_col=None, columns=[cat_col, val_col])
+            sums: dict[str, float] = {}
+            for row in rows:
+                c, raw = row.get(cat_col), row.get(val_col)
+                if c is None or raw is None:
+                    continue
+                try:
+                    sums[str(c)] = sums.get(str(c), 0.0) + float(raw)
+                except (TypeError, ValueError):
+                    continue
+            if not sums:
+                return None
+            ordered = sorted(sums.items(), key=lambda kv: abs(kv[1]), reverse=True)[:_MAX_PLOT_CATEGORIES]
+            return PlotData(
+                dataset_id=dataset.id, family=family, kind="snapshot", unit=dataset.unit,
+                series=[PlotSeries(label=cat_col, points=[(c, round(v, 6)) for c, v in ordered])],
+            )
+
+        # ── Serie temporal con categoría → multi-línea (top categorías) ──────
+        if roles.category_cols and roles.value_cols:
+            cat_col, val_col = roles.category_cols[0], roles.value_cols[0]
+            rows = _read_series_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, cat_col, val_col])
+            by_cat = _aggregate_by_category(rows, roles.date_col, cat_col, val_col)
+            top = sorted(by_cat, key=lambda c: abs(by_cat[c][-1][1]) if by_cat[c] else 0.0, reverse=True)[:_MAX_PLOT_SERIES]
+            series = [PlotSeries(label=c, points=_downsample(by_cat[c])) for c in top if by_cat[c]]
+            return _nonempty(PlotData(dataset.id, family, "timeseries", dataset.unit, series))
+
+        # ── Serie temporal "ancha" (varias columnas de valor) → multi-línea ──
+        if len(roles.value_cols) > 1:
+            rows = _read_series_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, *roles.value_cols])
+            by_col = {c: sa.clean_series(rows, roles.date_col, c) for c in roles.value_cols}
+            top = sorted(roles.value_cols, key=lambda c: abs(by_col[c][-1][1]) if by_col[c] else 0.0, reverse=True)[:_MAX_PLOT_SERIES]
+            series = [PlotSeries(label=c, points=_downsample(by_col[c])) for c in top if by_col[c]]
+            return _nonempty(PlotData(dataset.id, family, "timeseries", dataset.unit, series))
+
+        # ── Serie temporal simple ────────────────────────────────────────────
+        if roles.value_cols:
+            val_col = roles.value_cols[0]
+            rows = _read_series_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, val_col])
+            pts = _downsample(sa.clean_series(rows, roles.date_col, val_col))
+            return _nonempty(PlotData(dataset.id, family, "timeseries", dataset.unit, [PlotSeries(label=val_col, points=pts)]))
+
+        return None
+    finally:
+        con.close()
+
+
+def _nonempty(plot: PlotData) -> PlotData | None:
+    return None if plot.is_empty() else plot
 
 
 # ─────────────────────────────────────────────────────────────────────────────

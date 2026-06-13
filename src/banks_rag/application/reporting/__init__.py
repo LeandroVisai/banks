@@ -6,7 +6,9 @@ por dataset vía mini-loop de tool-calling, síntesis global y render MD/HTML.
 Entrypoint CLI: ``scripts/parquet_report.py``.
 """
 
+from .chart_inject import InjectStats, inject_charts_into_html
 from .html_render import render_parquet_report_html
+from .parquet_facts import PlotData, PlotSeries, compute_series
 from .parquet_report import (
     DatasetSection,
     DatasetSelection,
@@ -18,8 +20,13 @@ from .parquet_report import (
 __all__ = [
     "DatasetSection",
     "DatasetSelection",
+    "InjectStats",
     "ParquetReport",
+    "PlotData",
+    "PlotSeries",
+    "compute_series",
     "generate_parquet_report",
+    "inject_charts_into_html",
     "render_parquet_report_html",
     "select_datasets",
 ]
