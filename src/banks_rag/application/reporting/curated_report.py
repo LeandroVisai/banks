@@ -16,6 +16,7 @@ from __future__ import annotations
 import dataclasses
 import html
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -272,3 +273,23 @@ def render_curated_html(report: CuratedReport, *, subtitle: str | None = None) -
         .replace("__SUBTITLE__", _esc(subtitle or _DISCLAIMER))
         .replace("__BODY__", "\n".join(body))
     )
+
+
+def fill_text_slots(html_content: str, slots: dict[str, str]) -> str:
+    """Inyecta párrafos en los ``<div data-text-slot="…">`` vacíos del HTML curado.
+
+    ``slots`` es ``{slot_id: texto_plano}``. Solo se tocan divs que aún estén
+    vacíos (``></div>`` sin contenido); si ya tienen texto no se sobreescriben.
+    El texto se escapa con ``html.escape`` antes de insertar.
+    """
+    for slot_id, paragraph in slots.items():
+        if not paragraph:
+            continue
+        pattern = re.compile(
+            r'(<div\b[^>]*\bdata-text-slot="' + re.escape(slot_id) + r'"[^>]*>)\s*(</div>)',
+        )
+        html_content = pattern.sub(
+            r"\1" + html.escape(paragraph) + r"\2",
+            html_content,
+        )
+    return html_content

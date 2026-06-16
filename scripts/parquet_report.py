@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
+import json
 import logging
 import pathlib
 import sys
@@ -133,6 +134,13 @@ async def _run(args: argparse.Namespace) -> None:
         html_path = _write(out / "html" / f"{stem}.html", render_parquet_report_html(report))
         print(f"OK html     -> {html_path}")
 
+    if args.paragraphs_out:
+        paragraphs = {s.dataset_id: s.paragraph for s in report.sections if s.status == "ok"}
+        p_path = pathlib.Path(args.paragraphs_out)
+        p_path.parent.mkdir(parents=True, exist_ok=True)
+        p_path.write_text(json.dumps(paragraphs, ensure_ascii=False, indent=2), encoding="utf-8")  # noqa: ASYNC240
+        print(f"OK párrafos -> {p_path}  ({len(paragraphs)} datasets)")
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(
@@ -156,6 +164,10 @@ def main() -> None:
         help="Tokens máx para la síntesis global (0 = usar BANKS_SYNTHESIS_MAX_TOKENS del .env).",
     )
     ap.add_argument("--no-html", action="store_true", help="No generar el HTML (solo markdown).")
+    ap.add_argument(
+        "--paragraphs-out", default=None, metavar="PATH",
+        help="Ruta .json donde guardar {dataset_id: párrafo} para fill_report_texts.py.",
+    )
     asyncio.run(_run(ap.parse_args()))
 
 

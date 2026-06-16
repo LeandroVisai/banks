@@ -721,9 +721,6 @@ def facts_to_text(facts: dict) -> str:
             lines.append(f"  · {cat['categoria']}: último {_num(cat['ultimo_valor'])} ({cat['ultima_fecha']})")
             for v in cat["ventanas"]:
                 lines.append(f"      {_variation_line(v)}")
-            anom = cat.get("anomalia")
-            if anom and anom.get("es_anomalia"):
-                lines.append(f"      anomalía: {anom['interpretacion']}")
         return "\n".join(lines)
 
     if shape == "timeseries_wide":
@@ -746,13 +743,9 @@ def facts_to_text(facts: dict) -> str:
         if st:
             lines.append(
                 f"Histórico: último {_num(st['ultimo_valor'])} ({st['ultima_fecha']}), "
-                f"media {_num(st['media'])}, desv {_num(st['desviacion_estandar'])}, "
                 f"rango [{_num(st['minimo'])}, {_num(st['maximo'])}], "
                 f"percentil del último {_pct_share(st['percentil_ultimo_valor'])}."
             )
-        anom = facts.get("anomalia")
-        if anom and anom.get("es_anomalia"):
-            lines.append(f"Anomalía: {anom['interpretacion']}")
         return "\n".join(lines)
 
     return "\n".join(lines)
