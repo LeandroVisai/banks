@@ -848,6 +848,84 @@ datasets:
       - {name: "Moneda", type: VARCHAR, values: ["CLP", "UF"]}
       - {name: "Stock_USD", type: DOUBLE}
 
+  - id: retornos_fondo_ffmm
+    file: retornos_fondo_ffmm.parquet
+    chart_type: "grouped_bar"
+    name: "Retornos diarios por tipo de fondo (%)"
+    description: >
+      Serie de retornos diarios por tipo de fondo para el seguimiento del segmento de fondos mutuos. Se desagrega por Tipo (Tipo 1..Tipo 8) e incluye la métrica Retorno. Útil para la rentabilidad por ventana (7d, 30d, YtD) y la rentabilidad mensual por tipo de fondo.
+    segment: ffmm
+    unit: "%"
+    date_range: ["2019-01-01", "2026-06-10"]
+    columns:
+      - {name: "Fecha", type: TIMESTAMP}
+      - {name: "Tipo", type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 4", "Tipo 5", "Tipo 6", "Tipo 7", "Tipo 8"]}
+      - {name: "Retorno", type: DOUBLE}
+
+  - id: retorno_acum_ffmm
+    file: retorno_acum_ffmm.parquet
+    chart_type: "line"
+    name: "Rentabilidad acumulada YtD por tipo de fondo (%)"
+    description: >
+      Serie ancha de rentabilidad acumulada (YtD) por tipo de fondo: una columna por tipo (Tipo 1..Tipo 8). Útil para el gráfico de rentabilidad por tipo de fondo YTD (multi-línea). La unidad es porcentaje.
+    segment: ffmm
+    unit: "%"
+    date_range: ["2019-01-01", "2026-06-10"]
+    columns:
+      - {name: "Fecha", type: TIMESTAMP}
+      - {name: "Tipo 1", type: DOUBLE}
+      - {name: "Tipo 2", type: DOUBLE}
+      - {name: "Tipo 3", type: DOUBLE}
+      - {name: "Tipo 4", type: DOUBLE}
+      - {name: "Tipo 5", type: DOUBLE}
+      - {name: "Tipo 6", type: DOUBLE}
+      - {name: "Tipo 7", type: DOUBLE}
+      - {name: "Tipo 8", type: DOUBLE}
+
+  - id: flujos_fondo_ffmm
+    file: flujos_fondo_ffmm.parquet
+    chart_type: "line"
+    name: "Flujos diarios por tipo de fondo (US$ Mill.)"
+    description: >
+      Serie de flujos diarios por tipo de fondo para el seguimiento del segmento de fondos mutuos. Se desagrega por Tipo (Tipo 1..Tipo 8) e incluye la métrica Flujo. La unidad principal es US$ Mill.
+    segment: ffmm
+    unit: "US$ Mill."
+    date_range: ["2019-01-01", "2026-06-10"]
+    columns:
+      - {name: "Fecha", type: TIMESTAMP}
+      - {name: "Tipo", type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 4", "Tipo 5", "Tipo 6", "Tipo 7", "Tipo 8"]}
+      - {name: "Flujo", type: DOUBLE}
+
+  - id: var_cartera_mensual_ffmm
+    file: var_cartera_mensual_ffmm.parquet
+    chart_type: "stacked_area"
+    name: "Cartera mensual por instrumento y tipo de fondo (Mill US$.)"
+    description: >
+      Cartera mensual (allocation) por tipo de instrumento y tipo de fondo. Se desagrega por Tipo_instrumento (BB, BCP, BCU, BE, BTP, BTU, BU, CFM, DPC, DPL, Otro_RF, Otro_RV, PDBC) y Tipo_fondo (Tipo 1..Tipo 8), con la métrica Monto_USD. Útil para allocation por tipo de fondo (T1/T2/T3/T6) y la variación mensual/YtD de la cartera. La unidad es Mill US$.
+    segment: ffmm
+    unit: "Mill US$."
+    date_range: ["2019-01-31", "2026-04-30"]
+    columns:
+      - {name: "Fecha", type: TIMESTAMP}
+      - {name: "Tipo_instrumento", type: VARCHAR, values: ["BB", "BCP", "BCU", "BE", "BTP", "BTU", "BU", "CFM", "DPC", "DPL", "Otro_RF", "Otro_RV", "PDBC"]}
+      - {name: "Tipo_fondo", type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 4", "Tipo 5", "Tipo 6", "Tipo 7", "Tipo 8"]}
+      - {name: "Monto_USD", type: DOUBLE}
+
+  - id: var_cartera_mensual_ffmm_tipo_f
+    file: var_cartera_mensual_ffmm_tipo_f.parquet
+    chart_type: "stacked_area"
+    name: "Cartera mensual por instrumento (variante tipo de fondo flexible)"
+    description: >
+      Variante de la cartera mensual (allocation) por tipo de instrumento y tipo de fondo, con la clasificación de fondo flexible (tipo_f). Mismas columnas que var_cartera_mensual_ffmm: Tipo_instrumento, Tipo_fondo (Tipo 1..Tipo 8) y Monto_USD. La unidad es Mill US$.
+    segment: ffmm
+    unit: "Mill US$."
+    date_range: ["2019-01-31", "2026-04-30"]
+    columns:
+      - {name: "Fecha", type: TIMESTAMP}
+      - {name: "Tipo_instrumento", type: VARCHAR, values: ["BB", "BCP", "BCU", "BE", "BTP", "BTU", "BU", "CFM", "DPC", "DPL", "Otro_RF", "Otro_RV", "PDBC"]}
+      - {name: "Tipo_fondo", type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 4", "Tipo 5", "Tipo 6", "Tipo 7", "Tipo 8"]}
+      - {name: "Monto_USD", type: DOUBLE}
+
 
   # -- fisco --
 

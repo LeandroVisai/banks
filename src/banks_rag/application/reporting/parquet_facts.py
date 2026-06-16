@@ -466,6 +466,16 @@ class PlotData:
         return not self.series or all(len(s.points) < 1 for s in self.series)
 
 
+@dataclass
+class HtmlTable:
+    """Resultado alternativo a ``PlotData`` para transforms que producen tablas
+    HTML con color condicional (heatmaps DCV). El HTML se incrusta directamente
+    en el bloque del informe sin pasar por ``render_plot_svg``."""
+
+    html: str
+    dataset_id: str = ""
+
+
 def _downsample(points: list[tuple[str, float]], max_points: int = _MAX_PLOT_POINTS) -> list[tuple[str, float]]:
     """Reduce a lo más ``max_points`` por muestreo uniforme, conservando SIEMPRE
     el primer y el último punto (el dato más reciente importa)."""
@@ -530,12 +540,19 @@ def _aggregate_by_category(
 def compute_series(
     dataset: ParquetDataset,
     parquet_dir: Path,
+    *,
+    category_filter: list[str] | None = None,
 ) -> PlotData | None:
     """Lee del parquet REAL la(s) serie(s) a graficar, reusando ``detect_roles``.
 
     Devuelve ``None`` si el parquet no existe (→ sin gráfico). La familia
     renderizable sale del ``chart_type`` del catálogo vía ``chart_family``; el
     renderer decide la marca concreta y degrada barras-con-muchos-puntos a línea.
+
+    ``category_filter`` (opcional): en datos categóricos o snapshot, restringe a
+    esas categorías y RESPETA su orden (sin el tope de top-N). Lo usa el transform
+    ``filter_fund`` del informe curado (p.ej. Duración solo T1/T2) sin duplicar la
+    detección de roles ni la agregación.
     """
     from banks_rag.domain.agent.chart_types import chart_family
 
@@ -565,7 +582,12 @@ def compute_series(
                     continue
             if not sums:
                 return None
-            ordered = sorted(sums.items(), key=lambda kv: abs(kv[1]), reverse=True)[:_MAX_PLOT_CATEGORIES]
+            if category_filter:
+                keep = set(category_filter)
+                ordered = [(c, v) for c, v in sums.items() if c in keep]
+                ordered.sort(key=lambda kv: abs(kv[1]), reverse=True)
+            else:
+                ordered = sorted(sums.items(), key=lambda kv: abs(kv[1]), reverse=True)[:_MAX_PLOT_CATEGORIES]
             return PlotData(
                 dataset_id=dataset.id, family=family, kind="snapshot", unit=dataset.unit,
                 series=[PlotSeries(label=cat_col, points=[(c, round(v, 6)) for c, v in ordered])],
@@ -576,8 +598,12 @@ def compute_series(
             cat_col, val_col = roles.category_cols[0], roles.value_cols[0]
             rows = _read_series_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, cat_col, val_col])
             by_cat = _aggregate_by_category(rows, roles.date_col, cat_col, val_col)
-            top = sorted(by_cat, key=lambda c: abs(by_cat[c][-1][1]) if by_cat[c] else 0.0, reverse=True)[:_MAX_PLOT_SERIES]
-            series = [PlotSeries(label=c, points=_downsample(by_cat[c])) for c in top if by_cat[c]]
+            if category_filter:
+                # Respeta el orden pedido; ignora categorías ausentes en el parquet.
+                cats = [c for c in category_filter if c in by_cat]
+            else:
+                cats = sorted(by_cat, key=lambda c: abs(by_cat[c][-1][1]) if by_cat[c] else 0.0, reverse=True)[:_MAX_PLOT_SERIES]
+            series = [PlotSeries(label=c, points=_downsample(by_cat[c])) for c in cats if by_cat[c]]
             return _nonempty(PlotData(dataset.id, family, "timeseries", dataset.unit, series))
 
         # ── Serie temporal "ancha" (varias columnas de valor) → multi-línea ──

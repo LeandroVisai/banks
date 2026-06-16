@@ -6,19 +6,21 @@ cualquier máquina y se inspecciona como cualquier SVG. Es la decisión análoga
 la que ya tomó el proyecto con el informe (Python determinista le ganó al
 runtime inteligente): nada de Vega-Lite vendoreado ni matplotlib.
 
-Dibuja dos formas a partir de ``PlotData`` (``parquet_facts.compute_series``):
-    timeseries → multi-línea (eje X temporal, una línea por serie/categoría)
-    snapshot   → barras horizontales de composición (eje X categórico)
+Render según el ``kind`` de ``PlotData`` y el tipo objetivo (``chart``):
+    timeseries → línea (``line``) o área apilada (``area``/``stacked_area``)
+    grouped    → barras verticales agrupadas (``grouped_bar``) o apiladas (``stacked_bar``)
+    snapshot   → composición horizontal (``composition``) o torta (``pie``)
 
-Las familias de barra del catálogo (grouped_bar/stacked_bar) se grafican como
-multi-línea cuando hay muchas observaciones (igual que el invariante de
-``chart_types``: barras con mucha data degradan a línea). ``family == "table"``
-devuelve ``None`` → el caller cae a una mini-tabla HTML.
+``render_plot_svg(plot, chart=...)`` dibuja el tipo pedido si la forma del dato lo
+soporta; si no, cae a la marca natural del ``kind`` (línea/composición). El caller
+usa ``renders_natively`` para saber si fue el tipo pedido o un fallback (vista
+preliminar). ``family == "table"`` devuelve ``None`` → mini-tabla HTML.
 """
 
 from __future__ import annotations
 
 import html
+import math
 from datetime import date
 
 from .parquet_facts import PlotData, PlotSeries
@@ -28,7 +30,7 @@ from .parquet_facts import PlotData, PlotSeries
 _PALETTE = ["#0b3766", "#c8102e", "#0a8a5f", "#e08a00", "#6a3d9a", "#1f9bcf"]
 
 _W = 760
-_H = 280
+_H = 320
 _MARGIN = {"top": 30, "right": 18, "bottom": 70, "left": 76}
 
 
@@ -75,13 +77,43 @@ def _y_ticks(lo: float, hi: float) -> list[float]:
 
 # ── Render principal ─────────────────────────────────────────────────────────
 
-def render_plot_svg(plot: PlotData, *, width: int = _W, height: int = _H) -> str | None:
-    """``PlotData`` → SVG inline (str), o ``None`` si la familia no es graficable
-    como serie (``table``) y el caller debe usar una mini-tabla."""
+# Tipo objetivo → ``kind`` de PlotData que lo dibuja de forma NATIVA. Si el dato
+# llega con otro kind, el render cae a la marca natural (preliminar).
+_CHART_NATIVE_KIND: dict[str, str] = {
+    "line": "timeseries",
+    "area": "timeseries",
+    "stacked_area": "timeseries",
+    "grouped_bar": "grouped",
+    "stacked_bar": "grouped",
+    "bar_time": "grouped",
+    "composition": "snapshot",
+    "pie": "snapshot",
+}
+
+
+def renders_natively(plot_kind: str, chart: str | None) -> bool:
+    """True si ``chart`` se dibuja de forma nativa con un PlotData de ese kind
+    (no es un fallback/vista preliminar)."""
+    return _CHART_NATIVE_KIND.get((chart or "").strip()) == plot_kind
+
+
+def render_plot_svg(
+    plot: PlotData, *, chart: str | None = None, width: int = _W, height: int = _H,
+) -> str | None:
+    """``PlotData`` → SVG inline (str) del tipo ``chart`` (o el natural del kind si
+    ``chart`` no aplica). ``None`` si ``family == 'table'`` (→ mini-tabla)."""
     if plot.is_empty() or plot.family == "table":
         return None
+    target = (chart or "").strip()
+    if plot.kind == "grouped":
+        return _render_grouped_bars(plot, width, height, stacked=(target == "stacked_bar"))
     if plot.kind == "snapshot":
+        if target == "pie":
+            return _render_pie(plot, width, height)
         return _render_snapshot(plot, width, height)
+    # timeseries
+    if target in ("area", "stacked_area"):
+        return _render_stacked_area(plot, width, height)
     return _render_timeseries(plot, width, height)
 
 
@@ -210,6 +242,206 @@ def _render_snapshot(plot: PlotData, width: int, height: int) -> str:
     return "\n".join(out)
 
 
+def _bar_y_ticks(dmin: float, dmax: float) -> list[float]:
+    """Ticks para un eje de barras: incluye SIEMPRE el 0 cuando está en rango."""
+    ticks = {0.0, dmin, dmax}
+    if dmin < 0 < dmax:
+        ticks.add(dmin / 2)
+        ticks.add(dmax / 2)
+    else:
+        ticks.add((dmin + dmax) / 2)
+    return sorted(t for t in ticks if dmin <= t <= dmax)
+
+
+def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bool) -> str:
+    """Barras verticales agrupadas o apiladas. Categorías (eje X) compartidas por
+    todas las series; cada serie es un color. Maneja valores negativos (bajo 0)."""
+    series = plot.series
+    cats: list[str] = []
+    seen: set[str] = set()
+    for s in series:
+        for c, _v in s.points:
+            if c not in seen:
+                seen.add(c)
+                cats.append(c)
+    if not cats:
+        return _no_axis_message(plot, width, height)
+    lut = [{c: v for c, v in s.points} for s in series]
+
+    long_labels = any(len(c) > 9 for c in cats)
+    left, right = 64, 18
+    top = 30
+    bottom = 90 if long_labels else 80
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+
+    if stacked:
+        pos = [sum(max(0.0, lut[i].get(c, 0.0)) for i in range(len(series))) for c in cats]
+        neg = [sum(min(0.0, lut[i].get(c, 0.0)) for i in range(len(series))) for c in cats]
+        dmax, dmin = max([0.0, *pos]), min([0.0, *neg])
+    else:
+        allv = [lut[i].get(c, 0.0) for i in range(len(series)) for c in cats]
+        dmax, dmin = max([0.0, *allv]), min([0.0, *allv])
+    if dmax == dmin:
+        dmax += 1.0
+    pad = (dmax - dmin) * 0.08
+    ymax = dmax + pad
+    ymin = dmin - pad if dmin < 0 else dmin
+
+    def py(v: float) -> float:
+        return top + plot_h * (1 - (v - ymin) / (ymax - ymin))
+
+    group_w = plot_w / len(cats)
+    out = _svg_open(width, height, f"{plot.dataset_id} — barras")
+
+    for tick in _bar_y_ticks(dmin, dmax):
+        y = py(tick)
+        emph = abs(tick) < 1e-9
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="{"#999" if emph else "#e6e6e6"}" stroke-width="1"/>')
+        out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="11" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
+
+    for ci, c in enumerate(cats):
+        gx = left + ci * group_w
+        if stacked:
+            bw = group_w * 0.55
+            x = gx + (group_w - bw) / 2
+            pos_acc = neg_acc = 0.0
+            for si in range(len(series)):
+                v = lut[si].get(c, 0.0)
+                if v >= 0:
+                    y_top, y_bot = py(pos_acc + v), py(pos_acc)
+                    pos_acc += v
+                else:
+                    y_top, y_bot = py(neg_acc), py(neg_acc + v)
+                    neg_acc += v
+                h = abs(y_bot - y_top)
+                if h > 0.2:
+                    out.append(f'<rect x="{x:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw:.1f}" height="{h:.1f}" fill="{_PALETTE[si % len(_PALETTE)]}"/>')
+        else:
+            inner = group_w * 0.8
+            bw = inner / len(series)
+            x0 = gx + (group_w - inner) / 2
+            for si in range(len(series)):
+                v = lut[si].get(c, 0.0)
+                y_top, y_bot = py(max(0.0, v)), py(min(0.0, v))
+                h = abs(y_bot - y_top)
+                if h > 0.2:
+                    out.append(f'<rect x="{x0 + si * bw:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw * 0.86:.1f}" height="{h:.1f}" fill="{_PALETTE[si % len(_PALETTE)]}"/>')
+        cx = left + ci * group_w + group_w / 2
+        if long_labels:
+            cy = top + plot_h + 12
+            out.append(
+                f'<text transform="translate({cx:.1f},{cy:.1f}) rotate(-45)" '
+                f'font-size="10" fill="#555" text-anchor="end">{_esc(c)}</text>'
+            )
+        else:
+            out.append(
+                f'<text x="{cx:.1f}" y="{top + plot_h + 16}" '
+                f'font-size="10" fill="#555" text-anchor="middle">{_esc(c)}</text>'
+            )
+
+    out.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
+    legend_y = height - (20 if long_labels else 26)
+    out.append(_legend_row([(s.label, _PALETTE[i % len(_PALETTE)]) for i, s in enumerate(series)], left, legend_y, plot_w))
+    if plot.unit:
+        out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+def _render_stacked_area(plot: PlotData, width: int, height: int) -> str:
+    """Área apilada: series temporales sumadas verticalmente (positivas). Para
+    allocation/composición en el tiempo. Negativos se recortan a 0 (el apilado de
+    áreas asume aportes no negativos)."""
+    series = plot.series
+    dates = sorted({iso for s in series for iso, _ in s.points if _date_ord(iso) is not None})
+    if not dates:
+        return _no_axis_message(plot, width, height)
+    ordv = [_date_ord(d) for d in dates]
+    lut = [dict(s.points) for s in series]
+
+    left, right = 76, 18
+    top, bottom = 30, 70
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+
+    totals = [sum(max(0.0, lut[i].get(d, 0.0)) for i in range(len(series))) for d in dates]
+    ymax = max(totals) or 1.0
+    xmin, xmax = min(ordv), max(ordv)
+
+    def px(o: int) -> float:
+        return left + (plot_w / 2 if xmax == xmin else plot_w * (o - xmin) / (xmax - xmin))
+
+    def py(v: float) -> float:
+        return top + plot_h * (1 - v / ymax)
+
+    out = _svg_open(width, height, f"{plot.dataset_id} — área apilada")
+    for tick in _y_ticks(0.0, ymax):
+        y = py(tick)
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="#e6e6e6" stroke-width="1"/>')
+        out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="11" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
+
+    cum = [0.0] * len(dates)
+    for si in range(len(series)):
+        upper = [cum[k] + max(0.0, lut[si].get(dates[k], 0.0)) for k in range(len(dates))]
+        up = " ".join(f"{px(ordv[k]):.1f},{py(upper[k]):.1f}" for k in range(len(dates)))
+        dn = " ".join(f"{px(ordv[k]):.1f},{py(cum[k]):.1f}" for k in reversed(range(len(dates))))
+        out.append(f'<polygon points="{up} {dn}" fill="{_PALETTE[si % len(_PALETTE)]}" fill-opacity="0.85" stroke="none"/>')
+        cum = upper
+
+    out.append(f'<line x1="{left}" y1="{top + plot_h}" x2="{left + plot_w}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
+    # ticks de fecha (hasta 5).
+    n = min(5, len(dates))
+    if n >= 1:
+        step = (len(dates) - 1) / max(1, n - 1)
+        for j in range(n):
+            k = round(j * step)
+            x = px(ordv[k])
+            anchor = "start" if j == 0 else ("end" if j == n - 1 else "middle")
+            out.append(f'<text x="{x:.1f}" y="{top + plot_h + 18}" font-size="11" fill="#555" text-anchor="{anchor}">{_esc(_fmt_date(dates[k]))}</text>')
+    out.append(_legend_row([(s.label, _PALETTE[i % len(_PALETTE)]) for i, s in enumerate(series)], left, height - 26, plot_w))
+    if plot.unit:
+        out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+def _render_pie(plot: PlotData, width: int, height: int) -> str:
+    """Torta de composición (snapshot). Una porción por categoría; leyenda con
+    valor y porcentaje. Usa |valor| (las porciones no admiten negativos)."""
+    points = [(c, abs(v)) for c, v in (plot.series[0].points if plot.series else []) if v]
+    if not points:
+        return _no_axis_message(plot, width, height)
+    total = sum(v for _, v in points) or 1.0
+    cx, cy, r = 170, 150, 120
+    height = 300
+
+    out = _svg_open(width, height, f"{plot.dataset_id} — torta")
+    angle = -math.pi / 2  # arranca arriba
+    for i, (_cat, v) in enumerate(points):
+        frac = v / total
+        a2 = angle + frac * 2 * math.pi
+        x1, y1 = cx + r * math.cos(angle), cy + r * math.sin(angle)
+        x2, y2 = cx + r * math.cos(a2), cy + r * math.sin(a2)
+        large = 1 if frac > 0.5 else 0
+        if frac >= 0.999:  # una sola categoría → círculo completo
+            out.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{_PALETTE[i % len(_PALETTE)]}"/>')
+        else:
+            out.append(f'<path d="M {cx} {cy} L {x1:.1f} {y1:.1f} A {r} {r} 0 {large} 1 {x2:.1f} {y2:.1f} Z" fill="{_PALETTE[i % len(_PALETTE)]}"/>')
+        angle = a2
+    # leyenda a la derecha
+    lx, ly = cx + r + 40, 40
+    for i, (cat, v) in enumerate(points):
+        y = ly + i * 22
+        pct = 100.0 * v / total
+        out.append(f'<rect x="{lx}" y="{y - 9}" width="11" height="11" fill="{_PALETTE[i % len(_PALETTE)]}"/>')
+        out.append(f'<text x="{lx + 17}" y="{y}" font-size="12" fill="#333">{_esc(cat)}: {_esc(_fmt_num(v))} ({_esc(_fmt_num(pct))}%)</text>')
+    if plot.unit:
+        out.append(f'<text x="20" y="20" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
 def _legend_row(items: list[tuple[str, str]], x0: int, y: float, max_w: int) -> str:
     """Fila de swatches + etiquetas; envuelve a una segunda línea si no caben."""
     parts: list[str] = []
@@ -254,4 +486,114 @@ def render_mini_table_html(plot: PlotData, *, max_rows: int = 8) -> str:
     return (
         '<table class="chart-fallback" style="border-collapse:collapse;font-size:12px;margin-top:6px">'
         f"<thead>{header}</thead><tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+# ── Tablas HTML con color condicional (heatmap DCV) ──────────────────────────
+
+_CELL_POS = "background:#d4edda;color:#155724"
+_CELL_NEG = "background:#f8d7da;color:#721c24"
+
+
+def _delta_style(v: float | None) -> str:
+    if v is None:
+        return ""
+    return _CELL_POS if v > 0 else (_CELL_NEG if v < 0 else "")
+
+
+def _fmt_delta(v: float | None) -> str:
+    if v is None:
+        return "&#8212;"
+    sign = "+" if v > 0 else ""
+    return f"{sign}{_fmt_num(v)}"
+
+
+def render_dcv_cut_table(
+    tipos: list[str],
+    dates: tuple[str, str, str],
+    data: dict[str, tuple[float | None, float | None, float | None]],
+    unit: str = "US$ Mill.",
+) -> str:
+    """Tabla de fechas de corte DCV (T, T-5, T-20): filas=instrumento,
+    columnas=(T, T-5, T-20, Delta T-5, Delta T-20). Deltas coloreados verde/rojo."""
+    t_iso, t5_iso, t20_iso = dates
+    th = "text-align:right;padding:6px 8px;background:#4a5a72;color:#fff;white-space:nowrap;font-size:12px"
+    thl = "text-align:left;padding:6px 8px;background:#4a5a72;color:#fff;font-size:12px"
+    td = "text-align:right;padding:5px 8px;border-bottom:1px solid #eee;font-size:12px"
+    tdl = "text-align:left;padding:5px 8px;border-bottom:1px solid #eee;font-size:12px"
+
+    head = (
+        f'<thead><tr>'
+        f'<th style="{thl}">Instrumento</th>'
+        f'<th style="{th}">T&nbsp;({_fmt_date(t_iso)})</th>'
+        f'<th style="{th}">T-5&nbsp;({_fmt_date(t5_iso)})</th>'
+        f'<th style="{th}">T-20&nbsp;({_fmt_date(t20_iso)})</th>'
+        f'<th style="{th}">Δ T-5</th>'
+        f'<th style="{th}">Δ T-20</th>'
+        f'</tr></thead>'
+    )
+    body_rows = []
+    for tipo in tipos:
+        vt, vt5, vt20 = data.get(tipo, (None, None, None))
+        d5 = (vt - vt5) if vt is not None and vt5 is not None else None
+        d20 = (vt - vt20) if vt is not None and vt20 is not None else None
+        d5_sty = f"{td};{_delta_style(d5)}" if d5 else td
+        d20_sty = f"{td};{_delta_style(d20)}" if d20 else td
+        body_rows.append(
+            f'<tr>'
+            f'<td style="{tdl}">{_esc(tipo)}</td>'
+            f'<td style="{td}">{_fmt_num(vt) if vt is not None else "&#8212;"}</td>'
+            f'<td style="{td}">{_fmt_num(vt5) if vt5 is not None else "&#8212;"}</td>'
+            f'<td style="{td}">{_fmt_num(vt20) if vt20 is not None else "&#8212;"}</td>'
+            f'<td style="{d5_sty}">{_fmt_delta(d5)}</td>'
+            f'<td style="{d20_sty}">{_fmt_delta(d20)}</td>'
+            f'</tr>'
+        )
+    unit_note = f'<div style="font-size:11px;color:#777;margin:2px 0 0">{_esc(unit)}</div>' if unit else ""
+    return (
+        '<div style="overflow-x:auto;max-width:760px;margin:6px auto">'
+        '<table style="width:100%;border-collapse:collapse">'
+        + head + "<tbody>" + "".join(body_rows) + "</tbody></table>"
+        + unit_note + "</div>"
+    )
+
+
+def render_dcv_heatmap_tables(
+    tipos: list[str],
+    buckets: list[str],
+    delta5: dict[str, dict[str, float | None]],
+    delta20: dict[str, dict[str, float | None]],
+    unit: str = "US$ Mill.",
+) -> str:
+    """Dos matrices heatmap (Delta T-5 / Delta T-20): filas=instrumento,
+    cols=plazo, celdas coloreadas verde (positivo) / rojo (negativo)."""
+
+    def _matrix(label: str, matrix: dict[str, dict[str, float | None]]) -> str:
+        th = "text-align:right;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap"
+        thl = "text-align:left;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px"
+        tdl = "text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px"
+        tdr = "text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px"
+        head = (
+            f'<div style="font-weight:700;font-size:12px;color:#0b3766;margin:8px 0 4px">{_esc(label)}</div>'
+            f'<table style="width:100%;border-collapse:collapse;margin-bottom:12px">'
+            f'<thead><tr><th style="{thl}">Instrumento</th>'
+            + "".join(f'<th style="{th}">{_esc(b)}</th>' for b in buckets)
+            + "</tr></thead>"
+        )
+        body_rows = []
+        for tipo in tipos:
+            cells = ""
+            for b in buckets:
+                v = matrix.get(tipo, {}).get(b)
+                sty = f"{tdr};{_delta_style(v)}" if v else tdr
+                cells += f'<td style="{sty}">{_fmt_delta(v)}</td>'
+            body_rows.append(f'<tr><td style="{tdl}">{_esc(tipo)}</td>{cells}</tr>')
+        return head + "<tbody>" + "".join(body_rows) + "</tbody></table>"
+
+    unit_note = f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)}</div>' if unit else ""
+    return (
+        '<div style="overflow-x:auto;max-width:760px;margin:6px auto">'
+        + _matrix("Δ T-5", delta5)
+        + _matrix("Δ T-20", delta20)
+        + unit_note + "</div>"
     )

@@ -12,7 +12,15 @@ from banks_rag.application.reporting.svg_chart import (
     _fmt_num,
     render_mini_table_html,
     render_plot_svg,
+    renders_natively,
 )
+
+
+def _grouped(family="grouped_bar") -> PlotData:
+    return PlotData("g", family, "grouped", "%", [
+        PlotSeries("Δ7d", [("Tipo 1", 0.1), ("Tipo 2", -0.05)]),
+        PlotSeries("Δ30d", [("Tipo 1", 0.33), ("Tipo 2", 0.24)]),
+    ])
 
 
 def _ts(family="line", series=None) -> PlotData:
@@ -69,6 +77,43 @@ class TestRenderSvg:
         ])
         svg = render_plot_svg(plot)
         assert svg.count("<polyline") == 2
+
+
+@pytest.mark.unit
+class TestNewChartTypes:
+    def test_grouped_bar_wellformed(self):
+        svg = render_plot_svg(_grouped(), chart="grouped_bar")
+        ET.fromstring(svg)
+        assert svg.count("<rect") >= 4  # fondo + 2 cat x 2 series (con valores no nulos)
+        assert "nan" not in svg.lower()
+
+    def test_stacked_bar_wellformed(self):
+        svg = render_plot_svg(_grouped(), chart="stacked_bar")
+        ET.fromstring(svg)
+        assert "<rect" in svg
+
+    def test_stacked_area_wellformed(self):
+        plot = _ts(series=[
+            PlotSeries("BB", [("2026-01-31", 100.0), ("2026-02-28", 120.0)]),
+            PlotSeries("PDBC", [("2026-01-31", 50.0), ("2026-02-28", 40.0)]),
+        ])
+        svg = render_plot_svg(plot, chart="stacked_area")
+        ET.fromstring(svg)
+        assert "<polygon" in svg
+
+    def test_pie_wellformed(self):
+        svg = render_plot_svg(_snap(), chart="pie")
+        ET.fromstring(svg)
+        assert "<path" in svg or "<circle" in svg
+
+    def test_renders_natively_mapping(self):
+        assert renders_natively("grouped", "grouped_bar")
+        assert renders_natively("grouped", "stacked_bar")
+        assert renders_natively("timeseries", "stacked_area")
+        assert renders_natively("snapshot", "pie")
+        # tipo objetivo que NO matchea el kind → no nativo (vista preliminar)
+        assert not renders_natively("timeseries", "grouped_bar")
+        assert not renders_natively("snapshot", "line")
 
 
 @pytest.mark.unit

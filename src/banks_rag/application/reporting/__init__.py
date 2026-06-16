@@ -7,6 +7,12 @@ Entrypoint CLI: ``scripts/parquet_report.py``.
 """
 
 from .chart_inject import InjectStats, inject_charts_into_html
+from .curated_report import (
+    CuratedBlock,
+    CuratedReport,
+    build_curated_report,
+    render_curated_html,
+)
 from .html_render import render_parquet_report_html
 from .parquet_facts import PlotData, PlotSeries, compute_series
 from .parquet_report import (
@@ -16,17 +22,24 @@ from .parquet_report import (
     generate_parquet_report,
     select_datasets,
 )
+from .report_spec import FamilyReportSpec, ReportBlock
 
 __all__ = [
+    "CuratedBlock",
+    "CuratedReport",
     "DatasetSection",
     "DatasetSelection",
+    "FamilyReportSpec",
     "InjectStats",
     "ParquetReport",
     "PlotData",
     "PlotSeries",
+    "ReportBlock",
+    "build_curated_report",
     "compute_series",
     "generate_parquet_report",
     "inject_charts_into_html",
+    "render_curated_html",
     "render_parquet_report_html",
     "select_datasets",
 ]

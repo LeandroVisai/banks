@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Informe descriptivo — segmento ffmm</title>
+<style>
+  :root {
+    --blue: #0b3766;
+    --blue-2: #0a4a86;
+    --gray-1: #d9d9d9;
+    --gray-3: #b9b9b9;
+    --text: #1f1f1f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: white;
+    color: var(--text);
+    font-family: Arial, Helvetica, sans-serif;
+    line-height: 1.45;
+  }
+  .page {
+    width: min(1400px, calc(100% - 40px));
+    margin: 20px auto 36px;
+  }
+  .hero {
+    background: var(--gray-1);
+    padding: 18px 20px 12px;
+    text-align: center;
+  }
+  .hero h1 {
+    margin: 0;
+    color: var(--blue);
+    font-size: 30px;
+    line-height: 1.2;
+    font-weight: 800;
+    letter-spacing: 0.2px;
+  }
+  .hero .subtitle {
+    margin-top: 14px;
+    background: #cfcfcf;
+    padding: 8px 14px;
+    font-size: 14px;
+    font-weight: 700;
+    color: #2a2a2a;
+    text-align: center;
+  }
+  .content { margin-top: 26px; }
+  .block-heading {
+    color: var(--blue);
+    font-size: 22px;
+    font-weight: 800;
+    margin: 26px 0 8px;
+    padding-top: 2px;
+  }
+  .dataset-meta {
+    color: var(--blue-2);
+    font-size: 13px;
+    font-weight: 700;
+    margin: 0 0 8px;
+  }
+  p { margin: 8px 0; font-size: 16px; }
+  .bullet-list { margin: 8px 0 14px 0; padding-left: 24px; }
+  .bullet-list li { margin: 6px 0; font-size: 16px; }
+  .separator {
+    border: 0;
+    border-top: 1px solid #c8c8c8;
+    margin: 16px 0 18px;
+  }
+  .dataset-block { margin-bottom: 6px; }
+  /* Fase 2: aquí se monta el gráfico del dataset (data-chart-type del
+     catálogo). En fase 1 no ocupa espacio. */
+  .chart-placeholder { min-height: 0; }
+  code {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 14px;
+    background: #f2f2f2;
+    padding: 1px 4px;
+  }
+  strong { font-weight: 800; }
+  em { font-style: italic; }
+  @media print {
+    .page { width: auto; margin: 12mm; }
+    .hero { break-inside: avoid; }
+    h1, h2, h3 { break-after: avoid; }
+    section, ul, p { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <h1>Informe descriptivo — segmento ffmm</h1>
+      <div class="subtitle">Informe generado automáticamente con IA sobre el catálogo de parquets — uso interno; validar cifras antes de citar.</div>
+    </div>
+    <div class="content">
+<section class="overview">
+<h2 class="block-heading">Síntesis</h2>
+<p>El segmento de fondos mutuos de deuda corporativa variable (DCV) registra un portafolio total por 83.662 millones de dólares, con una estructura de asignación claramente orientada a instrumentos de alta liquidez y vencimiento cercano. Los Depósitos a Plazo constituyen el activo predominante, con el 33,7% de la cartera equivalente a 28.214 millones de dólares, seguidos por los Bonos Bancarios con el 27,9% (23.367 millones de dólares) y los Papeles del Banco Central con el 17,5% (14.600 millones de dólares). Esta concentración en instrumentos del sistema financiero y de política monetaria refleja una gestión de portafolio conservadora, alineada con la búsqueda de estabilidad y liquidez inmediata por parte de los administradores.</p>
+<p>La porción restante de la cartera se distribuye en activos de mayor exposición externa, destacando los Bonos Extranjeros con el 13,3% del total, que suman 11.128 millones de dólares. Si bien la información disponible corresponde a un corte transversal que limita el análisis de tendencias temporales, la distribución observada permite caracterizar el perfil de riesgo vigente en el segmento, donde la preferencia por instrumentos de corto plazo y respaldo institucional se mantiene como eje central de la estrategia de inversión. Cabe señalar que, de la selección inicial de indicadores para este segmento, 11 datasets quedaron sin datos, lo que restringe la capacidad de realizar un seguimiento integral de la evolución del segmento.</p>
+</section>
+<hr class="separator">
+<section class="dataset-block" data-dataset-id="allocation" data-chart-type="stacked_area" data-status="error">
+<h2 class="block-heading">1. Allocation RF por instrumento (Mill US$.)</h2>
+<p class="dataset-meta"><code>allocation</code> · Mill US$. · ffmm · datos hasta 2026-04-30</p>
+<p>La consulta de este dataset falló durante la generación del informe; revisar los logs para el detalle.</p>
+<div class="chart-placeholder" aria-hidden="true"><!-- fase 2: gráfico stacked_area --></div>
+</section>
+<hr class="separator">
+<section class="dataset-block" data-dataset-id="dap_pdbc_ffmm" data-chart-type="line" data-status="error">
+<h2 class="block-heading">2. Stock DAP y PDBC (Acum US$ Mill.)</h2>
+<p class="dataset-meta"><code>dap_pdbc_ffmm</code> · Acum US$ Mill. · ffmm · datos hasta 2026-06-05</p>
+<p>La consulta de este dataset falló durante la generación del informe; revisar los logs para el detalle.</p>
+<div class="chart-placeholder" aria-hidden="true"><!-- fase 2: gráfico line --></div>
+</section>
+<hr class="separator">
+<section class="dataset-block" data-dataset-id="dcv_composicion_ffmm" data-chart-type="pie" data-status="ok">
+<h2 class="block-heading">3. Composición portafolio DCV (%)</h2>
+<p class="dataset-meta"><code>dcv_composicion_ffmm</code> · % · ffmm</p>
+<p>El dataset <code>dcv_composicion_ffmm</code> ofrece un corte transversal de la composición del portafolio de fondos mutuos en el segmento de deuda corporativa variable (DCV), desagregado por tipo de instrumento y expresado en millones de dólares estadounidenses (mmusd). En el registro disponible, el portafolio total asciende a 83.662 millones de dólares, presentando una concentración predominante en Depósitos a Plazo (DAP), que representan el 33,7% del total con 28.214 millones de dólares, seguidos por Bonos Bancarios (BB) con el 27,9% (23.367 millones de dólares) y Papeles del Banco Central (PDBC) con el 17,5% (14.600 millones de dólares). El resto de la cartera se distribuye en Bonos Extranjeros (BE) con el 13,3% (11.128 millones de dólares), Bonos del Tes</p>
+<div class="chart-placeholder" aria-hidden="true"><!-- fase 2: gráfico pie --></div>
+</section>
+<hr class="separator">
+<section class="dataset-block" data-dataset-id="duracion_ffmm" data-chart-type="line" data-status="error">
+<h2 class="block-heading">4. Duración por tipo de fondo (Años)</h2>
+<p class="dataset-meta"><code>duracion_ffmm</code> · Años · ffmm · datos hasta 2026-04-01</p>
+<p>La consulta de este dataset falló durante la generación del informe; revisar los logs para el detalle.</p>
+<div class="chart-placeholder" aria-hidden="true"><!-- fase 2: gráfico line --></div>
+</section>
+<hr class="separator">
+<section class="dataset-block" data-dataset-id="dv01_ffmm" data-chart-type="line" data-status="error">
+<h2 class="block-heading">5. DV01 por fondo</h2>
+<p class="dataset-meta"><code>dv01_ffmm</code> · valor · ffmm · datos hasta 2026-04-30</p>
+<p>La consulta de este dataset falló durante la generación del informe; revisar los logs para el detalle.</p>
+<div class="chart-placeholder" aria-hidden="true"><!-- fase 2: gráfico line --></div>
+</section>
+<hr class="separator">
+<section class="dataset-block" data-dataset-id="flujos_acum_ffmm" data-chart-type="ffmm_cum_interactive" data-status="error">
+<h2 class="block-heading">6. Flujos acumulados por fondo (US$ Mill.)</h2>
+<p class="dataset-meta"><code>flujos_acum_ffmm</code> · US$ Mill. · ffmm · datos hasta 2026-06-02</p>
+<p>La consulta de este dataset falló durante la generación del informe; revisar los logs para el detalle.</p>
+<div class="chart-placeholder" aria-hidden="true"><!-- fase 2: gráfico ffmm_cum_interactive --></div>
+</section>
+<hr class="separator">
+<section class="dataset-block" data-dataset-id="flujos_ffmm" data-chart-type="grouped_bar" data-status="error">
+<h2 class="block-heading">7. Flujos semanales por fondo (US$ Mill.)</h2>
+<p class="dataset-meta"><code>flujos_ffmm</code> · US$ Mill. · ffmm · datos hasta 2026-06-07</p>
+<p>La consulta de este dataset falló durante la generación del informe; revisar los logs para el detalle.</p>
+<div class="chart-placeholder" aria-hidden="true"><!-- fase 2: gráfico grouped_bar --></div>
+</section>
+<hr class="separator">
+<section class="dataset-block" data-dataset-id="flujos_spot_ffmm" data-chart-type="line_cum_interactive" data-status="error">
+<h2 class="block-heading">8. Flujo spot acumulados (US$ Mill.)</h2>
+<p class="dataset-meta"><code>flujos_spot_ffmm</code> · US$ Mill. · ffmm · datos hasta 2026-06-03</p>
+<p>La consulta de este dataset falló durante la generación del informe; revisar los logs para el detalle.</p>
+<div class="chart-placeholder" aria-hidden="true"><!-- fase 2: gráfico line_cum_interactive --></div>
+</section>
+<hr class="separator">
+<section class="dataset-block" data-dataset-id="posicion_spot_derivados_ffmm" data-chart-type="pos_delta_interactive" data-status="error">
+<h2 class="block-heading">9. Posición Spot y Derivados (MM USD) — FFMM</h2>
+<p class="dataset-meta"><code>posicion_spot_derivados_ffmm</code> · MM USD · ffmm · datos hasta 2026-05-29</p>
+<p>La consulta de este dataset falló durante la generación del informe; revisar los logs para el detalle.</p>
+<div class="chart-placeholder" aria-hidden="true"><!-- fase 2: gráfico pos_delta_interactive --></div>
+</section>
+<hr class="separator">
+<section class="dataset-block" data-dataset-id="stock_bucket_ffmm" data-chart-type="stacked_area" data-status="error">
+<h2 class="block-heading">10. Stock DCV por plazo (US$ Mill.)</h2>
+<p class="dataset-meta"><code>stock_bucket_ffmm</code> · US$ Mill. · ffmm · datos hasta 2026-06-05</p>
+<p>La consulta de este dataset falló durante la generación del informe; revisar los logs para el detalle.</p>
+<div class="chart-placeholder" aria-hidden="true"><!-- fase 2: gráfico stacked_area --></div>
+</section>
+<hr class="separator">
+<section class="dataset-block" data-dataset-id="stock_nivel_ffmm" data-chart-type="stacked_area" data-status="error">
+<h2 class="block-heading">11. Stock DCV por instrumento (US$ Mill.)</h2>
+<p class="dataset-meta"><code>stock_nivel_ffmm</code> · US$ Mill. · ffmm · datos hasta 2026-06-05</p>
+<p>La consulta de este dataset falló durante la generación del informe; revisar los logs para el detalle.</p>
+<div class="chart-placeholder" aria-hidden="true"><!-- fase 2: gráfico stacked_area --></div>
+</section>
+<hr class="separator">
+<section class="dataset-block" data-dataset-id="variacion_stock_ffmm" data-chart-type="grouped_bar" data-status="error">
+<h2 class="block-heading">12. Variación Stock DCV (US$ Mill.)</h2>
+<p class="dataset-meta"><code>variacion_stock_ffmm</code> · US$ Mill. · ffmm · datos hasta 2026-06-05</p>
+<p>La consulta de este dataset falló durante la generación del informe; revisar los logs para el detalle.</p>
+<div class="chart-placeholder" aria-hidden="true"><!-- fase 2: gráfico grouped_bar --></div>
+</section>
+<hr class="separator">
+<section class="references">
+<h2 class="block-heading">Referencias y metodología</h2>
+<ul class="bullet-list">
+<li>Datasets analizados: 12 (ok: 1, sin datos: 0, sin evidencia: 0, con error: 11)</li>
+<li>Ventanas de análisis: 7d, 30d (ancladas a la última fecha disponible de cada dataset)</li>
+<li>Generado: 2026-06-11 15:29</li>
+<li>Fuente: sql_catalog/parquet_catalog.yaml</li>
+</ul>
+</section>
+    </div>
+  </div>
+</body>
+</html>
