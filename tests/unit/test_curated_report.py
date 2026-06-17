@@ -78,12 +78,23 @@ class TestFfmmSpec:
         assert secs[0] == "Flujos y Retornos"
         assert "Portafolio DCV" in secs
         assert secs[-1] == "Mercado cambiario"
-        assert len(FFMM_SPEC.blocks) == 29
+        assert "Carteras DCV" not in secs  # sección eliminada (su único gráfico era duplicado)
+        assert len(FFMM_SPEC.blocks) == 27
 
     def test_has_mvp_and_exp_blocks(self):
         counts = FFMM_SPEC.status_counts()
         assert counts.get(STATUS_MVP, 0) >= 5
         assert counts.get(STATUS_EXP, 0) >= 1
+
+    def test_no_duplicate_charts(self):
+        import json
+        sigs = [
+            (b.source_id, b.transform, json.dumps(b.params or {}, sort_keys=True))
+            for b in FFMM_SPEC.blocks
+        ]
+        assert len(sigs) == len(set(sigs)), "gráfico repetido (mismo source+transform+params)"
+        titles = [b.title for b in FFMM_SPEC.blocks]
+        assert len(titles) == len(set(titles)), "título de bloque repetido"
 
     def test_mvp_blocks_point_to_implemented_transforms(self):
         for b in FFMM_SPEC.blocks:
@@ -341,22 +352,38 @@ class TestNiceAxes:
 
 @pytest.mark.unit
 class TestTooltips:
-    def test_line_has_hover_titles(self):
+    def test_line_has_hover_points(self):
         plot = PlotData("d", "line", "timeseries", "US$ Mill.",
                         [PlotSeries("Tipo 1", [("2026-01-01", 10.0), ("2026-02-01", 20.0)])])
         svg = render_plot_svg(plot, chart="line")
-        assert "<title>" in svg and 'pointer-events="all"' in svg
-        assert "Tipo 1 ·" in svg  # tooltip con etiqueta de serie
+        assert 'class="tip-pt"' in svg
+        assert 'data-s="Tipo 1"' in svg              # serie
+        assert 'data-k="01-01-26"' in svg            # fecha formateada
+        assert 'data-v="10,0 US$ Mill."' in svg      # valor + unidad (es-CL)
 
-    def test_bars_have_titles(self):
+    def test_bars_have_hover_data(self):
         plot = PlotData("d", "grouped_bar", "grouped", "%",
                         [PlotSeries("Δ7d", [("Tipo 1", 1.0), ("Tipo 2", -2.0)])])
-        assert render_plot_svg(plot, chart="grouped_bar").count("<title>") >= 2
+        svg = render_plot_svg(plot, chart="grouped_bar")
+        assert svg.count('class="tip-pt"') >= 2
+        assert 'data-k="Tipo 1"' in svg and 'data-s="Δ7d"' in svg
 
-    def test_pie_has_titles(self):
-        plot = PlotData("d", "pie", "snapshot", "%",
+    def test_pie_has_hover_data(self):
+        plot = PlotData("d", "pie", "snapshot", "MM USD",
                         [PlotSeries("c", [("DAP", 28.0), ("BB", 23.0)])])
-        assert "<title>" in render_plot_svg(plot, chart="pie")
+        svg = render_plot_svg(plot, chart="pie")
+        assert 'class="tip-pt"' in svg and 'data-s="DAP"' in svg
+
+    def test_shell_ships_interactive_tooltip(self, tmp_path):
+        p = tmp_path / "dur.parquet"
+        _categorical_parquet(p)
+        report = build_curated_report(
+            _spec_for_build(), entries=[_ds("dur.parquet", id="dur")], parquet_dir=tmp_path,
+        )
+        html = render_curated_html(report)
+        assert 'id="chart-tip"' in html              # caja del tooltip
+        assert "getElementById('chart-tip')" in html  # el JS quedó inyectado
+        assert 'class="tip-pt"' in html               # los puntos llevan la clase
 
 
 @pytest.mark.unit

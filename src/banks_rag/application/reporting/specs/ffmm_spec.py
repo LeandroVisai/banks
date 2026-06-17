@@ -19,7 +19,6 @@ from banks_rag.application.reporting.report_spec import (
 )
 
 _S_FLUJOS = "Flujos y Retornos"
-_S_CARTERAS = "Carteras DCV"
 _S_PORTAFOLIO = "Portafolio DCV"
 _S_RENT = "Rentabilidad"
 _S_ALLOC = "Allocation Carteras mensuales"
@@ -35,25 +34,15 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         source_id="flujos_ffmm", transform="monthly_sum_by_fund",
         params={"funds": ["Tipo 2", "Tipo 3", "Tipo 6"], "months": 6},
     ),
-    ReportBlock(
-        section=_S_FLUJOS, title="Rentabilidad por tipo de fondo (Δ7d / Δ30d)",
-        unit="%", chart="grouped_bar", status=STATUS_EXP,
-        source_id="retornos_fondo_ffmm", transform="window_returns",
-        params={"windows": ["7d", "30d"]},
-    ),
     ReportBlock(  # acumulado (cumsum por fondo)
         section=_S_FLUJOS, title="Flujos acumulados por fondo",
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
         source_id="flujos_acum_ffmm", transform="accumulated", params={"window": "y2", "accumulate": "cumsum"},
     ),
-    # ── Carteras DCV (imagen 2) ──────────────────────────────────────────────
-    ReportBlock(
-        section=_S_CARTERAS, title="Variación Acumulada YtD — BTP, BTU, BB y Otros",
-        unit="US$ Mill.", chart="line", status=STATUS_MVP,
-        source_id="stock_nivel_ffmm", transform="accumulated",
-        params={"types": ["BTP", "BTU", "BB", "Otros"], "window": "ytd", "accumulate": "rebase"},
-    ),
     # ── Portafolio DCV (imágenes 4-5) ────────────────────────────────────────
+    # (La rentabilidad Δ7d/Δ30d y la "Variación Acumulada YtD — BTP/BTU/BB/Otros"
+    #  salían también aquí/antes; eran duplicados de los bloques de Rentabilidad y
+    #  Portafolio DCV, así que se eliminaron para no repetir el mismo gráfico.)
     ReportBlock(
         section=_S_PORTAFOLIO, title="Fechas de corte DCV (T, T-5, T-20)",
         chart="heatmap_table", status=STATUS_EXP,

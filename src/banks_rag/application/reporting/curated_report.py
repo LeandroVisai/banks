@@ -230,7 +230,26 @@ _SHELL = """<!DOCTYPE html>
   .placeholder-card { border:1px dashed #bcbcbc; background:#fafafa; color:var(--muted); border-radius:6px; padding:18px; text-align:center; font-size:13px; max-width:760px; margin:6px auto; }
   .placeholder-card .kind { font-weight:700; color:#9a4b00; }
   .placeholder-card.skip .kind { color:#8a8a8a; }
-  @media print { .section-banner, .report-chart, .placeholder-card, .block { break-inside:avoid; } }
+  /* Hover interactivo (estilo Plotly): el marcador aparece y el shape se resalta */
+  .report-chart .tip-pt { cursor:pointer; transition:fill-opacity .08s; }
+  .report-chart circle.tip-pt:hover { fill-opacity:1; stroke:#fff; stroke-width:1.4; }
+  .report-chart rect.tip-pt:hover, .report-chart path.tip-pt:hover { stroke:#1f1f1f; stroke-width:1.4; }
+  /* Crosshair overlay (series temporales) */
+  .report-chart .hover-overlay { cursor:crosshair; }
+  /* Leyenda clickeable para ocultar/mostrar series */
+  .report-chart .lg-item { cursor:pointer; }
+  .report-chart .lg-item:hover { opacity:0.75; }
+  /* Tooltip flotante */
+  #chart-tip { position:fixed; z-index:9999; display:none; pointer-events:none;
+    background:#fff; border:1px solid #d8dee8; border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,.16);
+    padding:7px 10px; font-size:12px; color:#1f1f1f; max-width:260px; line-height:1.35; }
+  #chart-tip .ct-k { color:#777; font-size:11px; margin-bottom:3px; }
+  #chart-tip .ct-r { display:flex; align-items:center; gap:6px; white-space:nowrap; margin-bottom:2px; }
+  #chart-tip .ct-r:last-child { margin-bottom:0; }
+  #chart-tip .ct-sw { width:10px; height:10px; border-radius:2px; flex:0 0 auto; }
+  #chart-tip .ct-s { color:#444; }
+  #chart-tip .ct-v { font-weight:700; }
+  @media print { .section-banner, .report-chart, .placeholder-card, .block { break-inside:avoid; } #chart-tip { display:none !important; } }
 </style>
 </head>
 <body>
@@ -243,8 +262,94 @@ _SHELL = """<!DOCTYPE html>
     </div>
 __BODY__
   </div>
+  <div id="chart-tip" role="tooltip"></div>
+  <script>__TIP_JS__</script>
 </body>
 </html>
+"""
+
+# JS interactivo (vanilla, sin dependencias, self-contained, abre offline):
+# 1. Leyenda clickeable: click en .lg-item oculta/muestra la serie [data-si="idx"].
+# 2. Crosshair unificado (series temporales): al mover el mouse sobre .hover-overlay
+#    muestra línea guía vertical + tooltip con TODAS las series en esa fecha.
+# 3. Tooltip individual (barras, torta): mouseover en .tip-pt (comportamiento previo).
+_TIP_JS = """
+(function(){
+  var tip=document.getElementById('chart-tip');
+  if(!tip) return;
+  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+  function move(e){
+    var pad=14,w=tip.offsetWidth,h=tip.offsetHeight,
+        x=e.clientX+pad,y=e.clientY+pad;
+    if(x+w>window.innerWidth)x=e.clientX-w-pad;
+    if(y+h>window.innerHeight)y=e.clientY-h-pad;
+    tip.style.left=x+'px';tip.style.top=y+'px';
+  }
+  function hide(){tip.style.display='none';}
+  // Convierte coordenadas de pantalla a coordenadas del viewBox SVG.
+  function svgX(svg,e){
+    var pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse()).x;
+  }
+  document.querySelectorAll('svg.report-chart').forEach(function(svg){
+    // ── Leyenda clickeable (toggle serie on/off) ──────────────────────────────
+    svg.querySelectorAll('.lg-item').forEach(function(lg){
+      lg.addEventListener('click',function(){
+        var idx=lg.getAttribute('data-idx');
+        var off=lg.getAttribute('data-hidden')==='1';
+        if(off){
+          lg.removeAttribute('data-hidden');lg.style.opacity='';
+          svg.querySelectorAll('[data-si="'+idx+'"]').forEach(function(el){el.style.display='';});
+        } else {
+          lg.setAttribute('data-hidden','1');lg.style.opacity='0.25';
+          svg.querySelectorAll('[data-si="'+idx+'"]').forEach(function(el){el.style.display='none';});
+        }
+      });
+    });
+    // ── Crosshair unificado (series temporales con data-pts + hover-overlay) ──
+    var ptsRaw=svg.getAttribute('data-pts');
+    var pts=null;
+    if(ptsRaw){try{pts=JSON.parse(ptsRaw);}catch(err){}}
+    var guide=svg.querySelector('.x-guide');
+    var overlay=svg.querySelector('.hover-overlay');
+    if(pts&&overlay&&guide){
+      overlay.addEventListener('mousemove',function(e){
+        var mx=svgX(svg,e),best=pts[0],bd=Infinity;
+        for(var i=0;i<pts.length;i++){var d=Math.abs(pts[i].x-mx);if(d<bd){bd=d;best=pts[i];}}
+        guide.setAttribute('x1',best.x);guide.setAttribute('x2',best.x);
+        guide.removeAttribute('display');
+        // Filtra series ocultas por leyenda.
+        var vis=best.vals.filter(function(r){
+          var lg=svg.querySelector('.lg-item[data-idx="'+r.i+'"]');
+          return !lg||lg.getAttribute('data-hidden')!=='1';
+        });
+        if(!vis.length){hide();return;}
+        var rows=vis.map(function(r){
+          return '<div class="ct-r"><span class="ct-sw" style="background:'+esc(r.c)+'"></span>'+
+                 '<span class="ct-s">'+esc(r.s)+'</span>'+
+                 '<span class="ct-v">'+esc(r.v)+'</span></div>';
+        }).join('');
+        tip.innerHTML='<div class="ct-k">'+esc(best.k)+'</div>'+rows;
+        tip.style.display='block';move(e);
+      });
+      overlay.addEventListener('mouseleave',function(){guide.setAttribute('display','none');hide();});
+      return;
+    }
+    // ── Tooltip individual (barras, torta, composición) ──────────────────────
+    svg.addEventListener('mouseover',function(e){
+      var el=e.target.closest('.tip-pt');
+      if(!el) return;
+      var c=el.getAttribute('data-c')||'#0b3766',s=el.getAttribute('data-s')||'',
+          k=el.getAttribute('data-k')||'',v=el.getAttribute('data-v')||'';
+      tip.innerHTML=(k?'<div class="ct-k">'+esc(k)+'</div>':'')+
+        '<div class="ct-r"><span class="ct-sw" style="background:'+esc(c)+'"></span>'+
+        (s?'<span class="ct-s">'+esc(s)+'</span>':'')+(v?'<span class="ct-v">'+esc(v)+'</span>':'')+'</div>';
+      tip.style.display='block';move(e);
+    });
+    svg.addEventListener('mousemove',function(e){if(tip.style.display==='block')move(e);});
+    svg.addEventListener('mouseout',function(e){if(e.target.closest('.tip-pt'))hide();});
+  });
+})();
 """
 
 _DISCLAIMER = (
@@ -307,6 +412,7 @@ def render_curated_html(report: CuratedReport, *, subtitle: str | None = None) -
     return (
         _SHELL.replace("__TITLE__", _esc(report.spec.title))
         .replace("__SUBTITLE__", _esc(subtitle or _DISCLAIMER))
+        .replace("__TIP_JS__", _TIP_JS)
         .replace("__BODY__", "\n".join(body))
     )
 

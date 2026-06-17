@@ -20,6 +20,7 @@ preliminar). ``family == "table"`` devuelve ``None`` → mini-tabla HTML.
 from __future__ import annotations
 
 import html
+import json as _json
 import math
 from datetime import date
 
@@ -120,19 +121,48 @@ def _nice_ticks(
 _MAX_TIP_PTS = 40  # puntos-objetivo de hover por serie (controla el peso del SVG)
 
 
-def _tip(text: str) -> str:
-    return f"<title>{_esc(text)}</title>"
+def _val_unit(v: float, unit: str) -> str:
+    return f"{_fmt_num(v)} {unit}" if unit else _fmt_num(v)
 
 
-def _tip_series(label: str, iso: str, v: float, unit: str) -> str:
-    u = f" {unit}" if unit else ""
-    return f"{label} · {_fmt_date(iso)}: {_fmt_num(v)}{u}"
+def _build_pts_json(
+    parsed: "list[tuple[PlotSeries, list[tuple[int, float]]]]",
+    px_fn: "Callable[[int], float]",
+    iso_by_ord: "dict[int, str]",
+    unit: str,
+) -> str:
+    """JSON compacto para el hover unificado (crosshair): lista ordenada de puntos
+    por fecha. Cada entrada: ``{k, x, vals:[{s, c, v, i}]}``.
+    ``i`` es el índice de la serie para filtrar items de leyenda ocultos."""
+    by_date: dict[str, dict] = {}
+    for i, (s, pts) in enumerate(parsed):
+        color = _PALETTE[i % len(_PALETTE)]
+        for o, v in pts:
+            iso = iso_by_ord.get(o) or date.fromordinal(o).isoformat()
+            k = _fmt_date(iso)
+            x = px_fn(o)
+            if k not in by_date:
+                by_date[k] = {"k": k, "x": round(x, 1), "vals": []}
+            by_date[k]["vals"].append({"s": s.label, "c": color, "v": _val_unit(v, unit), "i": i})
+    return _json.dumps(
+        sorted(by_date.values(), key=lambda d: d["x"]),
+        ensure_ascii=False, separators=(",", ":"),
+    )
 
 
-def _tip_cat(label: str, cat: str, v: float, unit: str) -> str:
-    u = f" {unit}" if unit else ""
-    sep = " · " if label else ""
-    return f"{label}{sep}{cat}: {_fmt_num(v)}{u}"
+def _tip_attrs(color: str, *, s: str = "", k: str = "", v: str = "") -> str:
+    """Atributos ``data-*`` para el tooltip interactivo (estilo Plotly) que arma el
+    JS del informe: ``data-c`` (swatch de color), ``data-s`` (serie), ``data-k``
+    (clave: fecha o categoría) y ``data-v`` (valor con unidad). Reemplazan al
+    ``<title>`` nativo (tooltip pobre del navegador) y dan el marcador on-hover."""
+    out = f' class="tip-pt" data-c="{_esc(color)}"'
+    if s:
+        out += f' data-s="{_esc(s)}"'
+    if k:
+        out += f' data-k="{_esc(k)}"'
+    if v:
+        out += f' data-v="{_esc(v)}"'
+    return out
 
 
 def _subsample(points: list, max_n: int = _MAX_TIP_PTS) -> list[int]:
@@ -186,12 +216,15 @@ def render_plot_svg(
     return _render_timeseries(plot, width, height)
 
 
-def _svg_open(width: int, height: int, title: str) -> list[str]:
+def _svg_open(width: int, height: int, title: str, extra_attrs: str = "") -> list[str]:
+    # aria-label (no <title>): describe el gráfico para lectores de pantalla SIN
+    # disparar el tooltip nativo del navegador al pasar el mouse por zonas vacías
+    # (el tooltip lindo lo hace el JS sobre los puntos data-*).
     return [
         f'<svg class="report-chart" viewBox="0 0 {width} {height}" width="100%" '
-        f'role="img" preserveAspectRatio="xMidYMid meet" '
-        f'xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">',
-        f"<title>{_esc(title)}</title>",
+        f'role="img" aria-label="{_esc(title)}" preserveAspectRatio="xMidYMid meet" '
+        f'xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif"'
+        f'{extra_attrs}>',
         f'<rect x="0" y="0" width="{width}" height="{height}" fill="white"/>',
     ]
 
@@ -233,7 +266,9 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
     def py(v: float) -> float:
         return top + plot_h * (1 - (v - ymin) / (ymax - ymin))
 
-    out = _svg_open(width, height, f"{plot.dataset_id} — serie temporal")
+    pts_json = _build_pts_json(parsed, px, iso_by_ord, plot.unit)
+    out = _svg_open(width, height, f"{plot.dataset_id} — serie temporal",
+                    f' data-pts="{_esc(pts_json)}"')
 
     # Rejilla + eje Y (ticks redondos; resalta la línea del 0 si el eje lo cruza).
     for tick in ticks:
@@ -259,26 +294,42 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
             out.append(f'<line x1="{x:.1f}" y1="{top + plot_h}" x2="{x:.1f}" y2="{top + plot_h + 4}" stroke="#999" stroke-width="1"/>')
             out.append(f'<text x="{x:.1f}" y="{top + plot_h + 18}" font-size="11" fill="#555" text-anchor="{anchor}">{_esc(label)}</text>')
 
-    # Series + puntos-objetivo de hover (tooltip nativo con fecha y valor).
-    legend: list[str] = []
+    # Guía vertical del crosshair (oculta; el JS la posiciona en el hover).
+    out.append(
+        f'<line class="x-guide" x1="{left:.1f}" y1="{top}" x2="{left:.1f}" y2="{top + plot_h}" '
+        f'stroke="#aaa" stroke-width="1" stroke-dasharray="4,3" display="none" pointer-events="none"/>'
+    )
+
+    # Series + puntos-objetivo (data-si para el toggle de leyenda; pointer-events="none"
+    # porque el overlay encima captura todos los eventos del mouse).
+    legend: list[tuple[str, str]] = []
     for i, (s, pts) in enumerate(parsed):
         color = _PALETTE[i % len(_PALETTE)]
-        coords = " ".join(f"{px(o):.1f},{py(v):.1f}" for o, v in pts)
         if len(pts) == 1:
             o, v = pts[0]
-            out.append(f'<circle cx="{px(o):.1f}" cy="{py(v):.1f}" r="3" fill="{color}"/>')
+            iso = iso_by_ord.get(o) or date.fromordinal(o).isoformat()
+            out.append(f'<circle cx="{px(o):.1f}" cy="{py(v):.1f}" r="3" fill="{color}" data-si="{i}"/>')
         else:
-            out.append(f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="1.8"/>')
+            coords = " ".join(f"{px(o):.1f},{py(v):.1f}" for o, v in pts)
+            out.append(f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="1.8" data-si="{i}"/>')
         for k in _subsample(pts):
             o, v = pts[k]
             iso = iso_by_ord.get(o) or date.fromordinal(o).isoformat()
             out.append(
-                f'<circle cx="{px(o):.1f}" cy="{py(v):.1f}" r="6" fill="transparent" '
-                f'pointer-events="all">{_tip(_tip_series(s.label, iso, v, plot.unit))}</circle>'
+                f'<circle cx="{px(o):.1f}" cy="{py(v):.1f}" r="4.5" fill="{color}" '
+                f'fill-opacity="0" pointer-events="none" data-si="{i}"'
+                f'{_tip_attrs(color, s=s.label, k=_fmt_date(iso), v=_val_unit(v, plot.unit))}/>'
             )
         legend.append((s.label, color))
 
-    out.append(_legend_row(legend, left, height - 30, plot_w))
+    # Overlay transparente encima de las series: captura los eventos del mouse para
+    # el crosshair + tooltip unificado (el JS busca la fecha más cercana en data-pts).
+    out.append(
+        f'<rect class="hover-overlay" x="{left}" y="{top}" '
+        f'width="{plot_w}" height="{plot_h}" fill="transparent" stroke="none"/>'
+    )
+
+    out.append(_legend_row(legend, left, height - 30, plot_w, interactive=True))
     if plot.unit:
         out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
     out.append("</svg>")
@@ -308,10 +359,9 @@ def _render_snapshot(plot: PlotData, width: int, height: int) -> str:
         color = _PALETTE[i % len(_PALETTE)]
         bar_w = bar_w_max * (abs(v) / vmax)
         share = 100.0 * abs(v) / total
-        unit_sfx = f" {plot.unit}" if plot.unit else ""
-        tip = f"{cat}: {_fmt_num(v)}{unit_sfx} ({_fmt_num(share)}%)"
+        tip_v = f"{_val_unit(v, plot.unit)} ({_fmt_num(share)}%)"
         out.append(f'<text x="{left - 8}" y="{y + 15}" font-size="12" fill="#333" text-anchor="end">{_esc(cat)}</text>')
-        out.append(f'<rect x="{left}" y="{y + 3}" width="{bar_w:.1f}" height="{row_h - 10}" fill="{color}">{_tip(tip)}</rect>')
+        out.append(f'<rect x="{left}" y="{y + 3}" width="{bar_w:.1f}" height="{row_h - 10}" fill="{color}"{_tip_attrs(color, s=cat, v=tip_v)}/>')
         out.append(f'<text x="{left + bar_w + 6:.1f}" y="{y + 15}" font-size="11" fill="#555">{_esc(_fmt_num(v))} ({_esc(_fmt_num(share))}%)</text>')
     if plot.unit:
         out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
@@ -380,8 +430,9 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
                     neg_acc += v
                 h = abs(y_bot - y_top)
                 if h > 0.2:
-                    tip = _tip(_tip_cat(series[si].label, c, v, plot.unit))
-                    out.append(f'<rect x="{x:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw:.1f}" height="{h:.1f}" fill="{_PALETTE[si % len(_PALETTE)]}">{tip}</rect>')
+                    col = _PALETTE[si % len(_PALETTE)]
+                    attrs = _tip_attrs(col, s=series[si].label, k=c, v=_val_unit(v, plot.unit))
+                    out.append(f'<rect x="{x:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw:.1f}" height="{h:.1f}" fill="{col}" data-si="{si}"{attrs}/>')
         else:
             inner = group_w * 0.8
             bw = inner / len(series)
@@ -391,8 +442,9 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
                 y_top, y_bot = py(max(0.0, v)), py(min(0.0, v))
                 h = abs(y_bot - y_top)
                 if h > 0.2:
-                    tip = _tip(_tip_cat(series[si].label, c, v, plot.unit))
-                    out.append(f'<rect x="{x0 + si * bw:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw * 0.86:.1f}" height="{h:.1f}" fill="{_PALETTE[si % len(_PALETTE)]}">{tip}</rect>')
+                    col = _PALETTE[si % len(_PALETTE)]
+                    attrs = _tip_attrs(col, s=series[si].label, k=c, v=_val_unit(v, plot.unit))
+                    out.append(f'<rect x="{x0 + si * bw:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw * 0.86:.1f}" height="{h:.1f}" fill="{col}" data-si="{si}"{attrs}/>')
         cx = left + ci * group_w + group_w / 2
         if long_labels:
             cy = top + plot_h + 12
@@ -408,7 +460,7 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
 
     out.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
     legend_y = height - (20 if long_labels else 26)
-    out.append(_legend_row([(s.label, _PALETTE[i % len(_PALETTE)]) for i, s in enumerate(series)], left, legend_y, plot_w))
+    out.append(_legend_row([(s.label, _PALETTE[i % len(_PALETTE)]) for i, s in enumerate(series)], left, legend_y, plot_w, interactive=True))
     if plot.unit:
         out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
     out.append("</svg>")
@@ -442,11 +494,27 @@ def _render_stacked_area(plot: PlotData, width: int, height: int) -> str:
     def py(v: float) -> float:
         return top + plot_h * (1 - v / ymax)
 
-    out = _svg_open(width, height, f"{plot.dataset_id} — área apilada")
+    # JSON para hover unificado: valores INDIVIDUALES de cada serie (no acumulados).
+    ord_to_date = {ordv[k]: dates[k] for k in range(len(dates)) if ordv[k] is not None}
+    parsed_pts = [
+        (s, [(ordv[k], max(0.0, lut[si].get(dates[k], 0.0)))
+             for k in range(len(dates)) if ordv[k] is not None])
+        for si, s in enumerate(series)
+    ]
+    pts_json = _build_pts_json(parsed_pts, px, ord_to_date, plot.unit)
+    out = _svg_open(width, height, f"{plot.dataset_id} — área apilada",
+                    f' data-pts="{_esc(pts_json)}"')
+
     for tick in ticks:
         y = py(tick)
         out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="#e6e6e6" stroke-width="1"/>')
         out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="11" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
+
+    # Guía vertical del crosshair.
+    out.append(
+        f'<line class="x-guide" x1="{left:.1f}" y1="{top}" x2="{left:.1f}" y2="{top + plot_h}" '
+        f'stroke="#aaa" stroke-width="1" stroke-dasharray="4,3" display="none" pointer-events="none"/>'
+    )
 
     tip_idx = _subsample(dates)
     cum = [0.0] * len(dates)
@@ -454,14 +522,15 @@ def _render_stacked_area(plot: PlotData, width: int, height: int) -> str:
         upper = [cum[k] + max(0.0, lut[si].get(dates[k], 0.0)) for k in range(len(dates))]
         up = " ".join(f"{px(ordv[k]):.1f},{py(upper[k]):.1f}" for k in range(len(dates)))
         dn = " ".join(f"{px(ordv[k]):.1f},{py(cum[k]):.1f}" for k in reversed(range(len(dates))))
-        out.append(f'<polygon points="{up} {dn}" fill="{_PALETTE[si % len(_PALETTE)]}" fill-opacity="0.85" stroke="none"/>')
-        # Punto-objetivo de hover en el centro de cada banda (valor de la serie en esa fecha).
+        out.append(f'<polygon points="{up} {dn}" fill="{_PALETTE[si % len(_PALETTE)]}" fill-opacity="0.85" stroke="none" data-si="{si}"/>')
+        col = _PALETTE[si % len(_PALETTE)]
         for k in tip_idx:
             band_v = max(0.0, lut[si].get(dates[k], 0.0))
             mid_y = py((cum[k] + upper[k]) / 2)
             out.append(
-                f'<circle cx="{px(ordv[k]):.1f}" cy="{mid_y:.1f}" r="6" fill="transparent" '
-                f'pointer-events="all">{_tip(_tip_series(series[si].label, dates[k], band_v, plot.unit))}</circle>'
+                f'<circle cx="{px(ordv[k]):.1f}" cy="{mid_y:.1f}" r="4.5" fill="{col}" '
+                f'fill-opacity="0" pointer-events="none" data-si="{si}"'
+                f'{_tip_attrs(col, s=series[si].label, k=_fmt_date(dates[k]), v=_val_unit(band_v, plot.unit))}/>'
             )
         cum = upper
 
@@ -475,7 +544,13 @@ def _render_stacked_area(plot: PlotData, width: int, height: int) -> str:
             x = px(ordv[k])
             anchor = "start" if j == 0 else ("end" if j == n - 1 else "middle")
             out.append(f'<text x="{x:.1f}" y="{top + plot_h + 18}" font-size="11" fill="#555" text-anchor="{anchor}">{_esc(_fmt_date(dates[k]))}</text>')
-    out.append(_legend_row([(s.label, _PALETTE[i % len(_PALETTE)]) for i, s in enumerate(series)], left, height - 26, plot_w))
+
+    # Overlay encima de todo: captura el mouse para el crosshair unificado.
+    out.append(
+        f'<rect class="hover-overlay" x="{left}" y="{top}" '
+        f'width="{plot_w}" height="{plot_h}" fill="transparent" stroke="none"/>'
+    )
+    out.append(_legend_row([(s.label, _PALETTE[i % len(_PALETTE)]) for i, s in enumerate(series)], left, height - 26, plot_w, interactive=True))
     if plot.unit:
         out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
     out.append("</svg>")
@@ -493,7 +568,6 @@ def _render_pie(plot: PlotData, width: int, height: int) -> str:
     height = 300
 
     out = _svg_open(width, height, f"{plot.dataset_id} — torta")
-    unit_sfx = f" {plot.unit}" if plot.unit else ""
     angle = -math.pi / 2  # arranca arriba
     for i, (cat, v) in enumerate(points):
         frac = v / total
@@ -501,12 +575,12 @@ def _render_pie(plot: PlotData, width: int, height: int) -> str:
         x1, y1 = cx + r * math.cos(angle), cy + r * math.sin(angle)
         x2, y2 = cx + r * math.cos(a2), cy + r * math.sin(a2)
         large = 1 if frac > 0.5 else 0
-        tip = _tip(f"{cat}: {_fmt_num(v)}{unit_sfx} ({_fmt_num(100.0 * frac)}%)")
         color = _PALETTE[i % len(_PALETTE)]
+        attrs = _tip_attrs(color, s=cat, v=f"{_val_unit(v, plot.unit)} ({_fmt_num(100.0 * frac)}%)")
         if frac >= 0.999:  # una sola categoría → círculo completo
-            out.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{color}">{tip}</circle>')
+            out.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{color}"{attrs}/>')
         else:
-            out.append(f'<path d="M {cx} {cy} L {x1:.1f} {y1:.1f} A {r} {r} 0 {large} 1 {x2:.1f} {y2:.1f} Z" fill="{color}">{tip}</path>')
+            out.append(f'<path d="M {cx} {cy} L {x1:.1f} {y1:.1f} A {r} {r} 0 {large} 1 {x2:.1f} {y2:.1f} Z" fill="{color}"{attrs}/>')
         angle = a2
     # leyenda a la derecha
     lx, ly = cx + r + 40, 40
@@ -521,20 +595,29 @@ def _render_pie(plot: PlotData, width: int, height: int) -> str:
     return "\n".join(out)
 
 
-def _legend_row(items: list[tuple[str, str]], x0: int, y: float, max_w: int) -> str:
-    """Fila de swatches + etiquetas; envuelve a una segunda línea si no caben."""
+def _legend_row(items: list[tuple[str, str]], x0: int, y: float, max_w: int, *, interactive: bool = False) -> str:
+    """Fila de swatches + etiquetas; envuelve a una segunda línea si no caben.
+
+    ``interactive=True`` envuelve cada ítem en ``<g class="lg-item" data-idx="i">``
+    para el toggle click-to-hide de series (el JS escucha los clics en el grupo)."""
     parts: list[str] = []
     x = x0
     line = 0
-    for label, color in items:
+    for idx, (label, color) in enumerate(items):
         label_s = label if len(label) <= 22 else label[:21] + "…"
         w = 16 + len(label_s) * 6.2 + 14
         if x + w > x0 + max_w and x > x0:
             line += 1
             x = x0
         yy = y + line * 16
+        if interactive:
+            parts.append(f'<g class="lg-item" data-idx="{idx}" style="cursor:pointer">')
+            # Área transparente más ancha que swatch+texto para facilitar el click.
+            parts.append(f'<rect x="{x - 2:.1f}" y="{yy - 10:.1f}" width="{w:.0f}" height="18" fill="transparent" stroke="none"/>')
         parts.append(f'<rect x="{x:.1f}" y="{yy - 8:.1f}" width="10" height="10" fill="{color}"/>')
         parts.append(f'<text x="{x + 14:.1f}" y="{yy:.1f}" font-size="11" fill="#444">{_esc(label_s)}</text>')
+        if interactive:
+            parts.append('</g>')
         x += w
     return "".join(parts)
 

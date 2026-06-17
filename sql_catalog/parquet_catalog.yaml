@@ -710,11 +710,11 @@ datasets:
   - id: dcv_composicion_ffmm
     file: dcv_composicion_ffmm.parquet
     chart_type: "pie"
-    name: "Composición portafolio DCV (%)"
+    name: "Composición portafolio DCV (MM USD)"
     description: >
-      Serie de composición portafolio dcv (%) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo_Instrumento (BB, BE, BTP, BTU, DAP, PDBC). Incluye las métricas mmusd. La unidad principal de análisis es %. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+      Composición del portafolio DCV de los fondos mutuos a la fecha de corte, por Tipo_Instrumento (BB, BE, BTP, BTU, DAP, PDBC). La métrica mmusd está en MM USD; la torta muestra la participación (%) de cada instrumento sobre el total. Útil para leer la concentración del portafolio.
     segment: ffmm
-    unit: "%"
+    unit: "MM USD"
     date_range: []
     columns:
       - {name: "Tipo_Instrumento", type: VARCHAR, values: ["BB", "BE", "BTP", "BTU", "DAP", "PDBC"]}
