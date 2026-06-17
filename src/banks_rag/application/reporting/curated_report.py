@@ -49,6 +49,7 @@ def _scale_plot(plot: PlotData, factor: float) -> PlotData:
             PlotSeries(label=s.label, points=[(x, y * factor) for x, y in s.points])
             for s in plot.series
         ],
+        overlay=plot.overlay,
     )
 
 # Familias objetivo que NO se pueden aproximar como serie (tabla): placeholder.

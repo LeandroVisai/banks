@@ -41,6 +41,7 @@ from banks_rag.application.reporting.series_transforms import (
     snapshot_grouped,
     snapshot_stacked,
     wide_lines,
+    wide_window_bars,
     window_grouped,
     window_returns,
 )
@@ -391,6 +392,66 @@ class TestGenericTransforms:
         assert plot.kind == "snapshot"
         pts = dict(plot.series[0].points)
         assert pts == {"BTU": 40.0, "BTP": 30.0}  # solo el último día
+
+    def test_category_series_net_auto_adds_overlay(self, tmp_path):
+        # net="auto" agrega una serie "Neto" = suma de categorías por fecha, marcada
+        # como overlay (apilado divergente + línea Neto).
+        p = tmp_path / "spc.parquet"
+        rows = []
+        for d in ["2026-06-09", "2026-06-10"]:
+            for plz, v in [("1 a 90 dias", -30.0), ("Mayor a 2Y", 10.0)]:
+                rows.append(f"(DATE '{d}', '{plz}', {v})")
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Plazos_D, Monto_USD)")
+        ds = _ds("spc.parquet", id="posicion_nr_spc", chart_type="stacked_area")
+        plot = category_series(ds, tmp_path, {"category": "Plazos_D", "value": "Monto_USD",
+                                              "net": "auto", "order": ["1 a 90 dias", "Mayor a 2Y"]})
+        assert plot.overlay == ("Neto",)
+        neto = next(s for s in plot.series if s.label == "Neto")
+        assert dict(neto.points)["2026-06-10"] == -20.0  # -30 + 10
+
+    def test_wide_lines_overlay_marks_neto(self, tmp_path):
+        p = tmp_path / "w.parquet"
+        _write(p, "SELECT * FROM (VALUES "
+               "(DATE '2026-06-09', 1.0, 2.0, 3.0), (DATE '2026-06-10', 3.0, 4.0, 7.0)) "
+               "t(Fecha, A, B, Neto)")
+        ds = _ds("w.parquet", id="nr_var_posicion_spc", chart_type="stacked_area")
+        plot = wide_lines(ds, tmp_path, {"overlay": ["Neto"]})
+        assert plot.overlay == ("Neto",)
+        assert "Neto" in [s.label for s in plot.series]
+
+    def test_window_grouped_negate_and_net_overlay(self, tmp_path):
+        # Vencimiento se NEGA → Neto = Suscripción - Vencimiento; Neto como overlay.
+        p = tmp_path / "vd.parquet"
+        rows = [
+            "('2026-06-10', '1 a 90 días', 100.0, 40.0)",
+            "('2026-06-09', '1 a 90 días', 50.0, 10.0)",
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Plazo, Suscripcion, Vencimiento)")
+        ds = _ds("vd.parquet", id="var_pos_derivados", chart_type="grouped_bar")
+        plot = window_grouped(ds, tmp_path, {"group": "Plazo", "values": ["Suscripcion", "Vencimiento"],
+                                             "window_days": 7, "include_net": True,
+                                             "net_as_overlay": True, "negate": ["Vencimiento"]})
+        assert plot.overlay == ("Neto",)
+        venc = dict(next(s for s in plot.series if s.label == "Vencimiento").points)["1 a 90 días"]
+        neto = dict(next(s for s in plot.series if s.label == "Neto").points)["1 a 90 días"]
+        assert venc == -50.0          # -(40 + 10) negado
+        assert neto == 100.0          # 150 (susc) - 50 (venc) = 150 + (-50)
+
+    def test_wide_window_bars_diff_last_n(self, tmp_path):
+        # NIVELES → diff día-a-día; últimos 2 días; Neto como overlay-punto.
+        p = tmp_path / "lv.parquet"
+        rows = [
+            "(DATE '2026-06-08', 10.0, 100.0)",
+            "(DATE '2026-06-09', 13.0, 105.0)",
+            "(DATE '2026-06-10', 14.0, 108.0)",
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, A, Neto)")
+        ds = _ds("lv.parquet", id="nr_var_posicion_spc", chart_type="stacked_bar")
+        plot = wide_window_bars(ds, tmp_path, {"overlay": ["Neto"], "last_n": 2, "diff": True})
+        assert plot.kind == "grouped" and plot.overlay == ("Neto",)
+        a = dict(next(s for s in plot.series if s.label == "A").points)
+        # diff: 13-10=3 (09), 14-13=1 (10); last_n=2 → ambos
+        assert a["09-06"] == 3.0 and a["10-06"] == 1.0
 
     def test_dual_axis_render_has_two_axes(self):
         plot = PlotData(

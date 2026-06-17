@@ -117,6 +117,58 @@ class TestNewChartTypes:
 
 
 @pytest.mark.unit
+class TestOverlayAndDiverging:
+    """Apilados DIVERGENTES (pos arriba / neg abajo) + serie "Neto" superpuesta."""
+
+    def test_diverging_stacked_area_has_negative_band(self):
+        # Una serie positiva y otra negativa → el dominio del eje debe cruzar el 0.
+        plot = PlotData("spc", "stacked_area", "timeseries", "US$ Mill.", [
+            PlotSeries("Pagan", [("2026-01-01", 5.0), ("2026-02-01", 6.0)]),
+            PlotSeries("Reciben", [("2026-01-01", -8.0), ("2026-02-01", -4.0)]),
+            PlotSeries("Neto", [("2026-01-01", -3.0), ("2026-02-01", 2.0)]),
+        ], overlay=("Neto",))
+        svg = render_plot_svg(plot, chart="stacked_area")
+        ET.fromstring(svg)
+        # Neto va como línea (polyline), no como banda apilada; en color de overlay.
+        assert "<polyline" in svg and "#c8102e" in svg
+        # Un eje con tick negativo (la banda "Reciben" baja del 0).
+        assert "-" in svg
+
+    def test_overlay_excluded_from_stack_palette(self):
+        # Con overlay, las bandas usan la paleta sin rojo (reservado al Neto).
+        plot = PlotData("spc", "stacked_area", "timeseries", "x", [
+            PlotSeries("A", [("2026-01-01", 5.0), ("2026-02-01", 6.0)]),
+            PlotSeries("Neto", [("2026-01-01", 5.0), ("2026-02-01", 6.0)]),
+        ], overlay=("Neto",))
+        svg = render_plot_svg(plot, chart="stacked_area")
+        # el rojo de overlay aparece como línea (stroke) pero NO como banda opaca
+        assert 'fill="#c8102e" fill-opacity="0.85"' not in svg  # ninguna banda en rojo
+        assert 'stroke="#c8102e"' in svg                        # la línea Neto sí
+
+    def test_stacked_bar_neto_drawn_as_points(self):
+        plot = PlotData("deriv", "stacked_bar", "grouped", "US$ Mill.", [
+            PlotSeries("Suscripcion", [("1 a 90", 450.0), ("91 a 360", 2050.0)]),
+            PlotSeries("Vencimiento", [("1 a 90", -1083.0), ("91 a 360", -1172.0)]),
+            PlotSeries("Neto", [("1 a 90", -633.0), ("91 a 360", 878.0)]),
+        ], overlay=("Neto",))
+        svg = render_plot_svg(plot, chart="stacked_bar")
+        ET.fromstring(svg)
+        # Neto = un punto (circle) por categoría, en rojo; no una barra.
+        assert svg.count("<circle") >= 2
+        assert "#c8102e" in svg
+
+    def test_plain_stacked_area_still_positive(self):
+        # Sin overlay ni negativos: comportamiento clásico (todo apilado sobre 0).
+        plot = _ts(series=[
+            PlotSeries("A", [("2026-01-01", 1.0), ("2026-02-01", 2.0)]),
+            PlotSeries("B", [("2026-01-01", 3.0), ("2026-02-01", 1.0)]),
+        ])
+        svg = render_plot_svg(plot, chart="stacked_area")
+        ET.fromstring(svg)
+        assert "<polygon" in svg and "<polyline" not in svg  # sin línea Neto
+
+
+@pytest.mark.unit
 class TestMiniTable:
     def test_snapshot_table(self):
         html = render_mini_table_html(_snap())

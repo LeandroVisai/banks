@@ -481,9 +481,13 @@ class PlotData:
 
     dataset_id: str
     family: str
-    kind: str  # "timeseries" | "snapshot"
+    kind: str  # "timeseries" | "snapshot" | "grouped"
     unit: str
     series: list[PlotSeries]
+    # Etiquetas de series que se dibujan SUPERPUESTAS (no apiladas): una línea
+    # sobre el área/barras en series temporales, un punto por categoría en barras.
+    # Réplica del "Neto"/"Total" de los informes BCCh sobre apilados divergentes.
+    overlay: tuple[str, ...] = ()
 
     def is_empty(self) -> bool:
         return not self.series or all(len(s.points) < 1 for s in self.series)

@@ -30,6 +30,23 @@ from .parquet_facts import PlotData, PlotSeries
 # (varían en luminancia, no solo en tono).
 _PALETTE = ["#0b3766", "#c8102e", "#0a8a5f", "#e08a00", "#6a3d9a", "#1f9bcf"]
 
+# Color de la serie superpuesta "Neto"/"Total" (rojo del informe BCCh).
+_OVERLAY_COLOR = "#c8102e"
+
+# Paleta para las series APILADAS cuando hay overlay: sin rojo (reservado para el
+# Neto), tonos del informe (azul/tabaco/pizarra/verde/ámbar/morado).
+_STACK_PALETTE = ["#1f6fb2", "#b08d57", "#5a6b7b", "#0a8a5f", "#e08a00", "#6a3d9a"]
+
+
+def _split_overlay(plot: PlotData) -> tuple[list[PlotSeries], list[PlotSeries]]:
+    """``(series apiladas, series superpuestas)`` según ``plot.overlay``."""
+    labels = set(plot.overlay or ())
+    if not labels:
+        return list(plot.series), []
+    stack = [s for s in plot.series if s.label not in labels]
+    over = [s for s in plot.series if s.label in labels]
+    return stack, over
+
 _W = 760
 _H = 320
 _MARGIN = {"top": 30, "right": 18, "bottom": 70, "left": 76}
@@ -132,15 +149,17 @@ def _build_pts_json(
     unit: str,
     *,
     py_fn: "Callable[[float], float] | None" = None,
+    colors: list[str] | None = None,
 ) -> str:
     """JSON compacto para el hover unificado (crosshair): lista ordenada de puntos
     por fecha. Cada entrada: ``{k, x, vals:[{s, c, v, i[, y]}]}``.
     ``i`` es el índice de la serie para filtrar items de leyenda ocultos.
     ``y`` (presente si ``py_fn`` se pasa) es la coordenada Y SVG del valor —
-    el JS la usa para destacar la serie visualmente más cercana al cursor."""
+    el JS la usa para destacar la serie visualmente más cercana al cursor.
+    ``colors`` overridea la paleta por índice (p.ej. para la serie superpuesta)."""
     by_date: dict[str, dict] = {}
     for i, (s, pts) in enumerate(parsed):
-        color = _PALETTE[i % len(_PALETTE)]
+        color = colors[i] if colors and i < len(colors) else _PALETTE[i % len(_PALETTE)]
         for o, v in pts:
             iso = iso_by_ord.get(o) or date.fromordinal(o).isoformat()
             k = _fmt_date(iso)
@@ -518,18 +537,22 @@ def _render_snapshot(plot: PlotData, width: int, height: int) -> str:
 
 def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bool) -> str:
     """Barras verticales agrupadas o apiladas. Categorías (eje X) compartidas por
-    todas las series; cada serie es un color. Maneja valores negativos (bajo 0)."""
-    series = plot.series
+    todas las series; cada serie es un color. Maneja valores negativos (bajo 0).
+    Las series en ``plot.overlay`` ("Neto"/"Total") no se barran: se dibujan como
+    un punto por categoría sobre las barras."""
+    series, overlays = _split_overlay(plot)
+    pal = _STACK_PALETTE if overlays else _PALETTE
     cats: list[str] = []
     seen: set[str] = set()
-    for s in series:
+    for s in plot.series:
         for c, _v in s.points:
             if c not in seen:
                 seen.add(c)
                 cats.append(c)
-    if not cats:
+    if not cats or not series:
         return _no_axis_message(plot, width, height)
     lut = [{c: v for c, v in s.points} for s in series]
+    ov_lut = [{c: v for c, v in s.points} for s in overlays]
 
     long_labels = any(len(c) > 9 for c in cats)
     left, right = 64, 18
@@ -538,13 +561,14 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
     plot_w = width - left - right
     plot_h = height - top - bottom
 
+    ov_all = [ov_lut[j].get(c, 0.0) for j in range(len(overlays)) for c in cats]
     if stacked:
         pos = [sum(max(0.0, lut[i].get(c, 0.0)) for i in range(len(series))) for c in cats]
         neg = [sum(min(0.0, lut[i].get(c, 0.0)) for i in range(len(series))) for c in cats]
-        dmax, dmin = max([0.0, *pos]), min([0.0, *neg])
+        dmax, dmin = max([0.0, *pos, *ov_all]), min([0.0, *neg, *ov_all])
     else:
         allv = [lut[i].get(c, 0.0) for i in range(len(series)) for c in cats]
-        dmax, dmin = max([0.0, *allv]), min([0.0, *allv])
+        dmax, dmin = max([0.0, *allv, *ov_all]), min([0.0, *allv, *ov_all])
     if dmax == dmin:
         dmax += 1.0
     ticks, ymin, ymax = _nice_ticks(dmin, dmax)  # incluye 0 → base de eje 0
@@ -577,7 +601,7 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
                     neg_acc += v
                 h = abs(y_bot - y_top)
                 if h > 0.2:
-                    col = _PALETTE[si % len(_PALETTE)]
+                    col = pal[si % len(pal)]
                     attrs = _tip_attrs(col, s=series[si].label, k=c, v=_val_unit(v, plot.unit))
                     out.append(f'<rect x="{x:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw:.1f}" height="{h:.1f}" fill="{col}" data-si="{si}"{attrs}/>')
         else:
@@ -589,7 +613,7 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
                 y_top, y_bot = py(max(0.0, v)), py(min(0.0, v))
                 h = abs(y_bot - y_top)
                 if h > 0.2:
-                    col = _PALETTE[si % len(_PALETTE)]
+                    col = pal[si % len(pal)]
                     attrs = _tip_attrs(col, s=series[si].label, k=c, v=_val_unit(v, plot.unit))
                     out.append(f'<rect x="{x0 + si * bw:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw * 0.86:.1f}" height="{h:.1f}" fill="{col}" data-si="{si}"{attrs}/>')
         cx = left + ci * group_w + group_w / 2
@@ -605,9 +629,25 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
                 f'font-size="10" fill="#555" text-anchor="middle">{_esc(c)}</text>'
             )
 
+    # Punto(s) "Neto"/"Total" sobre cada categoría (no se apilan).
+    for oj, s in enumerate(overlays):
+        si = len(series) + oj
+        for ci, c in enumerate(cats):
+            if c not in ov_lut[oj]:
+                continue
+            v = ov_lut[oj][c]
+            cx = left + ci * group_w + group_w / 2
+            attrs = _tip_attrs(_OVERLAY_COLOR, s=s.label, k=c, v=_val_unit(v, plot.unit))
+            out.append(
+                f'<circle cx="{cx:.1f}" cy="{py(v):.1f}" r="4" fill="{_OVERLAY_COLOR}" '
+                f'stroke="#fff" stroke-width="1" data-si="{si}"{attrs}/>'
+            )
+
     out.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
     legend_y = height - (20 if long_labels else 26)
-    out.append(_legend_row([(s.label, _PALETTE[i % len(_PALETTE)]) for i, s in enumerate(series)], left, legend_y, plot_w, interactive=True))
+    legend = [(s.label, pal[i % len(pal)]) for i, s in enumerate(series)]
+    legend += [(s.label, _OVERLAY_COLOR) for s in overlays]
+    out.append(_legend_row(legend, left, legend_y, plot_w, interactive=True))
     if plot.unit:
         out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
     out.append("</svg>")
@@ -615,46 +655,58 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
 
 
 def _render_stacked_area(plot: PlotData, width: int, height: int) -> str:
-    """Área apilada: series temporales sumadas verticalmente (positivas). Para
-    allocation/composición en el tiempo. Negativos se recortan a 0 (el apilado de
-    áreas asume aportes no negativos)."""
-    series = plot.series
-    dates = sorted({iso for s in series for iso, _ in s.points if _date_ord(iso) is not None})
+    """Área apilada DIVERGENTE: contribuciones positivas se apilan sobre 0 y las
+    negativas bajo 0 (réplica de "Pagan/Reciben Fija" del BCCh). Si todas las
+    series son ≥0 se comporta como un apilado normal. Las series en
+    ``plot.overlay`` (p.ej. "Neto") NO se apilan: se dibujan como una línea
+    superpuesta sobre el área."""
+    series, overlays = _split_overlay(plot)
+    pal = _STACK_PALETTE if overlays else _PALETTE
+    dates = sorted({iso for s in plot.series for iso, _ in s.points if _date_ord(iso) is not None})
     if not dates:
         return _no_axis_message(plot, width, height)
     ordv = [_date_ord(d) for d in dates]
     lut = [dict(s.points) for s in series]
+    ov_lut = [dict(s.points) for s in overlays]
 
     left, right = 76, 18
     top, bottom = 30, 70
     plot_w = width - left - right
     plot_h = height - top - bottom
 
-    totals = [sum(max(0.0, lut[i].get(d, 0.0)) for i in range(len(series))) for d in dates]
-    ticks, _ylo, ymax = _nice_ticks(0.0, max(totals) or 1.0)
-    ymax = ymax or 1.0
+    pos_tot = [sum(max(0.0, lut[i].get(d, 0.0)) for i in range(len(series))) for d in dates]
+    neg_tot = [sum(min(0.0, lut[i].get(d, 0.0)) for i in range(len(series))) for d in dates]
+    ov_all = [ov_lut[j].get(d, 0.0) for j in range(len(overlays)) for d in dates]
+    hi = max([0.0, *pos_tot, *ov_all]) or 1.0
+    lo = min([0.0, *neg_tot, *ov_all])
+    ticks, ymin, ymax = _nice_ticks(lo, hi)
+    if ymax == ymin:
+        ymax = ymin + 1.0
     xmin, xmax = min(ordv), max(ordv)
 
     def px(o: int) -> float:
         return left + (plot_w / 2 if xmax == xmin else plot_w * (o - xmin) / (xmax - xmin))
 
     def py(v: float) -> float:
-        return top + plot_h * (1 - v / ymax)
+        return top + plot_h * (1 - (v - ymin) / (ymax - ymin))
 
-    # JSON para hover unificado: valores INDIVIDUALES de cada serie (no acumulados).
+    # JSON para hover unificado: valores INDIVIDUALES de cada serie (no acumulados),
+    # incluida la(s) superpuesta(s) con su color rojo.
     ord_to_date = {ordv[k]: dates[k] for k in range(len(dates)) if ordv[k] is not None}
     parsed_pts = [
-        (s, [(ordv[k], max(0.0, lut[si].get(dates[k], 0.0)))
+        (s, [(ordv[k], (lut + ov_lut)[si].get(dates[k], 0.0))
              for k in range(len(dates)) if ordv[k] is not None])
-        for si, s in enumerate(series)
+        for si, s in enumerate(series + overlays)
     ]
-    pts_json = _build_pts_json(parsed_pts, px, ord_to_date, plot.unit)
+    colors = [pal[i % len(pal)] for i in range(len(series))] + [_OVERLAY_COLOR] * len(overlays)
+    pts_json = _build_pts_json(parsed_pts, px, ord_to_date, plot.unit, colors=colors)
     out = _svg_open(width, height, f"{plot.dataset_id} — área apilada",
                     f' data-pts="{_esc(pts_json)}"')
 
     for tick in ticks:
         y = py(tick)
-        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="#e6e6e6" stroke-width="1"/>')
+        emph = abs(tick) < 1e-9 and ymin < 0 < ymax
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="{"#999" if emph else "#e6e6e6"}" stroke-width="1"/>')
         out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="11" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
 
     # Guía vertical del crosshair.
@@ -664,24 +716,52 @@ def _render_stacked_area(plot: PlotData, width: int, height: int) -> str:
     )
 
     tip_idx = _subsample(dates)
-    cum = [0.0] * len(dates)
+    pos_cum = [0.0] * len(dates)
+    neg_cum = [0.0] * len(dates)
     for si in range(len(series)):
-        upper = [cum[k] + max(0.0, lut[si].get(dates[k], 0.0)) for k in range(len(dates))]
+        lower: list[float] = []
+        upper: list[float] = []
+        for k in range(len(dates)):
+            v = lut[si].get(dates[k], 0.0)
+            if v >= 0:
+                lo_e, hi_e = pos_cum[k], pos_cum[k] + v
+                pos_cum[k] = hi_e
+            else:
+                hi_e, lo_e = neg_cum[k], neg_cum[k] + v
+                neg_cum[k] = lo_e
+            lower.append(lo_e)
+            upper.append(hi_e)
         up = " ".join(f"{px(ordv[k]):.1f},{py(upper[k]):.1f}" for k in range(len(dates)))
-        dn = " ".join(f"{px(ordv[k]):.1f},{py(cum[k]):.1f}" for k in reversed(range(len(dates))))
-        out.append(f'<polygon points="{up} {dn}" fill="{_PALETTE[si % len(_PALETTE)]}" fill-opacity="0.85" stroke="none" data-si="{si}"/>')
-        col = _PALETTE[si % len(_PALETTE)]
+        dn = " ".join(f"{px(ordv[k]):.1f},{py(lower[k]):.1f}" for k in reversed(range(len(dates))))
+        col = pal[si % len(pal)]
+        out.append(f'<polygon points="{up} {dn}" fill="{col}" fill-opacity="0.85" stroke="none" data-si="{si}"/>')
         for k in tip_idx:
-            band_v = max(0.0, lut[si].get(dates[k], 0.0))
-            mid_y = py((cum[k] + upper[k]) / 2)
+            band_v = lut[si].get(dates[k], 0.0)
+            mid_y = py((lower[k] + upper[k]) / 2)
             out.append(
                 f'<circle cx="{px(ordv[k]):.1f}" cy="{mid_y:.1f}" r="4.5" fill="{col}" '
                 f'fill-opacity="0" pointer-events="none" data-si="{si}"'
                 f'{_tip_attrs(col, s=series[si].label, k=_fmt_date(dates[k]), v=_val_unit(band_v, plot.unit))}/>'
             )
-        cum = upper
 
-    out.append(f'<line x1="{left}" y1="{top + plot_h}" x2="{left + plot_w}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
+    # Eje X en 0 (o en la base si no cruza 0).
+    y0 = py(0.0) if ymin <= 0 <= ymax else top + plot_h
+    out.append(f'<line x1="{left}" y1="{y0:.1f}" x2="{left + plot_w}" y2="{y0:.1f}" stroke="#999" stroke-width="1"/>')
+
+    # Serie(s) superpuesta(s) "Neto": línea sobre el área.
+    for oj, s in enumerate(overlays):
+        pts = [(ordv[k], ov_lut[oj].get(dates[k], 0.0)) for k in range(len(dates))]
+        poly = " ".join(f"{px(o):.1f},{py(v):.1f}" for o, v in pts)
+        si = len(series) + oj
+        out.append(f'<polyline points="{poly}" fill="none" stroke="{_OVERLAY_COLOR}" stroke-width="2.2" data-si="{si}"/>')
+        for k in tip_idx:
+            v = ov_lut[oj].get(dates[k], 0.0)
+            out.append(
+                f'<circle cx="{px(ordv[k]):.1f}" cy="{py(v):.1f}" r="4.5" fill="{_OVERLAY_COLOR}" '
+                f'fill-opacity="0" pointer-events="none" data-si="{si}"'
+                f'{_tip_attrs(_OVERLAY_COLOR, s=s.label, k=_fmt_date(dates[k]), v=_val_unit(v, plot.unit))}/>'
+            )
+
     # ticks de fecha (hasta 5).
     n = min(5, len(dates))
     if n >= 1:
@@ -697,7 +777,9 @@ def _render_stacked_area(plot: PlotData, width: int, height: int) -> str:
         f'<rect class="hover-overlay" x="{left}" y="{top}" '
         f'width="{plot_w}" height="{plot_h}" fill="transparent" stroke="none"/>'
     )
-    out.append(_legend_row([(s.label, _PALETTE[i % len(_PALETTE)]) for i, s in enumerate(series)], left, height - 26, plot_w, interactive=True))
+    legend = [(s.label, pal[i % len(pal)]) for i, s in enumerate(series)]
+    legend += [(s.label, _OVERLAY_COLOR) for s in overlays]
+    out.append(_legend_row(legend, left, height - 26, plot_w, interactive=True))
     if plot.unit:
         out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
     out.append("</svg>")

@@ -147,14 +147,16 @@ def _month_label(month_key: str) -> str:
 def _grouped(
     dataset_id: str, unit: str,
     series_dict: dict[str, dict[str, float]], cat_order: list[str], series_order: list[str],
+    *, overlay: tuple[str, ...] = (),
 ) -> PlotData | None:
     """``{serie: {categoria: valor}}`` → PlotData ``kind='grouped'`` (eje X =
-    categorías, una serie por color)."""
+    categorías, una serie por color). ``overlay`` marca series que se dibujan
+    superpuestas (punto "Neto"/"Total" por categoría) en vez de barra."""
     series = [
         PlotSeries(label=sl, points=[(c, series_dict[sl].get(c, 0.0)) for c in cat_order])
         for sl in series_order
     ]
-    plot = PlotData(dataset_id, "grouped_bar", "grouped", unit, series)
+    plot = PlotData(dataset_id, "grouped_bar", "grouped", unit, series, overlay=overlay)
     return None if not cat_order or plot.is_empty() else plot
 
 
@@ -485,7 +487,8 @@ def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
 
     params: ``category`` (col del eje de color), ``value`` (col numérica),
     ``filter_col``/``filter_val`` (opcional, restringe filas, p.ej. Institucion=Total),
-    ``order`` (orden/selección de categorías).
+    ``order`` (orden/selección de categorías), ``net`` (``"auto"`` añade una serie
+    superpuesta "Neto" = suma de las categorías por fecha, para apilados divergentes).
     """
     path = dataset.parquet_path(parquet_dir)
     if not path.exists():
@@ -524,7 +527,17 @@ def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
     else:
         cats = sorted(by_cat, key=lambda c: abs(by_cat[c][-1][1]) if by_cat[c] else 0.0, reverse=True)[:_MAX_PLOT_SERIES]
     series = [PlotSeries(label=c, points=_downsample(by_cat[c])) for c in cats if by_cat[c]]
-    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit, series)
+    overlay: tuple[str, ...] = ()
+    if str(params.get("net") or "").lower() == "auto" and series:
+        net_by_date: dict[str, float] = {}
+        for c in cats:
+            for d, v in by_cat[c]:
+                net_by_date[d] = net_by_date.get(d, 0.0) + v
+        net_pts = sorted(net_by_date.items())
+        if net_pts:
+            series.append(PlotSeries(label="Neto", points=_downsample(net_pts)))
+            overlay = ("Neto",)
+    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit, series, overlay=overlay)
     return None if plot.is_empty() else plot
 
 
@@ -533,7 +546,9 @@ def wide_lines(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Plot
     o excluyendo columnas y respetando su orden.
 
     params: ``include`` (lista en orden; default = todas), ``exclude`` (lista),
-    ``accumulate`` (``cumsum``/``rebase`` opcional sobre cada columna).
+    ``accumulate`` (``cumsum``/``rebase`` opcional sobre cada columna),
+    ``overlay`` (lista de columnas que se dibujan superpuestas como línea "Neto"
+    sobre el área apilada divergente, en vez de apilarse).
     """
     from banks_rag.infrastructure.sql import series_analytics as sa
 
@@ -565,7 +580,17 @@ def wide_lines(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Plot
             pts = _accumulate(pts, mode)
         if pts:
             series.append(PlotSeries(label=c, points=_downsample(pts)))
-    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit, series)
+    overlay = tuple(c for c in (params.get("overlay") or []) if any(s.label == c for s in series))
+    if not overlay and str(params.get("net") or "").lower() == "auto" and series:
+        net_by_date: dict[str, float] = {}
+        for s in series:
+            for d, v in s.points:
+                net_by_date[d] = net_by_date.get(d, 0.0) + v
+        net_pts = sorted(net_by_date.items())
+        if net_pts:
+            series.append(PlotSeries(label="Neto", points=_downsample(net_pts)))
+            overlay = ("Neto",)
+    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit, series, overlay=overlay)
     return None if plot.is_empty() else plot
 
 
@@ -579,7 +604,10 @@ def window_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> 
 
     params: ``group`` (col categórica del eje X), ``values`` (cols de valor),
     ``window_days`` (int, default 7), ``order`` (orden del eje X),
-    ``include_net`` (bool).
+    ``include_net`` (bool), ``negate`` (cols cuyo signo se invierte antes de apilar,
+    p.ej. ``["Vencimiento"]`` para que el vencimiento reste de la posición y el
+    Neto = Suscripción - Vencimiento salga del propio apilado),
+    ``net_as_overlay`` (bool: dibuja el Neto como punto superpuesto, no como barra).
     """
     path = dataset.parquet_path(parquet_dir)
     if not path.exists():
@@ -588,6 +616,7 @@ def window_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> 
     values = list(params.get("values") or [])
     if not group or not values:
         return None
+    negate = set(params.get("negate") or [])
     con = duckdb.connect()
     try:
         roles = detect_roles(path, con)
@@ -610,18 +639,84 @@ def window_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> 
         per = agg.setdefault(str(g), {})
         for v in values:
             try:
-                per[v] = per.get(v, 0.0) + float(r.get(v))
+                fv = float(r.get(v))
             except (TypeError, ValueError):
                 continue
+            per[v] = per.get(v, 0.0) + (-fv if v in negate else fv)
     if not agg:
         return None
     cats = [c for c in (params.get("order") or sorted(agg)) if c in agg]
     sd: dict[str, dict[str, float]] = {v: {c: agg[c].get(v, 0.0) for c in cats} for v in values}
     series_order = list(values)
+    overlay: tuple[str, ...] = ()
     if params.get("include_net"):
         sd["Neto"] = {c: sum(agg[c].get(v, 0.0) for v in values) for c in cats}
         series_order.append("Neto")
-    return _grouped(dataset.id, dataset.unit, sd, cats, series_order)
+        if params.get("net_as_overlay"):
+            overlay = ("Neto",)
+    return _grouped(dataset.id, dataset.unit, sd, cats, series_order, overlay=overlay)
+
+
+def _daymon(iso: str) -> str:
+    """``YYYY-MM-DD`` → ``DD-MM`` (etiqueta compacta del eje X por día)."""
+    try:
+        d = date.fromisoformat(iso[:10])
+    except ValueError:
+        return iso[:10]
+    return f"{d.day:02d}-{d.month:02d}"
+
+
+def wide_window_bars(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Barras apiladas DIVERGENTES por DÍA (corte de los últimos N días) de un
+    parquet 'ancho': eje X = fecha (últimos N), una serie por columna de valor;
+    la(s) columna(s) en ``overlay`` se dibujan como punto "Neto" superpuesto.
+
+    Réplica de "Var. Diaria Posición … por plazo" del BCCh.
+    params: ``include`` (cols a apilar; default = todas menos overlay),
+    ``overlay`` (cols superpuestas, p.ej. ``["Neto"]``), ``last_n`` (int, default 6),
+    ``diff`` (bool: si el parquet trae NIVELES, dibuja la variación día-a-día =
+    diferencia con el día anterior, no el nivel).
+    """
+    from banks_rag.infrastructure.sql import series_analytics as sa
+
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None or not roles.value_cols:
+            return None
+        overlay_cols = [c for c in (params.get("overlay") or []) if c in roles.value_cols]
+        include = params.get("include") or [c for c in roles.value_cols if c not in overlay_cols]
+        cols = [c for c in include if c in roles.value_cols and c not in overlay_cols]
+        if not cols:
+            return None
+        wanted = cols + overlay_cols
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, *wanted])
+    finally:
+        con.close()
+    do_diff = bool(params.get("diff"))
+    by_col: dict[str, dict[str, float]] = {}
+    for c in wanted:
+        pts = sa.clean_series(rows, roles.date_col, c)  # ya viene ordenado por fecha
+        if do_diff:
+            pts = [(pts[i][0], pts[i][1] - pts[i - 1][1]) for i in range(1, len(pts))]
+        by_col[c] = dict(pts)
+    all_dates = sorted({d for c in wanted for d in by_col[c]})
+    sel = all_dates[-int(params.get("last_n", 6)):]
+    if not sel:
+        return None
+    labels = [_daymon(d) for d in sel]
+    sd: dict[str, dict[str, float]] = {
+        c: {labels[i]: by_col[c].get(sel[i], 0.0) for i in range(len(sel))} for c in wanted
+    }
+    series_order = list(cols)
+    overlay: tuple[str, ...] = ()
+    if overlay_cols:
+        series_order.append(overlay_cols[0])
+        overlay = (overlay_cols[0],)
+    return _grouped(dataset.id, dataset.unit, sd, labels, series_order, overlay=overlay)
 
 
 def snapshot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -918,6 +1013,7 @@ _REGISTRY: dict[str, Transform | None] = {
     "category_series": category_series,
     "wide_lines": wide_lines,
     "window_grouped": window_grouped,
+    "wide_window_bars": wide_window_bars,
     "snapshot_grouped": snapshot_grouped,
     "snapshot_stacked": snapshot_stacked,
     "latest_snapshot": latest_snapshot,
