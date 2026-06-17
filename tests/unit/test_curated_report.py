@@ -29,17 +29,25 @@ from banks_rag.application.reporting.report_spec import (
 from banks_rag.application.reporting.series_transforms import (
     accumulated_series,
     allocation_by_fund,
+    category_series,
     composition_by_bucket,
     dcv_cut_dates,
     dcv_heatmap,
     filter_fund,
     get_transform,
     is_known,
+    latest_snapshot,
     monthly_var_alloc,
+    snapshot_grouped,
+    snapshot_stacked,
+    wide_lines,
+    window_grouped,
     window_returns,
 )
 from banks_rag.application.reporting.specs import available_families, get_spec
+from banks_rag.application.reporting.specs.afp_spec import AFP_SPEC
 from banks_rag.application.reporting.specs.ffmm_spec import FFMM_SPEC
+from banks_rag.application.reporting.specs.nr_spec import NR_SPEC
 from banks_rag.application.reporting.svg_chart import _nice_ticks, render_plot_svg
 from banks_rag.infrastructure.sql.parquet_catalog_loader import ParquetDataset
 
@@ -79,7 +87,7 @@ class TestFfmmSpec:
         assert "Portafolio DCV" in secs
         assert secs[-1] == "Mercado cambiario"
         assert "Carteras DCV" not in secs  # sección eliminada (su único gráfico era duplicado)
-        assert len(FFMM_SPEC.blocks) == 27
+        assert len(FFMM_SPEC.blocks) == 26
 
     def test_has_mvp_and_exp_blocks(self):
         counts = FFMM_SPEC.status_counts()
@@ -100,6 +108,59 @@ class TestFfmmSpec:
         for b in FFMM_SPEC.blocks:
             if b.status == STATUS_MVP:
                 assert get_transform(b.transform) is not None, b.title
+
+
+# ── Specs reales de nr / afp ─────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestNrSpec:
+    def test_registered_and_listed(self):
+        assert get_spec("nr") is NR_SPEC
+        assert "nr" in available_families()
+
+    def test_sections_in_order(self):
+        secs = NR_SPEC.sections()
+        assert secs == ["Mercado de Derivados", "Mercado de Renta Fija",
+                        "Mercado SPC (tasas)", "Flujos Spot"]
+
+    def test_blocks_reference_known_transforms(self):
+        for b in NR_SPEC.blocks:
+            assert get_transform(b.transform) is not None, b.title
+
+    def test_no_duplicate_charts_or_titles(self):
+        import json
+        sigs = [(b.source_id, b.transform, json.dumps(b.params or {}, sort_keys=True)) for b in NR_SPEC.blocks]
+        assert len(sigs) == len(set(sigs)), "gráfico repetido"
+        titles = [b.title for b in NR_SPEC.blocks]
+        assert len(titles) == len(set(titles)), "título repetido"
+
+
+@pytest.mark.unit
+class TestAfpSpec:
+    def test_registered_and_listed(self):
+        assert get_spec("afp") is AFP_SPEC
+        assert "afp" in available_families()
+
+    def test_sections_in_order(self):
+        secs = AFP_SPEC.sections()
+        assert secs[0] == "Allocation y patrimonio"
+        assert secs[-1] == "Atribución de retorno"
+        assert "Mercado cambiario" in secs
+
+    def test_blocks_reference_known_transforms(self):
+        for b in AFP_SPEC.blocks:
+            assert get_transform(b.transform) is not None, b.title
+
+    def test_dual_axis_block_declares_right_axis(self):
+        dual = [b for b in AFP_SPEC.blocks if b.chart == "dual_axis"]
+        assert dual, "el informe afp debe tener al menos un bloque de doble eje"
+        for b in dual:
+            assert b.params.get("right_axis"), b.title
+
+    def test_no_duplicate_titles(self):
+        titles = [b.title for b in AFP_SPEC.blocks]
+        assert len(titles) == len(set(titles))
 
 
 # ── Transforms ───────────────────────────────────────────────────────────────
@@ -226,6 +287,124 @@ class TestGroupedTransforms:
         cats = [c for c, _ in plot.series[0].points]
         assert cats == ["Menor a 1Y", "Entre 2 y 5Y"]
         assert {s.label for s in plot.series} == {"DAP", "BB"}
+
+
+@pytest.mark.unit
+class TestGenericTransforms:
+    """Transforms genéricas reutilizables (NR / AFP)."""
+
+    def test_category_series_casts_varchar_value(self, tmp_path):
+        # Valor como VARCHAR (números como texto) → detect_roles no lo ve, pero
+        # category_series fuerza la columna y castea.
+        p = tmp_path / "pos.parquet"
+        rows = []
+        for d in ["2026-06-09", "2026-06-10"]:
+            for plz, v in [("1 a 90 dias", "100.5"), ("Mayor a 360 dias", "200.0")]:
+                rows.append(f"(DATE '{d}', '{plz}', '{v}')")
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Plazo, Valor)")
+        ds = _ds("pos.parquet", id="posicion_nr_derivados", chart_type="stacked_area")
+        plot = category_series(ds, tmp_path, {"category": "Plazo", "value": "Valor",
+                                              "order": ["1 a 90 dias", "Mayor a 360 dias"]})
+        assert [s.label for s in plot.series] == ["1 a 90 dias", "Mayor a 360 dias"]
+        assert dict(plot.series[0].points)["2026-06-10"] == 100.5
+
+    def test_category_series_filter_and_cumsum(self, tmp_path):
+        p = tmp_path / "spot.parquet"
+        rows = [
+            "(DATE '2026-01-02', 'Total', 'No', 10.0)",
+            "(DATE '2026-01-03', 'Total', 'No', 5.0)",
+            "(DATE '2026-01-02', 'BBVA', 'No', 99.0)",  # se filtra fuera
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Institucion, Afecto_derivado, Net)")
+        ds = _ds("spot.parquet", id="spot_acumulado_agente", chart_type="line")
+        plot = category_series(ds, tmp_path, {
+            "filter_col": "Institucion", "filter_val": "Total",
+            "category": "Afecto_derivado", "value": "Net",
+            "accumulate": "cumsum", "window": "ytd"})
+        pts = dict(plot.series[0].points)
+        assert pts["2026-01-03"] == 15.0  # cumsum: 10 + 5
+
+    def test_wide_lines_include_excludes_other_cols(self, tmp_path):
+        p = tmp_path / "w.parquet"
+        _write(p, "SELECT * FROM (VALUES "
+               "(DATE '2026-06-09', 1.0, 2.0, 9.0), (DATE '2026-06-10', 3.0, 4.0, 9.0)) "
+               "t(Fecha, A, B, Neto)")
+        ds = _ds("w.parquet", id="nr_var_posicion_spc", chart_type="line")
+        plot = wide_lines(ds, tmp_path, {"include": ["A", "B"]})
+        assert [s.label for s in plot.series] == ["A", "B"]  # 'Neto' excluido
+
+    def test_window_grouped_last_window_with_net(self, tmp_path):
+        p = tmp_path / "vd.parquet"
+        rows = [
+            "('2026-06-10', '1 a 90 días', 100.0, -40.0)",
+            "('2026-06-09', '1 a 90 días', 50.0, -10.0)",
+            "('2020-01-01', '1 a 90 días', 999.0, 999.0)",  # fuera de ventana
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Plazo, Suscripcion, Vencimiento)")
+        ds = _ds("vd.parquet", id="var_pos_derivados", chart_type="grouped_bar")
+        plot = window_grouped(ds, tmp_path, {"group": "Plazo", "values": ["Suscripcion", "Vencimiento"],
+                                             "window_days": 7, "include_net": True})
+        assert plot.kind == "grouped"
+        labels = [s.label for s in plot.series]
+        assert labels == ["Suscripcion", "Vencimiento", "Neto"]
+        susc = dict(plot.series[0].points)["1 a 90 días"]
+        neto = dict(plot.series[2].points)["1 a 90 días"]
+        assert susc == 150.0          # 100 + 50 (la fila de 2020 queda fuera)
+        assert neto == 100.0          # 150 + (-50)
+
+    def test_snapshot_grouped_no_date(self, tmp_path):
+        p = tmp_path / "cb.parquet"
+        _write(p, "SELECT * FROM (VALUES "
+               "('Habitat', 10.0, 20.0, 30.0), ('Provida', 5.0, -2.0, 3.0)) "
+               "t(Sector_contraparte, Spot, Forward, Neto)")
+        ds = _ds("cb.parquet", id="cambiario_afp", chart_type="grouped_bar")
+        plot = snapshot_grouped(ds, tmp_path, {"group": "Sector_contraparte",
+                                               "values": ["Spot", "Forward", "Neto"]})
+        assert plot.kind == "grouped"
+        assert [s.label for s in plot.series] == ["Spot", "Forward", "Neto"]
+        assert dict(plot.series[0].points)["Habitat"] == 10.0
+
+    def test_snapshot_stacked_two_categoricals(self, tmp_path):
+        p = tmp_path / "at.parquet"
+        rows = [
+            "('A', 'RVI', 1.0)", "('A', 'RFN', 2.0)",
+            "('B', 'RVI', 3.0)", "('B', 'RFN', 4.0)",
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(fondo, Clase, Valor)")
+        ds = _ds("at.parquet", id="attribution", chart_type="stacked_bar")
+        plot = snapshot_stacked(ds, tmp_path, {"x": "fondo", "series": "Clase",
+                                               "value": "Valor", "x_order": ["A", "B"]})
+        assert plot.kind == "grouped"
+        cats = [c for c, _ in plot.series[0].points]
+        assert cats == ["A", "B"]
+        assert {s.label for s in plot.series} == {"RVI", "RFN"}
+
+    def test_latest_snapshot_uses_last_date(self, tmp_path):
+        p = tmp_path / "sn.parquet"
+        rows = [
+            "(DATE '2026-06-09', 'BTP', 10.0)", "(DATE '2026-06-09', 'BTU', 20.0)",
+            "(DATE '2026-06-10', 'BTP', 30.0)", "(DATE '2026-06-10', 'BTU', 40.0)",
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Tipo, Stock_USD)")
+        ds = _ds("sn.parquet", id="stock_nivel_afp", chart_type="pie")
+        plot = latest_snapshot(ds, tmp_path, {"category": "Tipo", "value": "Stock_USD"})
+        assert plot.kind == "snapshot"
+        pts = dict(plot.series[0].points)
+        assert pts == {"BTU": 40.0, "BTP": 30.0}  # solo el último día
+
+    def test_dual_axis_render_has_two_axes(self):
+        plot = PlotData(
+            dataset_id="allocation_int_nac", family="line", kind="timeseries", unit="%",
+            series=[
+                PlotSeries(label="Nacional", points=[("2026-01-01", 60.0), ("2026-02-01", 55.0)]),
+                PlotSeries(label="AUM", points=[("2026-01-01", 200000.0), ("2026-02-01", 250000.0)]),
+            ],
+        )
+        svg = render_plot_svg(plot, chart="dual_axis", right_axis=["AUM"], right_unit="US$ Mill.")
+        assert svg is not None
+        assert "doble eje" in svg
+        assert "AUM (eje der.)" in svg  # leyenda marca el eje derecho
+        assert "US$ Mill." in svg       # unidad del eje derecho
 
 
 @pytest.mark.unit

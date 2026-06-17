@@ -159,13 +159,6 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         unit="US$ Mill.", chart="bar_time", status=STATUS_EXP,
         source_id="flujos_spot_ffmm", transform="monthly_diff",
     ),
-    ReportBlock(
-        # El parquet posicion_spot_derivados solo trae Agente=TGR, Mercado=Spot
-        # (sin FFMM ni derivados): el título honesto es la posición spot de TGR.
-        section=_S_FX, title="Posición Spot TGR",
-        unit="MM USD", chart="line", status=STATUS_MVP,
-        source_id="posicion_spot_derivados_ffmm", transform="straight_series",
-    ),
 )
 
 FFMM_SPEC = FamilyReportSpec(

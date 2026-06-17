@@ -26,12 +26,14 @@ from banks_rag.domain.agent.chart_types import chart_family
 from banks_rag.infrastructure.sql.parquet_catalog_loader import ParquetDataset
 
 from .parquet_facts import (
+    _MAX_PLOT_CATEGORIES,
     _MAX_PLOT_SERIES,
     HtmlTable,
     PlotData,
     PlotSeries,
     _aggregate_by_category,
     _downsample,
+    _read_rows,
     _read_series_rows,
     compute_series,
     detect_roles,
@@ -471,6 +473,284 @@ def accumulated_series(dataset: ParquetDataset, parquet_dir: Path, params: dict)
         con.close()
 
 
+# ── Transforms genéricas reutilizables (NR / AFP) ────────────────────────────
+
+
+def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Serie temporal por una categoría EXPLÍCITA, con casteo numérico del valor.
+
+    Para parquets donde ``detect_roles`` no sirve por sí solo: la columna de valor
+    llega como VARCHAR (números como texto → no se detecta) o hay varias categóricas
+    y hay que fijar cuál agrupa. ``_aggregate_by_category`` castea con ``float``.
+
+    params: ``category`` (col del eje de color), ``value`` (col numérica),
+    ``filter_col``/``filter_val`` (opcional, restringe filas, p.ej. Institucion=Total),
+    ``order`` (orden/selección de categorías).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    cat, val = params.get("category"), params.get("value")
+    if not cat or not val:
+        return None
+    fcol, fval = params.get("filter_col"), params.get("filter_val")
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None:
+            return None
+        cols = [roles.date_col, cat, val] + ([fcol] if fcol else [])
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=cols)
+    finally:
+        con.close()
+    if fcol and fval is not None:
+        rows = [r for r in rows if str(r.get(fcol)) == str(fval)]
+    by_cat = _aggregate_by_category(rows, roles.date_col, cat, val)
+    # Ventana + acumulado (cumsum/rebase) ANTES del downsample, como accumulated_series.
+    mode, window = params.get("accumulate"), params.get("window")
+    if mode or window:
+        start = None
+        if window:
+            all_pts = [p for s in by_cat.values() for p in s]
+            if all_pts:
+                start = _window_start(max(p[0] for p in all_pts), window)
+        for c, pts in list(by_cat.items()):
+            if start:
+                pts = [p for p in pts if p[0] >= start]
+            by_cat[c] = _accumulate(pts, mode) if mode else pts
+    order = params.get("order")
+    if order:
+        cats = [c for c in order if c in by_cat]
+    else:
+        cats = sorted(by_cat, key=lambda c: abs(by_cat[c][-1][1]) if by_cat[c] else 0.0, reverse=True)[:_MAX_PLOT_SERIES]
+    series = [PlotSeries(label=c, points=_downsample(by_cat[c])) for c in cats if by_cat[c]]
+    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit, series)
+    return None if plot.is_empty() else plot
+
+
+def wide_lines(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Multi-línea de un parquet 'ancho' (varias columnas de valor), seleccionando
+    o excluyendo columnas y respetando su orden.
+
+    params: ``include`` (lista en orden; default = todas), ``exclude`` (lista),
+    ``accumulate`` (``cumsum``/``rebase`` opcional sobre cada columna).
+    """
+    from banks_rag.infrastructure.sql import series_analytics as sa
+
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None or not roles.value_cols:
+            return None
+        exclude = set(params.get("exclude") or [])
+        wanted = params.get("include") or roles.value_cols
+        cols = [c for c in wanted if c in roles.value_cols and c not in exclude]
+        if not cols:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, *cols])
+    finally:
+        con.close()
+    mode, window = params.get("accumulate"), params.get("window")
+    series: list[PlotSeries] = []
+    for c in cols[:_MAX_PLOT_SERIES]:
+        pts = sa.clean_series(rows, roles.date_col, c)
+        if window and pts:
+            start = _window_start(pts[-1][0], window)
+            if start:
+                pts = [p for p in pts if p[0] >= start]
+        if mode:
+            pts = _accumulate(pts, mode)
+        if pts:
+            series.append(PlotSeries(label=c, points=_downsample(pts)))
+    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit, series)
+    return None if plot.is_empty() else plot
+
+
+def window_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Barras agrupadas de un CORTE temporal: suma de columnas de valor sobre la
+    última ventana, agrupada por una categoría (eje X).
+
+    Replica los gráficos "cambio de posición de la última semana por tramo":
+    una serie por cada columna de ``values`` (p.ej. Suscripción/Vencimiento) y,
+    opcionalmente, una serie ``Neto`` con la suma.
+
+    params: ``group`` (col categórica del eje X), ``values`` (cols de valor),
+    ``window_days`` (int, default 7), ``order`` (orden del eje X),
+    ``include_net`` (bool).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    group = params.get("group")
+    values = list(params.get("values") or [])
+    if not group or not values:
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, group, *values])
+    finally:
+        con.close()
+    isos = [str(r[roles.date_col]) for r in rows if r.get(roles.date_col)]
+    if not isos:
+        return None
+    last = max(isos)
+    days = int(params.get("window_days", 7))
+    start = (date.fromisoformat(last[:10]) - timedelta(days=days)).isoformat()
+    agg: dict[str, dict[str, float]] = {}
+    for r in rows:
+        d, g = r.get(roles.date_col), r.get(group)
+        if d is None or g is None or str(d) < start:
+            continue
+        per = agg.setdefault(str(g), {})
+        for v in values:
+            try:
+                per[v] = per.get(v, 0.0) + float(r.get(v))
+            except (TypeError, ValueError):
+                continue
+    if not agg:
+        return None
+    cats = [c for c in (params.get("order") or sorted(agg)) if c in agg]
+    sd: dict[str, dict[str, float]] = {v: {c: agg[c].get(v, 0.0) for c in cats} for v in values}
+    series_order = list(values)
+    if params.get("include_net"):
+        sd["Neto"] = {c: sum(agg[c].get(v, 0.0) for v in values) for c in cats}
+        series_order.append("Neto")
+    return _grouped(dataset.id, dataset.unit, sd, cats, series_order)
+
+
+def snapshot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Barras agrupadas de un parquet SIN fecha (corte transversal): eje X = una
+    columna categórica y una serie por cada columna de valor.
+
+    Para "Flujo cambiario por AFP" (Spot/Forward/Neto por AFP).
+    params: ``group`` (col del eje X), ``values`` (cols de valor), ``order``.
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    group = params.get("group")
+    values = list(params.get("values") or [])
+    if not group or not values:
+        return None
+    con = duckdb.connect()
+    try:
+        rows = _read_rows(con, path, date_col=None, columns=[group, *values])
+    finally:
+        con.close()
+    agg: dict[str, dict[str, float]] = {}
+    for r in rows:
+        g = r.get(group)
+        if g is None:
+            continue
+        per = agg.setdefault(str(g), {})
+        for v in values:
+            try:
+                per[v] = per.get(v, 0.0) + float(r.get(v))
+            except (TypeError, ValueError):
+                continue
+    if not agg:
+        return None
+    cats = [c for c in (params.get("order") or sorted(agg)) if c in agg]
+    sd = {v: {c: agg[c].get(v, 0.0) for c in cats} for v in values}
+    return _grouped(dataset.id, dataset.unit, sd, cats, values)
+
+
+def snapshot_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Barras (apilables) de un parquet SIN fecha: eje X = una categórica y una
+    serie por cada valor de OTRA categórica.
+
+    Para "Atribución por clase de activos" (X = fondo, una serie por Clase).
+    params: ``x`` (categórica del eje X), ``series`` (categórica del color),
+    ``value`` (col de valor), ``x_order``/``series_order``.
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    x, scol, val = params.get("x"), params.get("series"), params.get("value")
+    if not x or not scol or not val:
+        return None
+    con = duckdb.connect()
+    try:
+        rows = _read_rows(con, path, date_col=None, columns=[x, scol, val])
+    finally:
+        con.close()
+    agg: dict[str, dict[str, float]] = {}
+    xs: list[str] = []
+    ss: list[str] = []
+    for r in rows:
+        xv, sv = r.get(x), r.get(scol)
+        if xv is None or sv is None:
+            continue
+        try:
+            v = float(r.get(val))
+        except (TypeError, ValueError):
+            continue
+        agg.setdefault(str(sv), {})[str(xv)] = agg.setdefault(str(sv), {}).get(str(xv), 0.0) + v
+        if str(xv) not in xs:
+            xs.append(str(xv))
+        if str(sv) not in ss:
+            ss.append(str(sv))
+    if not agg:
+        return None
+    xcats = [c for c in (params.get("x_order") or sorted(xs)) if c in xs]
+    series_order = [s for s in (params.get("series_order") or sorted(ss)) if s in ss]
+    return _grouped(dataset.id, dataset.unit, agg, xcats, series_order)
+
+
+def latest_snapshot(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Composición del ÚLTIMO corte temporal de un parquet con fecha: suma del
+    valor por categoría en la fecha más reciente → snapshot (torta / barras).
+
+    Para "Composición del portafolio DCV" (torta del stock por instrumento al
+    último día). params: ``category`` (col del color), ``value`` (col de valor);
+    si faltan, se infieren de ``detect_roles``.
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None:
+            return None
+        cat = params.get("category") or (roles.category_cols[0] if roles.category_cols else None)
+        val = params.get("value") or (roles.value_cols[0] if roles.value_cols else None)
+        if not cat or not val:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, cat, val])
+    finally:
+        con.close()
+    dates = [str(r[roles.date_col]) for r in rows if r.get(roles.date_col)]
+    if not dates:
+        return None
+    last = max(dates)
+    sums: dict[str, float] = {}
+    for r in rows:
+        if str(r.get(roles.date_col)) != last:
+            continue
+        cv = r.get(cat)
+        if cv is None:
+            continue
+        try:
+            sums[str(cv)] = sums.get(str(cv), 0.0) + float(r.get(val))
+        except (TypeError, ValueError):
+            continue
+    sums = {k: v for k, v in sums.items() if v > 0}  # torta: aportes positivos
+    if not sums:
+        return None
+    ordered = sorted(sums.items(), key=lambda kv: abs(kv[1]), reverse=True)[:_MAX_PLOT_CATEGORIES]
+    return PlotData(
+        dataset.id, chart_family(dataset.chart_type), "snapshot", dataset.unit,
+        [PlotSeries(label=cat, points=[(k, round(v, 6)) for k, v in ordered])],
+    )
+
+
 # ── Transforms de tabla con color (heatmap DCV) ──────────────────────────────
 
 
@@ -634,6 +914,13 @@ _REGISTRY: dict[str, Transform | None] = {
     "composition_by_bucket": composition_by_bucket,
     "stacked_by_bucket": stacked_by_bucket,
     "monthly_diff": monthly_diff,
+    # Genéricas reutilizables (NR / AFP).
+    "category_series": category_series,
+    "wide_lines": wide_lines,
+    "window_grouped": window_grouped,
+    "snapshot_grouped": snapshot_grouped,
+    "snapshot_stacked": snapshot_stacked,
+    "latest_snapshot": latest_snapshot,
     # Tablas con color condicional (heatmap DCV): implementadas.
     "dcv_cut_dates": dcv_cut_dates,
     "dcv_heatmap": dcv_heatmap,

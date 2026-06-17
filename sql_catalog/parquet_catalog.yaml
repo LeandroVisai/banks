@@ -798,6 +798,12 @@ datasets:
     segment: ffmm
     unit: "MM USD"
     date_range: ["2014-10-01", "2026-06-10"]
+    # value_scale=-1: la serie es posición acumulada de USD VENDIDOS por TGR (signo
+    # negativo en el dato origen). El informe de Mercado Cambiario de la gerencia la
+    # muestra como positivo (USD vendidos → posición larga del mercado frente a TGR).
+    # Si la magnitud también necesita ajuste (e.g. ×0.001 si el origen está en miles),
+    # cambiar a value_scale=-0.001 y verificar contra el informe de referencia.
+    value_scale: -1.0
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Agente", type: VARCHAR, values: ["TGR"]}
@@ -1857,6 +1863,37 @@ datasets:
     columns:
       - {name: "fecha", type: TIMESTAMP}
       - {name: "mmusd", type: DOUBLE}
+
+  - id: var_pos_derivados
+    file: var_pos_derivados.parquet
+    chart_type: "grouped_bar"
+    name: "Cambio posición derivados cambiarios por plazo (US$ Mill.)"
+    description: >
+      Suscripciones y vencimientos de derivados cambiarios de no residentes desagregados por tramo de plazo (1 a 90 días, 91 a 360 días, Mayor a 360 días). Permite leer el cambio de la posición compradora/vendedora de la última semana por tramo y su neto. La unidad principal de análisis es US$ Mill..
+    segment: no_residentes
+    unit: "US$ Mill."
+    date_range: ["2023-01-24", "2026-06-10"]
+    columns:
+      - {name: "Fecha", type: VARCHAR}
+      - {name: "Plazo", type: VARCHAR, values: ["1 a 90 días", "91 a 360 días", "Mayor a 360 días"]}
+      - {name: "Suscripcion", type: DOUBLE}
+      - {name: "Vencimiento", type: DOUBLE}
+
+  - id: nr_var_posicion_spc
+    file: nr_var_posicion_spc.parquet
+    chart_type: "stacked_area"
+    name: "Variación posición NR en SPC nominal por plazo (US$ Mill.)"
+    description: >
+      Variación de la posición de no residentes en SPC nominal desagregada por tramo de plazo (91 a 360 días, Entre 1 y 2Y, Mayor a 2Y) con su neto. Permite seguir el sesgo direccional (pagan/reciben fija) por plazo en el tiempo. La unidad principal de análisis es US$ Mill..
+    segment: no_residentes
+    unit: "US$ Mill."
+    date_range: ["2022-01-03", "2026-06-08"]
+    columns:
+      - {name: "Fecha", type: TIMESTAMP}
+      - {name: "91 a 360 dias", type: DOUBLE}
+      - {name: "Entre 1 y 2Y", type: DOUBLE}
+      - {name: "Mayor a 2Y", type: DOUBLE}
+      - {name: "Neto", type: DOUBLE}
 
 
   # -- rf_tasas --

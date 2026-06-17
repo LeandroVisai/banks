@@ -130,10 +130,14 @@ def _build_pts_json(
     px_fn: "Callable[[int], float]",
     iso_by_ord: "dict[int, str]",
     unit: str,
+    *,
+    py_fn: "Callable[[float], float] | None" = None,
 ) -> str:
     """JSON compacto para el hover unificado (crosshair): lista ordenada de puntos
-    por fecha. Cada entrada: ``{k, x, vals:[{s, c, v, i}]}``.
-    ``i`` es el índice de la serie para filtrar items de leyenda ocultos."""
+    por fecha. Cada entrada: ``{k, x, vals:[{s, c, v, i[, y]}]}``.
+    ``i`` es el índice de la serie para filtrar items de leyenda ocultos.
+    ``y`` (presente si ``py_fn`` se pasa) es la coordenada Y SVG del valor —
+    el JS la usa para destacar la serie visualmente más cercana al cursor."""
     by_date: dict[str, dict] = {}
     for i, (s, pts) in enumerate(parsed):
         color = _PALETTE[i % len(_PALETTE)]
@@ -143,7 +147,10 @@ def _build_pts_json(
             x = px_fn(o)
             if k not in by_date:
                 by_date[k] = {"k": k, "x": round(x, 1), "vals": []}
-            by_date[k]["vals"].append({"s": s.label, "c": color, "v": _val_unit(v, unit), "i": i})
+            entry: dict = {"s": s.label, "c": color, "v": _val_unit(v, unit), "i": i}
+            if py_fn is not None:
+                entry["y"] = round(py_fn(v), 1)
+            by_date[k]["vals"].append(entry)
     return _json.dumps(
         sorted(by_date.values(), key=lambda d: d["x"]),
         ensure_ascii=False, separators=(",", ":"),
@@ -182,6 +189,7 @@ _CHART_NATIVE_KIND: dict[str, str] = {
     "line": "timeseries",
     "area": "timeseries",
     "stacked_area": "timeseries",
+    "dual_axis": "timeseries",
     "grouped_bar": "grouped",
     "stacked_bar": "grouped",
     "bar_time": "grouped",
@@ -198,9 +206,13 @@ def renders_natively(plot_kind: str, chart: str | None) -> bool:
 
 def render_plot_svg(
     plot: PlotData, *, chart: str | None = None, width: int = _W, height: int = _H,
+    right_axis: list[str] | None = None, right_unit: str = "",
 ) -> str | None:
     """``PlotData`` → SVG inline (str) del tipo ``chart`` (o el natural del kind si
-    ``chart`` no aplica). ``None`` si ``family == 'table'`` (→ mini-tabla)."""
+    ``chart`` no aplica). ``None`` si ``family == 'table'`` (→ mini-tabla).
+
+    ``right_axis`` (labels de series) + ``right_unit`` activan el doble eje Y para
+    ``chart='dual_axis'`` (esas series van contra un eje derecho independiente)."""
     if plot.is_empty() or plot.family == "table":
         return None
     target = (chart or "").strip()
@@ -211,6 +223,8 @@ def render_plot_svg(
             return _render_pie(plot, width, height)
         return _render_snapshot(plot, width, height)
     # timeseries
+    if target == "dual_axis":
+        return _render_dual_axis(plot, width, height, right_axis, right_unit)
     if target in ("area", "stacked_area"):
         return _render_stacked_area(plot, width, height)
     return _render_timeseries(plot, width, height)
@@ -266,7 +280,7 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
     def py(v: float) -> float:
         return top + plot_h * (1 - (v - ymin) / (ymax - ymin))
 
-    pts_json = _build_pts_json(parsed, px, iso_by_ord, plot.unit)
+    pts_json = _build_pts_json(parsed, px, iso_by_ord, plot.unit, py_fn=py)
     out = _svg_open(width, height, f"{plot.dataset_id} — serie temporal",
                     f' data-pts="{_esc(pts_json)}"')
 
@@ -332,6 +346,139 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
     out.append(_legend_row(legend, left, height - 30, plot_w, interactive=True))
     if plot.unit:
         out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+def _render_dual_axis(
+    plot: PlotData, width: int, height: int,
+    right_labels: list[str] | None, right_unit: str = "",
+) -> str:
+    """Serie temporal con DOBLE eje Y: las series cuyo label esté en
+    ``right_labels`` se escalan contra un eje derecho independiente (y se dibujan
+    como área tenue, estilo "AUM" del informe BCCh); el resto va contra el eje
+    izquierdo como líneas. X compartido. Replica los gráficos con eje secundario
+    sin separar el gráfico en dos.
+
+    Si no hay ninguna serie para el eje derecho, cae al render de línea normal."""
+    right_set = set(right_labels or [])
+    has_right = any(s.label in right_set for s in plot.series)
+    if not has_right:
+        return _render_timeseries(plot, width, height)
+
+    left, right = 76, 66
+    top, bottom = 30, 70
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+
+    # Parseo común (ord, valor) por serie, conservando el índice original (color).
+    parsed: list[tuple[int, PlotSeries, list[tuple[int, float]], bool]] = []
+    xs: list[int] = []
+    iso_by_ord: dict[int, str] = {}
+    lys: list[float] = []
+    rys: list[float] = []
+    for i, s in enumerate(plot.series):
+        pts: list[tuple[int, float]] = []
+        for iso, v in s.points:
+            o = _date_ord(iso)
+            if o is None:
+                continue
+            pts.append((o, v))
+            iso_by_ord.setdefault(o, iso)
+        if not pts:
+            continue
+        is_right = s.label in right_set
+        parsed.append((i, s, pts, is_right))
+        xs.extend(o for o, _ in pts)
+        (rys if is_right else lys).extend(v for _, v in pts)
+    if not xs or not lys or not rys:
+        return _render_timeseries(plot, width, height)
+
+    xmin, xmax = min(xs), max(xs)
+    lticks, llo, lhi = _nice_ticks(min(lys), max(lys))
+    rticks, rlo, rhi = _nice_ticks(min(rys), max(rys))
+
+    def px(o: int) -> float:
+        return left + (plot_w / 2 if xmax == xmin else plot_w * (o - xmin) / (xmax - xmin))
+
+    def ply(v: float) -> float:
+        return top + plot_h * (1 - (v - llo) / (lhi - llo or 1.0))
+
+    def pry(v: float) -> float:
+        return top + plot_h * (1 - (v - rlo) / (rhi - rlo or 1.0))
+
+    # JSON del hover unificado: cada serie con su propio eje (y por serie).
+    by_date: dict[str, dict] = {}
+    for idx, s, pts, is_right in parsed:
+        color = "#b9c0cc" if is_right else _PALETTE[idx % len(_PALETTE)]
+        unit = right_unit if is_right else plot.unit
+        yfn = pry if is_right else ply
+        for o, v in pts:
+            iso = iso_by_ord.get(o) or date.fromordinal(o).isoformat()
+            k = _fmt_date(iso)
+            ent = by_date.setdefault(k, {"k": k, "x": round(px(o), 1), "vals": []})
+            ent["vals"].append({"s": s.label, "c": color, "v": _val_unit(v, unit),
+                                "i": idx, "y": round(yfn(v), 1)})
+    pts_json = _json.dumps(sorted(by_date.values(), key=lambda d: d["x"]),
+                           ensure_ascii=False, separators=(",", ":"))
+    out = _svg_open(width, height, f"{plot.dataset_id} — doble eje", f' data-pts="{_esc(pts_json)}"')
+
+    # Rejilla + eje izquierdo (ticks redondos).
+    for tick in lticks:
+        y = ply(tick)
+        emph = abs(tick) < 1e-9 and llo < 0 < lhi
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="{"#999" if emph else "#e6e6e6"}" stroke-width="1"/>')
+        out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="11" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
+    # Eje derecho (ticks en gris, alineados a la derecha del área).
+    for tick in rticks:
+        y = pry(tick)
+        out.append(f'<text x="{left + plot_w + 8}" y="{y + 4:.1f}" font-size="11" fill="#8a93a3" text-anchor="start">{_esc(_fmt_num(tick))}</text>')
+    out.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
+    out.append(f'<line x1="{left + plot_w}" y1="{top}" x2="{left + plot_w}" y2="{top + plot_h}" stroke="#c8ccd4" stroke-width="1"/>')
+    out.append(f'<line x1="{left}" y1="{top + plot_h}" x2="{left + plot_w}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
+
+    # Ticks de fecha (hasta 5).
+    tick_ords = sorted(set(xs))
+    n_ticks = min(5, len(tick_ords))
+    if n_ticks >= 1:
+        step = (len(tick_ords) - 1) / max(1, n_ticks - 1)
+        chosen = sorted({tick_ords[round(i * step)] for i in range(n_ticks)})
+        for j, o in enumerate(chosen):
+            x = px(o)
+            label = _fmt_date(iso_by_ord.get(o, date.fromordinal(o).isoformat()))
+            anchor = "start" if j == 0 else ("end" if j == len(chosen) - 1 else "middle")
+            out.append(f'<text x="{x:.1f}" y="{top + plot_h + 18}" font-size="11" fill="#555" text-anchor="{anchor}">{_esc(label)}</text>')
+
+    out.append(
+        f'<line class="x-guide" x1="{left:.1f}" y1="{top}" x2="{left:.1f}" y2="{top + plot_h}" '
+        f'stroke="#aaa" stroke-width="1" stroke-dasharray="4,3" display="none" pointer-events="none"/>'
+    )
+
+    legend: list[tuple[int, str, str]] = []
+    # Primero las áreas del eje derecho (al fondo), luego las líneas del izquierdo.
+    for idx, s, pts, is_right in sorted(parsed, key=lambda t: not t[3]):
+        if is_right:
+            base = top + plot_h
+            up = " ".join(f"{px(o):.1f},{pry(v):.1f}" for o, v in pts)
+            dn = f"{px(pts[-1][0]):.1f},{base:.1f} {px(pts[0][0]):.1f},{base:.1f}"
+            out.append(f'<polygon points="{up} {dn}" fill="#c8ccd4" fill-opacity="0.55" stroke="none" data-si="{idx}"/>')
+            legend.append((idx, f"{s.label} (eje der.)", "#b9c0cc"))
+        else:
+            color = _PALETTE[idx % len(_PALETTE)]
+            coords = " ".join(f"{px(o):.1f},{ply(v):.1f}" for o, v in pts)
+            out.append(f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="1.8" data-si="{idx}"/>')
+            legend.append((idx, s.label, color))
+
+    out.append(
+        f'<rect class="hover-overlay" x="{left}" y="{top}" '
+        f'width="{plot_w}" height="{plot_h}" fill="transparent" stroke="none"/>'
+    )
+    legend.sort(key=lambda t: t[0])
+    out.append(_legend_row([(lbl, col) for _i, lbl, col in legend], left, height - 30, plot_w, interactive=True))
+    if plot.unit:
+        out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
+    if right_unit:
+        out.append(f'<text x="{left + plot_w}" y="{top - 12}" font-size="11" fill="#8a93a3" text-anchor="end">{_esc(right_unit)}</text>')
     out.append("</svg>")
     return "\n".join(out)
 

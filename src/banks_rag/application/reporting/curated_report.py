@@ -143,7 +143,11 @@ def _process_block(
     if scale != 1.0:
         plot = _scale_plot(plot, scale)
 
-    svg = render_plot_svg(plot, chart=block.chart)
+    svg = render_plot_svg(
+        plot, chart=block.chart,
+        right_axis=block.params.get("right_axis"),
+        right_unit=block.params.get("right_unit", ""),
+    )
     if svg is None:
         return CuratedBlock(block, "placeholder", "", "serie no graficable como línea")
     # Preliminar solo si la forma del dato NO permite el tipo objetivo (cae a
@@ -286,13 +290,13 @@ _TIP_JS = """
     tip.style.left=x+'px';tip.style.top=y+'px';
   }
   function hide(){tip.style.display='none';}
-  // Convierte coordenadas de pantalla a coordenadas del viewBox SVG.
-  function svgX(svg,e){
+  // Coordenadas pantalla → viewBox SVG.
+  function svgCoords(svg,e){
     var pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;
-    return pt.matrixTransform(svg.getScreenCTM().inverse()).x;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
   }
   document.querySelectorAll('svg.report-chart').forEach(function(svg){
-    // ── Leyenda clickeable (toggle serie on/off) ──────────────────────────────
+    // ── Leyenda clickeable ────────────────────────────────────────────────────
     svg.querySelectorAll('.lg-item').forEach(function(lg){
       lg.addEventListener('click',function(){
         var idx=lg.getAttribute('data-idx');
@@ -306,33 +310,69 @@ _TIP_JS = """
         }
       });
     });
-    // ── Crosshair unificado (series temporales con data-pts + hover-overlay) ──
+    // ── Crosshair unificado + highlight de serie más cercana ─────────────────
     var ptsRaw=svg.getAttribute('data-pts');
     var pts=null;
     if(ptsRaw){try{pts=JSON.parse(ptsRaw);}catch(err){}}
     var guide=svg.querySelector('.x-guide');
     var overlay=svg.querySelector('.hover-overlay');
     if(pts&&overlay&&guide){
+      var lastSI=-1;
+      // Aplica highlight a la serie activa y atenúa las demás (solo cuando cambia).
+      function setActive(si){
+        if(si===lastSI) return;
+        lastSI=si;
+        svg.querySelectorAll('[data-si]').forEach(function(el){
+          if(el.style.display==='none') return;
+          var esi=parseInt(el.getAttribute('data-si'));
+          if(si<0){
+            el.style.opacity='';
+            if(el.tagName==='polyline')el.style.strokeWidth='';
+          } else if(esi===si){
+            el.style.opacity='1';
+            if(el.tagName==='polyline')el.style.strokeWidth='2.8';
+          } else {
+            el.style.opacity='0.2';
+            if(el.tagName==='polyline')el.style.strokeWidth='1.2';
+          }
+        });
+      }
       overlay.addEventListener('mousemove',function(e){
-        var mx=svgX(svg,e),best=pts[0],bd=Infinity;
+        var sc=svgCoords(svg,e),mx=sc.x,my=sc.y;
+        // Fecha más cercana (eje X).
+        var best=pts[0],bd=Infinity;
         for(var i=0;i<pts.length;i++){var d=Math.abs(pts[i].x-mx);if(d<bd){bd=d;best=pts[i];}}
         guide.setAttribute('x1',best.x);guide.setAttribute('x2',best.x);
         guide.removeAttribute('display');
-        // Filtra series ocultas por leyenda.
+        // Series visibles (no ocultas por leyenda).
         var vis=best.vals.filter(function(r){
           var lg=svg.querySelector('.lg-item[data-idx="'+r.i+'"]');
           return !lg||lg.getAttribute('data-hidden')!=='1';
         });
-        if(!vis.length){hide();return;}
+        if(!vis.length){setActive(-1);hide();return;}
+        // Serie más cercana en Y (si los datos tienen coordenada y).
+        var closestSI=-1;
+        if(vis[0].y!==undefined){
+          var minDY=Infinity;
+          vis.forEach(function(r){var d=Math.abs(r.y-my);if(d<minDY){minDY=d;closestSI=r.i;}});
+        }
+        setActive(closestSI);
+        // Tooltip: todas las series; la más cercana en negrita.
         var rows=vis.map(function(r){
-          return '<div class="ct-r"><span class="ct-sw" style="background:'+esc(r.c)+'"></span>'+
-                 '<span class="ct-s">'+esc(r.s)+'</span>'+
-                 '<span class="ct-v">'+esc(r.v)+'</span></div>';
+          var hi=(r.i===closestSI);
+          return '<div class="ct-r'+(hi?' ct-r-hi':'')+'">'+
+            '<span class="ct-sw" style="background:'+esc(r.c)+'"></span>'+
+            '<span class="ct-s"'+(hi?' style="color:#000;font-weight:700"':'')+'>'+esc(r.s)+'</span>'+
+            '<span class="ct-v">'+esc(r.v)+'</span></div>';
         }).join('');
         tip.innerHTML='<div class="ct-k">'+esc(best.k)+'</div>'+rows;
         tip.style.display='block';move(e);
       });
-      overlay.addEventListener('mouseleave',function(){guide.setAttribute('display','none');hide();});
+      overlay.addEventListener('mouseleave',function(){
+        guide.setAttribute('display','none');
+        setActive(-1);
+        hide();
+      });
       return;
     }
     // ── Tooltip individual (barras, torta, composición) ──────────────────────
