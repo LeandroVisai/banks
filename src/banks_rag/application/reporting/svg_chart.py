@@ -69,10 +69,79 @@ def _date_ord(iso: str) -> int | None:
         return None
 
 
-def _y_ticks(lo: float, hi: float) -> list[float]:
+# ── Ejes "lindos": números redondos y base 0 ────────────────────────────────
+#
+# El jefe pidió ejes con valores HABITUALES (0, 500, 1.000, 1.500…), no la marca
+# del mínimo/máximo crudo, y con base 0. ``_nice_ticks`` reemplaza al viejo
+# ``[lo, medio, hi]``: redondea el paso a 1/2/2.5/5x10^k y, salvo que se pida lo
+# contrario, mete el 0 en el dominio para que el eje arranque (o cruce) en 0.
+
+def _nice_num(x: float, *, round_: bool) -> float:
+    """Número 'lindo' cercano a ``x`` (algoritmo clásico 1/2/5x10^k)."""
+    if x == 0:
+        return 0.0
+    exp = math.floor(math.log10(abs(x)))
+    frac = abs(x) / (10.0 ** exp)
+    if round_:
+        nf = 1.0 if frac < 1.5 else (2.0 if frac < 3.0 else (5.0 if frac < 7.0 else 10.0))
+    else:
+        nf = 1.0 if frac <= 1.0 else (2.0 if frac <= 2.0 else (5.0 if frac <= 5.0 else 10.0))
+    return nf * (10.0 ** exp)
+
+
+def _nice_ticks(
+    lo: float, hi: float, *, n: int = 5, include_zero: bool = True,
+) -> tuple[list[float], float, float]:
+    """``(ticks, axis_lo, axis_hi)`` con pasos redondos. ``include_zero`` mete el
+    0 en el dominio (base de eje 0). Devuelve un dominio ya redondeado a los
+    ticks, para que el caller lo use como rango del eje."""
+    if include_zero:
+        lo, hi = min(lo, 0.0), max(hi, 0.0)
     if hi <= lo:
-        return [lo]
-    return [lo, lo + (hi - lo) / 2, hi]
+        hi = lo + 1.0
+    step = _nice_num((hi - lo) / max(1, n - 1), round_=True) or 1.0
+    axis_lo = math.floor(lo / step) * step
+    axis_hi = math.ceil(hi / step) * step
+    ticks: list[float] = []
+    v = axis_lo
+    while v <= axis_hi + step * 0.5:
+        ticks.append(round(v, 10))
+        v += step
+    return ticks, axis_lo, axis_hi
+
+
+# ── Tooltips nativos (hover) ─────────────────────────────────────────────────
+#
+# SVG ``<title>`` da un tooltip del navegador al pasar el mouse, sin JavaScript
+# (coherente con el resto del informe: texto determinista, se abre offline). En
+# barras/torta/composición se cuelga del propio shape; en líneas/áreas se agregan
+# puntos-objetivo transparentes (subsampleados) sobre la curva.
+
+_MAX_TIP_PTS = 40  # puntos-objetivo de hover por serie (controla el peso del SVG)
+
+
+def _tip(text: str) -> str:
+    return f"<title>{_esc(text)}</title>"
+
+
+def _tip_series(label: str, iso: str, v: float, unit: str) -> str:
+    u = f" {unit}" if unit else ""
+    return f"{label} · {_fmt_date(iso)}: {_fmt_num(v)}{u}"
+
+
+def _tip_cat(label: str, cat: str, v: float, unit: str) -> str:
+    u = f" {unit}" if unit else ""
+    sep = " · " if label else ""
+    return f"{label}{sep}{cat}: {_fmt_num(v)}{u}"
+
+
+def _subsample(points: list, max_n: int = _MAX_TIP_PTS) -> list[int]:
+    """Índices (incluyendo extremos) de hasta ``max_n`` puntos equiespaciados."""
+    n = len(points)
+    if n <= max_n:
+        return list(range(n))
+    step = (n - 1) / (max_n - 1)
+    return sorted({round(i * step) for i in range(max_n)} | {0, n - 1})
 
 
 # ── Render principal ─────────────────────────────────────────────────────────
@@ -154,11 +223,9 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
         return _no_axis_message(plot, width, height)
 
     xmin, xmax = min(xs), max(xs)
-    ymin, ymax = min(ys), max(ys)
+    ticks, ymin, ymax = _nice_ticks(min(ys), max(ys))
     if ymax == ymin:
-        ymax, ymin = ymax + 1, ymin - 1
-    pad = (ymax - ymin) * 0.06
-    ymin, ymax = ymin - pad, ymax + pad
+        ymax = ymin + 1.0
 
     def px(o: int) -> float:
         return left + (plot_w / 2 if xmax == xmin else plot_w * (o - xmin) / (xmax - xmin))
@@ -168,10 +235,11 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
 
     out = _svg_open(width, height, f"{plot.dataset_id} — serie temporal")
 
-    # Rejilla + eje Y.
-    for tick in _y_ticks(ymin + pad, ymax - pad):
+    # Rejilla + eje Y (ticks redondos; resalta la línea del 0 si el eje lo cruza).
+    for tick in ticks:
         y = py(tick)
-        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="#e6e6e6" stroke-width="1"/>')
+        emph = abs(tick) < 1e-9 and ymin < 0 < ymax
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="{"#999" if emph else "#e6e6e6"}" stroke-width="1"/>')
         out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="11" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
     # Ejes.
     out.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
@@ -191,7 +259,7 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
             out.append(f'<line x1="{x:.1f}" y1="{top + plot_h}" x2="{x:.1f}" y2="{top + plot_h + 4}" stroke="#999" stroke-width="1"/>')
             out.append(f'<text x="{x:.1f}" y="{top + plot_h + 18}" font-size="11" fill="#555" text-anchor="{anchor}">{_esc(label)}</text>')
 
-    # Series.
+    # Series + puntos-objetivo de hover (tooltip nativo con fecha y valor).
     legend: list[str] = []
     for i, (s, pts) in enumerate(parsed):
         color = _PALETTE[i % len(_PALETTE)]
@@ -201,6 +269,13 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
             out.append(f'<circle cx="{px(o):.1f}" cy="{py(v):.1f}" r="3" fill="{color}"/>')
         else:
             out.append(f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="1.8"/>')
+        for k in _subsample(pts):
+            o, v = pts[k]
+            iso = iso_by_ord.get(o) or date.fromordinal(o).isoformat()
+            out.append(
+                f'<circle cx="{px(o):.1f}" cy="{py(v):.1f}" r="6" fill="transparent" '
+                f'pointer-events="all">{_tip(_tip_series(s.label, iso, v, plot.unit))}</circle>'
+            )
         legend.append((s.label, color))
 
     out.append(_legend_row(legend, left, height - 30, plot_w))
@@ -233,24 +308,15 @@ def _render_snapshot(plot: PlotData, width: int, height: int) -> str:
         color = _PALETTE[i % len(_PALETTE)]
         bar_w = bar_w_max * (abs(v) / vmax)
         share = 100.0 * abs(v) / total
+        unit_sfx = f" {plot.unit}" if plot.unit else ""
+        tip = f"{cat}: {_fmt_num(v)}{unit_sfx} ({_fmt_num(share)}%)"
         out.append(f'<text x="{left - 8}" y="{y + 15}" font-size="12" fill="#333" text-anchor="end">{_esc(cat)}</text>')
-        out.append(f'<rect x="{left}" y="{y + 3}" width="{bar_w:.1f}" height="{row_h - 10}" fill="{color}"/>')
+        out.append(f'<rect x="{left}" y="{y + 3}" width="{bar_w:.1f}" height="{row_h - 10}" fill="{color}">{_tip(tip)}</rect>')
         out.append(f'<text x="{left + bar_w + 6:.1f}" y="{y + 15}" font-size="11" fill="#555">{_esc(_fmt_num(v))} ({_esc(_fmt_num(share))}%)</text>')
     if plot.unit:
         out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
     out.append("</svg>")
     return "\n".join(out)
-
-
-def _bar_y_ticks(dmin: float, dmax: float) -> list[float]:
-    """Ticks para un eje de barras: incluye SIEMPRE el 0 cuando está en rango."""
-    ticks = {0.0, dmin, dmax}
-    if dmin < 0 < dmax:
-        ticks.add(dmin / 2)
-        ticks.add(dmax / 2)
-    else:
-        ticks.add((dmin + dmax) / 2)
-    return sorted(t for t in ticks if dmin <= t <= dmax)
 
 
 def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bool) -> str:
@@ -284,9 +350,7 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
         dmax, dmin = max([0.0, *allv]), min([0.0, *allv])
     if dmax == dmin:
         dmax += 1.0
-    pad = (dmax - dmin) * 0.08
-    ymax = dmax + pad
-    ymin = dmin - pad if dmin < 0 else dmin
+    ticks, ymin, ymax = _nice_ticks(dmin, dmax)  # incluye 0 → base de eje 0
 
     def py(v: float) -> float:
         return top + plot_h * (1 - (v - ymin) / (ymax - ymin))
@@ -294,7 +358,7 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
     group_w = plot_w / len(cats)
     out = _svg_open(width, height, f"{plot.dataset_id} — barras")
 
-    for tick in _bar_y_ticks(dmin, dmax):
+    for tick in ticks:
         y = py(tick)
         emph = abs(tick) < 1e-9
         out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="{"#999" if emph else "#e6e6e6"}" stroke-width="1"/>')
@@ -316,7 +380,8 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
                     neg_acc += v
                 h = abs(y_bot - y_top)
                 if h > 0.2:
-                    out.append(f'<rect x="{x:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw:.1f}" height="{h:.1f}" fill="{_PALETTE[si % len(_PALETTE)]}"/>')
+                    tip = _tip(_tip_cat(series[si].label, c, v, plot.unit))
+                    out.append(f'<rect x="{x:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw:.1f}" height="{h:.1f}" fill="{_PALETTE[si % len(_PALETTE)]}">{tip}</rect>')
         else:
             inner = group_w * 0.8
             bw = inner / len(series)
@@ -326,7 +391,8 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
                 y_top, y_bot = py(max(0.0, v)), py(min(0.0, v))
                 h = abs(y_bot - y_top)
                 if h > 0.2:
-                    out.append(f'<rect x="{x0 + si * bw:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw * 0.86:.1f}" height="{h:.1f}" fill="{_PALETTE[si % len(_PALETTE)]}"/>')
+                    tip = _tip(_tip_cat(series[si].label, c, v, plot.unit))
+                    out.append(f'<rect x="{x0 + si * bw:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw * 0.86:.1f}" height="{h:.1f}" fill="{_PALETTE[si % len(_PALETTE)]}">{tip}</rect>')
         cx = left + ci * group_w + group_w / 2
         if long_labels:
             cy = top + plot_h + 12
@@ -366,7 +432,8 @@ def _render_stacked_area(plot: PlotData, width: int, height: int) -> str:
     plot_h = height - top - bottom
 
     totals = [sum(max(0.0, lut[i].get(d, 0.0)) for i in range(len(series))) for d in dates]
-    ymax = max(totals) or 1.0
+    ticks, _ylo, ymax = _nice_ticks(0.0, max(totals) or 1.0)
+    ymax = ymax or 1.0
     xmin, xmax = min(ordv), max(ordv)
 
     def px(o: int) -> float:
@@ -376,17 +443,26 @@ def _render_stacked_area(plot: PlotData, width: int, height: int) -> str:
         return top + plot_h * (1 - v / ymax)
 
     out = _svg_open(width, height, f"{plot.dataset_id} — área apilada")
-    for tick in _y_ticks(0.0, ymax):
+    for tick in ticks:
         y = py(tick)
         out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="#e6e6e6" stroke-width="1"/>')
         out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="11" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
 
+    tip_idx = _subsample(dates)
     cum = [0.0] * len(dates)
     for si in range(len(series)):
         upper = [cum[k] + max(0.0, lut[si].get(dates[k], 0.0)) for k in range(len(dates))]
         up = " ".join(f"{px(ordv[k]):.1f},{py(upper[k]):.1f}" for k in range(len(dates)))
         dn = " ".join(f"{px(ordv[k]):.1f},{py(cum[k]):.1f}" for k in reversed(range(len(dates))))
         out.append(f'<polygon points="{up} {dn}" fill="{_PALETTE[si % len(_PALETTE)]}" fill-opacity="0.85" stroke="none"/>')
+        # Punto-objetivo de hover en el centro de cada banda (valor de la serie en esa fecha).
+        for k in tip_idx:
+            band_v = max(0.0, lut[si].get(dates[k], 0.0))
+            mid_y = py((cum[k] + upper[k]) / 2)
+            out.append(
+                f'<circle cx="{px(ordv[k]):.1f}" cy="{mid_y:.1f}" r="6" fill="transparent" '
+                f'pointer-events="all">{_tip(_tip_series(series[si].label, dates[k], band_v, plot.unit))}</circle>'
+            )
         cum = upper
 
     out.append(f'<line x1="{left}" y1="{top + plot_h}" x2="{left + plot_w}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
@@ -417,17 +493,20 @@ def _render_pie(plot: PlotData, width: int, height: int) -> str:
     height = 300
 
     out = _svg_open(width, height, f"{plot.dataset_id} — torta")
+    unit_sfx = f" {plot.unit}" if plot.unit else ""
     angle = -math.pi / 2  # arranca arriba
-    for i, (_cat, v) in enumerate(points):
+    for i, (cat, v) in enumerate(points):
         frac = v / total
         a2 = angle + frac * 2 * math.pi
         x1, y1 = cx + r * math.cos(angle), cy + r * math.sin(angle)
         x2, y2 = cx + r * math.cos(a2), cy + r * math.sin(a2)
         large = 1 if frac > 0.5 else 0
+        tip = _tip(f"{cat}: {_fmt_num(v)}{unit_sfx} ({_fmt_num(100.0 * frac)}%)")
+        color = _PALETTE[i % len(_PALETTE)]
         if frac >= 0.999:  # una sola categoría → círculo completo
-            out.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{_PALETTE[i % len(_PALETTE)]}"/>')
+            out.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{color}">{tip}</circle>')
         else:
-            out.append(f'<path d="M {cx} {cy} L {x1:.1f} {y1:.1f} A {r} {r} 0 {large} 1 {x2:.1f} {y2:.1f} Z" fill="{_PALETTE[i % len(_PALETTE)]}"/>')
+            out.append(f'<path d="M {cx} {cy} L {x1:.1f} {y1:.1f} A {r} {r} 0 {large} 1 {x2:.1f} {y2:.1f} Z" fill="{color}">{tip}</path>')
         angle = a2
     # leyenda a la derecha
     lx, ly = cx + r + 40, 40

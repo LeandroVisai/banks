@@ -10,6 +10,7 @@ al LLM solo para redactar prosa — el LLM no hace aritmética ni elige columnas
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -135,6 +136,22 @@ def _read_rows(
     return out
 
 
+def _scale_rows(rows: list[dict], value_cols: list[str], scale: float) -> None:
+    """Multiplica IN-PLACE las columnas de valor por ``scale`` (corrección de
+    unidad del dataset). No-op si ``scale == 1.0``. Así los hechos del texto
+    quedan en la misma escala que el gráfico del informe."""
+    if scale == 1.0:
+        return
+    for row in rows:
+        for col in value_cols:
+            v = row.get(col)
+            if v is None:
+                continue
+            # float() cubre int/float/Decimal (DuckDB devuelve Decimal para literales).
+            with contextlib.suppress(TypeError, ValueError):
+                row[col] = float(v) * scale
+
+
 def _windows(last_date: str, windows: list[tuple[str, int]]) -> list[dict]:
     """``[(label, days)]`` → ``[{label, start, end}]`` anclados a ``last_date``."""
     anchor = date.fromisoformat(last_date)
@@ -235,6 +252,8 @@ def compute_facts(
             "last_date": None,
         }
 
+        scale = dataset.value_scale
+
         # ── Snapshot transversal (sin columna de fecha) ──────────────────────
         if roles.date_col is None:
             if roles.category_cols and roles.value_cols:
@@ -242,6 +261,7 @@ def compute_facts(
                     con, parquet_path, date_col=None,
                     columns=[roles.category_cols[0], roles.value_cols[0]],
                 )
+                _scale_rows(rows, roles.value_cols, scale)
                 comp = _snapshot_composition(rows, roles.category_cols[0], roles.value_cols[0])
                 base.update(shape="snapshot", composition=comp)
             else:
@@ -263,6 +283,7 @@ def compute_facts(
         if roles.category_cols and roles.value_cols:
             cat_col, val_col = roles.category_cols[0], roles.value_cols[0]
             rows = _read_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, cat_col, val_col])
+            _scale_rows(rows, roles.value_cols, scale)
             base.update(
                 shape="timeseries_categorical",
                 category_col=cat_col, value_col=val_col,
@@ -273,6 +294,7 @@ def compute_facts(
         # ── Serie temporal "ancha" (varias columnas de valor, sin categoría) ──
         if len(roles.value_cols) > 1:
             rows = _read_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, *roles.value_cols])
+            _scale_rows(rows, roles.value_cols, scale)
             base.update(
                 shape="timeseries_wide",
                 **_wide_facts(rows, roles.date_col, roles.value_cols, wins, last_date),
@@ -283,6 +305,7 @@ def compute_facts(
         if roles.value_cols:
             val_col = roles.value_cols[0]
             rows = _read_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, val_col])
+            _scale_rows(rows, roles.value_cols, scale)
             series = sa.clean_series(rows, roles.date_col, val_col)
             wv = _window_variations(series, wins)
             base.update(

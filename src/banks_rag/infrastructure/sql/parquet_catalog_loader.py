@@ -60,6 +60,13 @@ class ParquetDataset:
     # etc. Las tools lo usan como default al graficar; el frontend lo reduce a
     # una familia renderizable vía domain/agent/chart_types.chart_family.
     chart_type: str = "line"
+    # Factor de corrección de escala del dato crudo del parquet a la unidad
+    # declarada en ``unit`` (1.0 = el parquet ya está en esa unidad). Algunos
+    # parquets vienen en otra escala que su unidad nominal (p.ej. ``Monto_USD``
+    # en MILES de USD declarado como "Mill US$" → 0.001; un retorno en FRACCIÓN
+    # declarado como "%" → 100). Lo aplican el informe (``compute_facts`` para el
+    # texto y el builder curado para el gráfico), así prosa y gráfico coinciden.
+    value_scale: float = 1.0
 
     def parquet_path(self, parquet_dir: Path) -> Path:
         return parquet_dir / self.file
@@ -80,6 +87,7 @@ class ParquetDataset:
             "unit": self.unit,
             "date_range": self.date_range,
             "chart_type": self.chart_type,
+            **({"value_scale": self.value_scale} if self.value_scale != 1.0 else {}),
             "columns": [
                 {"name": c.name, "type": c.type, **({"values": c.values} if c.values else {})}
                 for c in self.columns
@@ -217,4 +225,5 @@ def _parse_dataset(raw: dict) -> ParquetDataset:
         date_range=raw.get("date_range"),
         columns=columns,
         chart_type=raw.get("chart_type") or "line",
+        value_scale=float(raw.get("value_scale", 1.0) or 1.0),
     )

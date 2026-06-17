@@ -91,17 +91,27 @@ _EMPTY_OVERVIEW = (
 _REPORT_SYNTHESIS_SYSTEM = """\
 Eres un analista senior de la División de Mercados Financieros del BCCh. \
 Recibes los párrafos descriptivos de un informe (uno por dataset del catálogo) \
-y redactas la SÍNTESIS EJECUTIVA que los encabeza: 2-3 párrafos de prosa que \
-resuman el estado del segmento y los movimientos más relevantes, conectando \
-los datasets entre sí cuando corresponda.
+y redactas la SÍNTESIS EJECUTIVA que lo encabeza: los PRINCIPALES MOVIMIENTOS \
+del mes y de la semana, para que la gerencia capte lo importante de un vistazo.
+
+Estructura EXACTA (en este orden):
+1. UNA frase de apertura con el estado general del segmento.
+2. Una línea ``**Principales movimientos del mes:**`` seguida de 2 a 4 viñetas \
+``- `` con los movimientos mensuales más relevantes (cada viñeta: qué se movió, \
+cuánto y su cifra/fecha/unidad exacta).
+3. Una línea ``**Principales movimientos de la semana:**`` seguida de 2 a 4 \
+viñetas ``- `` con lo más relevante de la última semana, marcando si confirma o \
+contrasta con el mes.
 
 Reglas:
 - Usa SOLO las cifras que aparecen en los párrafos recibidos: NO inventes ni \
 recalcules números, y conserva su unidad y fecha al citarlos.
-- Prioriza los movimientos más significativos; no repitas cada párrafo.
+- Prioriza los movimientos más significativos; no listes todos los datasets.
+- Cada viñeta es una sola línea, concisa.
 - Si te indican que algunos datasets quedaron sin datos, menciónalo en una \
 frase al final.
-- Prosa corrida, sin títulos, viñetas ni tablas."""
+- Usa solo ``-`` para viñetas y ``**…**`` para los dos rótulos; nada de tablas \
+ni encabezados ``#``."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -306,17 +316,28 @@ def _build_user_prompt(dataset: ParquetDataset, facts: dict, *, think: bool = Tr
 
 
 def _clean_paragraph(text: str) -> str:
-    """Colapsa la salida del LLM a un párrafo: quita encabezados/viñetas que
-    haya metido pese al formato pedido y une los saltos de línea."""
-    parts: list[str] = []
+    """Limpia la salida del LLM CONSERVANDO la separación en párrafos.
+
+    El redactor produce dos párrafos (mensual / semanal) separados por una línea
+    en blanco. Se quitan encabezados/viñetas que el modelo haya metido pese al
+    formato pedido, se colapsan los saltos de línea DENTRO de cada párrafo, y se
+    devuelven los párrafos unidos por ``\\n\\n`` (separador estable que el
+    ensamblado a markdown/HTML interpreta como párrafos distintos)."""
+    blocks: list[str] = []
+    current: list[str] = []
     for raw in (text or "").splitlines():
         s = raw.strip()
         if not s or re.fullmatch(r"[-*_]{3,}", s):
+            if current:
+                blocks.append(" ".join(current))
+                current = []
             continue
         s = re.sub(r"^#{1,6}\s+", "", s)
         s = re.sub(r"^[-*+]\s+", "", s)
-        parts.append(s)
-    return " ".join(parts)
+        current.append(s)
+    if current:
+        blocks.append(" ".join(current))
+    return "\n\n".join(b for b in blocks if b)
 
 
 async def _describe_dataset(
@@ -421,7 +442,11 @@ async def _synthesize_overview(
     skipped = len(sections) - len(ok)
     if skipped:
         parts.append(f"\n(Nota: {skipped} dataset(s) de la selección quedaron sin datos.)")
-    parts.append("\nRedacta ahora la síntesis ejecutiva (2-3 párrafos).")
+    parts.append(
+        "\nRedacta ahora la síntesis ejecutiva con la estructura pedida: una frase "
+        "de apertura, luego los principales movimientos del mes y de la semana en "
+        "viñetas."
+    )
     result = await llm.generate(
         [
             {"role": "system", "content": _REPORT_SYNTHESIS_SYSTEM},

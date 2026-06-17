@@ -14,21 +14,18 @@ from __future__ import annotations
 from banks_rag.application.reporting.report_spec import (
     STATUS_EXP,
     STATUS_MVP,
-    STATUS_SKIP,
     FamilyReportSpec,
     ReportBlock,
 )
 
 _S_FLUJOS = "Flujos y Retornos"
 _S_CARTERAS = "Carteras DCV"
-_S_AUM = "AUM"
 _S_PORTAFOLIO = "Portafolio DCV"
 _S_RENT = "Rentabilidad"
 _S_ALLOC = "Allocation Carteras mensuales"
 _S_DUR = "Duración Carteras mensuales"
 _S_VARALLOC = "Variación en allocation carteras mensuales"
 _S_FX = "Mercado cambiario"
-_S_SUBASTAS = "Subastas y Vencimientos PDBC"
 
 _BLOCKS: tuple[ReportBlock, ...] = (
     # ── Flujos y Retornos (imagen 1) ─────────────────────────────────────────
@@ -49,36 +46,12 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
         source_id="flujos_acum_ffmm", transform="accumulated", params={"window": "y2", "accumulate": "cumsum"},
     ),
-    ReportBlock(
-        section=_S_FLUJOS, title="Flujos diarios por tipo de fondo",
-        unit="US$ Mill.", chart="line", status=STATUS_MVP,
-        source_id="flujos_fondo_ffmm", transform="straight_series",
-    ),
     # ── Carteras DCV (imagen 2) ──────────────────────────────────────────────
     ReportBlock(
         section=_S_CARTERAS, title="Variación Acumulada YtD — BTP, BTU, BB y Otros",
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
         source_id="stock_nivel_ffmm", transform="accumulated",
         params={"types": ["BTP", "BTU", "BB", "Otros"], "window": "ytd", "accumulate": "rebase"},
-    ),
-    # ── AUM (imágenes 2-3) — sin parquet de patrimonio/cuotas → SKIP ─────────
-    ReportBlock(
-        section=_S_AUM, title="Variación Patrimonio neto (7d / 30d / YTD)",
-        unit="US$ Mill.", chart="grouped_bar", status=STATUS_SKIP,
-        note="*Datos hasta el 8/6 · *Data corresponde a fondos en CLP",
-        text_slot="ffmm:aum",
-    ),
-    ReportBlock(
-        section=_S_AUM, title="Variación cuotas en circulación (7d / 30d / YTD)",
-        unit="Mill. cuotas", chart="grouped_bar", status=STATUS_SKIP,
-    ),
-    ReportBlock(
-        section=_S_AUM, title="Patrimonio Efectivo",
-        unit="US$ Mill.", chart="line", status=STATUS_SKIP,
-    ),
-    ReportBlock(
-        section=_S_AUM, title="Variación acumulada Patrimonio Efectivo",
-        unit="US$ Mill.", chart="line", status=STATUS_SKIP,
     ),
     # ── Portafolio DCV (imágenes 4-5) ────────────────────────────────────────
     ReportBlock(
@@ -132,10 +105,11 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         source_id="retornos_fondo_ffmm", transform="monthly_returns",
         params={"funds": ["Tipo 1", "Tipo 2", "Tipo 3"], "months": 8},
     ),
-    ReportBlock(  # ── MVP ──
-        section=_S_RENT, title="Rentabilidad por tipo de fondo YTD",
+    ReportBlock(  # ── MVP · retorno_acum: value_scale 100 (fracción→%) en el catálogo ──
+        section=_S_RENT, title="Rentabilidad acumulada por tipo de fondo",
         unit="%", chart="line", status=STATUS_MVP,
         source_id="retorno_acum_ffmm", transform="straight_series",
+        note="*acumulada desde 2019 (el parquet no resetea por año)",
     ),
     # ── Allocation Carteras mensuales (imágenes 7-8) ─────────────────────────
     *[
@@ -143,7 +117,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
             section=_S_ALLOC, title=f"Allocation {fund}",
             unit="Mill US$.", chart="stacked_area", status=STATUS_EXP,
             source_id="var_cartera_mensual_ffmm", transform="allocation_by_fund",
-            params={"fund": fund},
+            params={"fund": fund},  # Monto_USD en MILES de USD → value_scale 0.001 (catálogo)
             note="*datos con carteras al cierre de Abril · *solo instrumentos locales"
             if fund == "Tipo 1" else "",
         )
@@ -179,7 +153,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
             section=_S_VARALLOC, title=f"Variación Mes y YtD — {fund}",
             unit="US$ Mill.", chart="grouped_bar", status=STATUS_EXP,
             source_id="var_cartera_mensual_ffmm", transform="monthly_var_alloc",
-            params={"fund": fund},
+            params={"fund": fund},  # Monto_USD en MILES de USD → value_scale 0.001 (catálogo)
             note="*datos con carteras al cierre de Abril" if fund == "Tipo 1" else "",
         )
         for fund in ("Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6")
@@ -197,15 +171,11 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         source_id="flujos_spot_ffmm", transform="monthly_diff",
     ),
     ReportBlock(
-        section=_S_FX, title="Posición Spot y Derivados — FFMM",
+        # El parquet posicion_spot_derivados solo trae Agente=TGR, Mercado=Spot
+        # (sin FFMM ni derivados): el título honesto es la posición spot de TGR.
+        section=_S_FX, title="Posición Spot TGR",
         unit="MM USD", chart="line", status=STATUS_MVP,
         source_id="posicion_spot_derivados_ffmm", transform="straight_series",
-    ),
-    # ── Subastas y Vencimientos PDBC (imagen 11) — sin parquet → SKIP ────────
-    ReportBlock(
-        section=_S_SUBASTAS, title="Subastas PDBC (Vencimiento / Subasta / Ratio)",
-        unit="US$ Mill.", chart="dual_line", status=STATUS_SKIP,
-        text_slot="ffmm:subastas",
     ),
 )
 

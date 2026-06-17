@@ -11,6 +11,7 @@ from .curated_report import (
     CuratedBlock,
     CuratedReport,
     build_curated_report,
+    fill_synthesis_slot,
     fill_text_slots,
     render_curated_html,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "ReportBlock",
     "build_curated_report",
     "compute_series",
+    "fill_synthesis_slot",
     "fill_text_slots",
     "generate_parquet_report",
     "inject_charts_into_html",

@@ -31,7 +31,13 @@ _SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 if _SRC.is_dir() and str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from banks_rag.application.reporting.curated_report import fill_text_slots  # noqa: E402
+from banks_rag.application.reporting.curated_report import (  # noqa: E402
+    fill_synthesis_slot,
+    fill_text_slots,
+)
+
+# Clave reservada en el JSON de párrafos: la síntesis ejecutiva (no es un dataset).
+_SYNTHESIS_KEY = "__sintesis__"
 
 
 def _infer_family(html_content: str) -> str:
@@ -64,10 +70,14 @@ def main() -> None:
     html_content = curated_path.read_text(encoding="utf-8")
     paragraphs: dict[str, str] = json.loads(paragraphs_path.read_text(encoding="utf-8"))
 
+    # La síntesis es una clave reservada (no un dataset): se inyecta arriba.
+    synthesis = paragraphs.pop(_SYNTHESIS_KEY, "")
+
     family = args.family or _infer_family(html_content)
     slots = {f"{family}:{did}": p for did, p in paragraphs.items()} if family else paragraphs
 
     patched = fill_text_slots(html_content, slots)
+    patched = fill_synthesis_slot(patched, synthesis)
 
     filled = sum(
         1 for did in paragraphs
@@ -76,7 +86,8 @@ def main() -> None:
 
     out_path = pathlib.Path(args.out) if args.out else curated_path
     out_path.write_text(patched, encoding="utf-8")
-    print(f"OK {out_path}  ({filled} slots rellenos de {len(paragraphs)} párrafos)")
+    synth_note = " + síntesis" if synthesis.strip() else ""
+    print(f"OK {out_path}  ({filled} slots rellenos de {len(paragraphs)} párrafos{synth_note})")
 
 
 if __name__ == "__main__":

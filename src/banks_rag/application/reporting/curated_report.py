@@ -28,12 +28,28 @@ from banks_rag.infrastructure.sql.parquet_catalog_loader import (
     load_parquet_catalog,
 )
 
-from .parquet_facts import HtmlTable, compute_series
+from .parquet_facts import HtmlTable, PlotData, PlotSeries, compute_series
 from .report_spec import STATUS_SKIP, FamilyReportSpec, ReportBlock
 from .series_transforms import get_transform
 from .svg_chart import render_plot_svg, renders_natively
 
 log = logging.getLogger(__name__)
+
+
+def _scale_plot(plot: PlotData, factor: float) -> PlotData:
+    """Devuelve una copia del ``PlotData`` con cada valor ``y`` multiplicado por
+    ``factor`` (corrige la escala de un parquet cuya unidad real difiere de la
+    declarada). El eje X (fecha o categoría) no se toca."""
+    return PlotData(
+        dataset_id=plot.dataset_id,
+        family=plot.family,
+        kind=plot.kind,
+        unit=plot.unit,
+        series=[
+            PlotSeries(label=s.label, points=[(x, y * factor) for x, y in s.points])
+            for s in plot.series
+        ],
+    )
 
 # Familias objetivo que NO se pueden aproximar como serie (tabla): placeholder.
 _TABLE_CHARTS = frozenset({"heatmap_table"})
@@ -120,6 +136,13 @@ def _process_block(
     if plot is None or plot.is_empty():
         return CuratedBlock(block, "placeholder", "", "sin serie en el parquet")
 
+    # Escala: corrección de unidad del dataset (catálogo) por override del bloque.
+    # El gráfico queda en la MISMA escala que el texto (compute_facts también lee
+    # dataset.value_scale), así prosa y curva coinciden.
+    scale = dataset.value_scale * block.scale
+    if scale != 1.0:
+        plot = _scale_plot(plot, scale)
+
     svg = render_plot_svg(plot, chart=block.chart)
     if svg is None:
         return CuratedBlock(block, "placeholder", "", "serie no graficable como línea")
@@ -186,6 +209,13 @@ _SHELL = """<!DOCTYPE html>
   .page { width:min(1200px, calc(100% - 40px)); margin:18px auto 40px; }
   .report-title { background:var(--banner); color:#fff; text-align:center; font-size:24px; font-weight:800; padding:12px 16px; letter-spacing:.3px; }
   .subtitle { text-align:center; color:var(--muted); font-size:12px; margin:8px 0 4px; }
+  .report-synthesis { border:1px solid #d8dee8; border-left:5px solid var(--blue); background:#f6f8fb; border-radius:6px; padding:12px 18px; margin:14px 0 8px; }
+  .synthesis-title { color:var(--blue); font-size:16px; font-weight:800; margin:0 0 6px; }
+  .synthesis-body { color:var(--text); font-size:13px; }
+  .synthesis-body p { margin:4px 0; }
+  .synthesis-body ul { margin:4px 0 8px; padding-left:20px; }
+  .synthesis-body li { margin:2px 0; }
+  .synthesis-body[data-synthesis-body]:empty::before { content:"—"; color:#cfcfcf; }
   .section-banner { background:var(--banner); color:#fff; text-align:center; font-size:18px; font-weight:800; padding:8px 14px; margin:30px 0 6px; }
   .block { margin:14px 0 8px; page-break-inside:avoid; }
   .block-title { color:var(--blue); font-size:16px; font-weight:700; margin:12px 0 2px; }
@@ -194,6 +224,8 @@ _SHELL = """<!DOCTYPE html>
   .prelim-note { color:#9a4b00; font-size:11px; margin:0 0 2px; }
   .section-text { min-height:18px; margin:4px 0 10px; color:var(--text); font-size:14px; }
   .section-text:empty::before { content:"—"; color:#cfcfcf; }
+  .section-text p { margin:0 0 6px; }
+  .section-text p:last-child { margin-bottom:0; }
   .report-chart { display:block; max-width:760px; margin:6px auto; }
   .placeholder-card { border:1px dashed #bcbcbc; background:#fafafa; color:var(--muted); border-radius:6px; padding:18px; text-align:center; font-size:13px; max-width:760px; margin:6px auto; }
   .placeholder-card .kind { font-weight:700; color:#9a4b00; }
@@ -205,6 +237,10 @@ _SHELL = """<!DOCTYPE html>
   <div class="page">
     <div class="report-title">__TITLE__</div>
     <div class="subtitle">__SUBTITLE__</div>
+    <div class="report-synthesis">
+      <div class="synthesis-title">Síntesis — principales movimientos</div>
+      <div class="synthesis-body" data-synthesis-body></div>
+    </div>
 __BODY__
   </div>
 </body>
@@ -275,21 +311,77 @@ def render_curated_html(report: CuratedReport, *, subtitle: str | None = None) -
     )
 
 
+def _paragraphs_to_html(text: str) -> str:
+    """Texto con párrafos separados por línea en blanco → ``<p>…</p>`` escapados.
+
+    El redactor emite dos párrafos (mensual / semanal) separados por ``\\n\\n``;
+    cada uno se envuelve en su propio ``<p>`` para que se vean como párrafos
+    distintos en el informe."""
+    parts = re.split(r"\n\s*\n", (text or "").strip())
+    return "".join(f"<p>{html.escape(p.strip())}</p>" for p in parts if p.strip())
+
+
+def _inline_md(text: str) -> str:
+    """Escapa y convierte ``**negrita**`` a ``<strong>`` (markdown inline mínimo)."""
+    s = html.escape(text)
+    return re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+
+
+def _synthesis_md_to_html(md: str) -> str:
+    """Markdown simple de la síntesis → HTML (párrafos, listas ``- `` y negritas).
+
+    Determinista, sin librería externa (mismo criterio que el resto del informe).
+    Reconoce viñetas (``- ``/``* ``/``• ``) como ``<li>`` y el resto como ``<p>``;
+    ignora los ``#`` de encabezado dejando el texto en un párrafo."""
+    out: list[str] = []
+    in_list = False
+    for raw in (md or "").splitlines():
+        s = raw.strip()
+        if not s or re.fullmatch(r"[-*_]{3,}", s):
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            continue
+        if s[:2] in ("- ", "* ") or s.startswith("• "):
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(f"<li>{_inline_md(s[2:].strip())}</li>")
+        else:
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            text = re.sub(r"^#{1,6}\s+", "", s)
+            out.append(f"<p>{_inline_md(text)}</p>")
+    if in_list:
+        out.append("</ul>")
+    return "".join(out)
+
+
+def fill_synthesis_slot(html_content: str, synthesis_md: str) -> str:
+    """Inyecta la síntesis en ``<div ... data-synthesis-body></div>`` (vacío) del
+    HTML curado. ``synthesis_md`` admite párrafos, viñetas y ``**negrita**``."""
+    if not synthesis_md or not synthesis_md.strip():
+        return html_content
+    inner = _synthesis_md_to_html(synthesis_md)
+    pattern = re.compile(r'(<div\b[^>]*\bdata-synthesis-body[^>]*>)\s*(</div>)')
+    return pattern.sub(lambda m: m.group(1) + inner + m.group(2), html_content, count=1)
+
+
 def fill_text_slots(html_content: str, slots: dict[str, str]) -> str:
     """Inyecta párrafos en los ``<div data-text-slot="…">`` vacíos del HTML curado.
 
-    ``slots`` es ``{slot_id: texto_plano}``. Solo se tocan divs que aún estén
-    vacíos (``></div>`` sin contenido); si ya tienen texto no se sobreescriben.
-    El texto se escapa con ``html.escape`` antes de insertar.
+    ``slots`` es ``{slot_id: texto_plano}`` (cada valor puede traer dos párrafos
+    separados por línea en blanco). Solo se tocan divs que aún estén vacíos
+    (``></div>`` sin contenido); si ya tienen texto no se sobreescriben. El texto
+    se escapa antes de insertar y cada párrafo va en su propio ``<p>``.
     """
     for slot_id, paragraph in slots.items():
         if not paragraph:
             continue
+        inner = _paragraphs_to_html(paragraph)
         pattern = re.compile(
             r'(<div\b[^>]*\bdata-text-slot="' + re.escape(slot_id) + r'"[^>]*>)\s*(</div>)',
         )
-        html_content = pattern.sub(
-            r"\1" + html.escape(paragraph) + r"\2",
-            html_content,
-        )
+        html_content = pattern.sub(lambda m, inner=inner: m.group(1) + inner + m.group(2), html_content)
     return html_content

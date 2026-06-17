@@ -157,9 +157,11 @@ class TestWindowsAndClean:
     def test_window_specs(self):
         assert _window_specs(["7d", "30d"]) == [("última semana", 7), ("último mes", 30)]
 
-    def test_clean_paragraph_strips_markdown(self):
-        raw = "# Título\n\n- punto uno\nTexto final.\n---\n"
-        assert _clean_paragraph(raw) == "Título punto uno Texto final."
+    def test_clean_paragraph_strips_markdown_keeping_paragraphs(self):
+        # Limpia encabezados/viñetas pero CONSERVA la separación en párrafos
+        # (el redactor emite mensual + semanal separados por línea en blanco).
+        raw = "# Mensual\nTexto del mes.\n\n- punto\nTexto de la semana.\n---\n"
+        assert _clean_paragraph(raw) == "Mensual Texto del mes.\n\npunto Texto de la semana."
 
 
 # ─────────────────────────────────────────────────────────────────────────────

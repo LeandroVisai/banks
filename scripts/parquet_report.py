@@ -135,11 +135,14 @@ async def _run(args: argparse.Namespace) -> None:
         print(f"OK html     -> {html_path}")
 
     if args.paragraphs_out:
-        paragraphs = {s.dataset_id: s.paragraph for s in report.sections if s.status == "ok"}
+        # Clave reservada "__sintesis__": la síntesis ejecutiva (puntos del mes y
+        # la semana) para que fill_report_texts.py la inyecte arriba del informe.
+        paragraphs = {"__sintesis__": report.overview_md}
+        paragraphs.update({s.dataset_id: s.paragraph for s in report.sections if s.status == "ok"})
         p_path = pathlib.Path(args.paragraphs_out)
         p_path.parent.mkdir(parents=True, exist_ok=True)
         p_path.write_text(json.dumps(paragraphs, ensure_ascii=False, indent=2), encoding="utf-8")  # noqa: ASYNC240
-        print(f"OK párrafos -> {p_path}  ({len(paragraphs)} datasets)")
+        print(f"OK párrafos -> {p_path}  ({len(paragraphs) - 1} datasets + síntesis)")
 
 
 def main() -> None:

@@ -41,6 +41,12 @@ class ReportBlock:
     - ``chart``: familia de gráfico objetivo (ChartKind).
     - ``text_slot``: id estable del slot de texto que acompaña al bloque.
     - ``status``: STATUS_MVP / STATUS_EXP / STATUS_SKIP.
+    - ``scale``: factor que se aplica a los valores de la serie antes de
+      graficar (1.0 = sin cambio). Sirve para corregir la unidad de un parquet
+      cuyo dato está en otra escala que la declarada (p.ej. parquet en MILES de
+      USD que el informe muestra en ``Mill US$`` → ``scale=0.001``; fracción que
+      debe leerse como ``%`` → ``scale=100``). El renderer escala el valor una
+      vez, así eje, tooltips y leyenda quedan consistentes.
     """
 
     section: str
@@ -53,6 +59,7 @@ class ReportBlock:
     params: dict = field(default_factory=dict)
     text_slot: str = ""
     note: str = ""  # nota visible (p.ej. "*Datos hasta el 8/6")
+    scale: float = 1.0
 
 
 @dataclass(frozen=True)

@@ -13,6 +13,12 @@ from banks_rag.application.reporting import (
     build_curated_report,
     render_curated_html,
 )
+from banks_rag.application.reporting.curated_report import (
+    _scale_plot,
+    fill_synthesis_slot,
+    fill_text_slots,
+)
+from banks_rag.application.reporting.parquet_facts import HtmlTable, PlotData, PlotSeries
 from banks_rag.application.reporting.report_spec import (
     STATUS_EXP,
     STATUS_MVP,
@@ -20,7 +26,6 @@ from banks_rag.application.reporting.report_spec import (
     FamilyReportSpec,
     ReportBlock,
 )
-from banks_rag.application.reporting.parquet_facts import HtmlTable
 from banks_rag.application.reporting.series_transforms import (
     accumulated_series,
     allocation_by_fund,
@@ -35,6 +40,7 @@ from banks_rag.application.reporting.series_transforms import (
 )
 from banks_rag.application.reporting.specs import available_families, get_spec
 from banks_rag.application.reporting.specs.ffmm_spec import FFMM_SPEC
+from banks_rag.application.reporting.svg_chart import _nice_ticks, render_plot_svg
 from banks_rag.infrastructure.sql.parquet_catalog_loader import ParquetDataset
 
 
@@ -46,7 +52,7 @@ def _ds(file: str, **kw) -> ParquetDataset:
     return ParquetDataset(
         id=kw["id"], file=file, name=kw.get("name", "DS"), description="",
         segment="ffmm", unit=kw.get("unit", "US$"), date_range=None, columns=[],
-        chart_type=kw.get("chart_type", "line"),
+        chart_type=kw.get("chart_type", "line"), value_scale=kw.get("value_scale", 1.0),
     )
 
 
@@ -71,14 +77,13 @@ class TestFfmmSpec:
         secs = FFMM_SPEC.sections()
         assert secs[0] == "Flujos y Retornos"
         assert "Portafolio DCV" in secs
-        assert secs[-1] == "Subastas y Vencimientos PDBC"
-        assert len(FFMM_SPEC.blocks) == 35
+        assert secs[-1] == "Mercado cambiario"
+        assert len(FFMM_SPEC.blocks) == 29
 
-    def test_has_mvp_exp_and_skip_blocks(self):
+    def test_has_mvp_and_exp_blocks(self):
         counts = FFMM_SPEC.status_counts()
         assert counts.get(STATUS_MVP, 0) >= 5
         assert counts.get(STATUS_EXP, 0) >= 1
-        assert counts.get(STATUS_SKIP, 0) >= 1
 
     def test_mvp_blocks_point_to_implemented_transforms(self):
         for b in FFMM_SPEC.blocks:
@@ -313,3 +318,88 @@ class TestBuildCuratedReport:
         html = render_curated_html(report)
         # el slot va vacío (el texto se llena después con el LLM)
         assert 'data-text-slot="t:s1"></div>' in html
+
+
+# ── Ejes redondos + base 0, tooltips, escala, texto/síntesis (mejoras gerencia) ─
+
+
+@pytest.mark.unit
+class TestNiceAxes:
+    def test_round_ticks_and_zero_base_when_positive(self):
+        ticks, lo, _hi = _nice_ticks(4326704.0, 25879410.0)
+        assert lo == 0.0  # base 0 cuando todo es positivo
+        diffs = {round(ticks[i + 1] - ticks[i], 6) for i in range(len(ticks) - 1)}
+        assert len(diffs) == 1  # paso constante (ticks equiespaciados)
+        step = diffs.pop()
+        assert step in (5_000_000.0, 10_000_000.0)  # número redondo, no el máximo crudo
+
+    def test_zero_in_range_when_negatives(self):
+        ticks, lo, hi = _nice_ticks(-1844.0, 1065.0)
+        assert lo < 0 < hi
+        assert 0.0 in ticks  # el eje cruza por 0
+
+
+@pytest.mark.unit
+class TestTooltips:
+    def test_line_has_hover_titles(self):
+        plot = PlotData("d", "line", "timeseries", "US$ Mill.",
+                        [PlotSeries("Tipo 1", [("2026-01-01", 10.0), ("2026-02-01", 20.0)])])
+        svg = render_plot_svg(plot, chart="line")
+        assert "<title>" in svg and 'pointer-events="all"' in svg
+        assert "Tipo 1 ·" in svg  # tooltip con etiqueta de serie
+
+    def test_bars_have_titles(self):
+        plot = PlotData("d", "grouped_bar", "grouped", "%",
+                        [PlotSeries("Δ7d", [("Tipo 1", 1.0), ("Tipo 2", -2.0)])])
+        assert render_plot_svg(plot, chart="grouped_bar").count("<title>") >= 2
+
+    def test_pie_has_titles(self):
+        plot = PlotData("d", "pie", "snapshot", "%",
+                        [PlotSeries("c", [("DAP", 28.0), ("BB", 23.0)])])
+        assert "<title>" in render_plot_svg(plot, chart="pie")
+
+
+@pytest.mark.unit
+class TestScale:
+    def test_scale_plot_multiplies_and_keeps_original(self):
+        p = PlotData("d", "line", "timeseries", "Mill US$.",
+                     [PlotSeries("BB", [("2026-01-01", 1000.0)])])
+        s = _scale_plot(p, 0.001)
+        assert s.series[0].points[0][1] == 1.0
+        assert p.series[0].points[0][1] == 1000.0  # el original no se muta
+
+    def test_catalog_value_scale_scales_chart_and_facts(self, tmp_path):
+        # value_scale del catálogo escala TANTO el gráfico (builder) como el
+        # texto (compute_facts), para que prosa y curva coincidan.
+        from banks_rag.application.reporting.parquet_facts import compute_facts
+        p = tmp_path / "alloc.parquet"
+        _categorical_parquet(p)  # Tipo 6 = 6.0
+        ds = _ds("alloc.parquet", id="dur", value_scale=10.0)
+        spec = FamilyReportSpec(family="t", title="T", blocks=(
+            ReportBlock(section="S", title="L", chart="line", status=STATUS_MVP,
+                        source_id="dur", transform="filter_fund", params={"funds": ["Tipo 6"]}),
+        ))
+        rep = build_curated_report(spec, entries=[ds], parquet_dir=tmp_path)
+        assert "60" in rep.blocks[0].body_html  # 6.0 x 10 en el tooltip del grafico
+        facts = compute_facts(ds, tmp_path, [("última semana", 7), ("último mes", 30)])
+        cats = {c["categoria"]: c["ultimo_valor"] for c in facts["por_categoria"]}
+        assert cats["Tipo 6"] == 60.0  # 6.0 x 10 en los hechos del texto
+
+
+@pytest.mark.unit
+class TestTextAndSynthesis:
+    def test_fill_text_slots_renders_two_paragraphs(self):
+        html = '<div class="section-text" data-text-slot="ffmm:x"></div>'
+        out = fill_text_slots(html, {"ffmm:x": "Mensual.\n\nSemanal."})
+        assert out.count("<p>") == 2
+        assert "Mensual." in out and "Semanal." in out
+
+    def test_fill_synthesis_bullets_and_bold(self):
+        html = '<div class="synthesis-body" data-synthesis-body></div>'
+        out = fill_synthesis_slot(html, "Intro.\n\n**Mes:**\n- a\n- b")
+        assert "<strong>Mes:</strong>" in out
+        assert out.count("<li>") == 2
+
+    def test_fill_synthesis_empty_is_noop(self):
+        html = '<div class="synthesis-body" data-synthesis-body></div>'
+        assert fill_synthesis_slot(html, "") == html
