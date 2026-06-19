@@ -40,10 +40,14 @@ from banks_rag.application.reporting.series_transforms import (
     monthly_var_alloc,
     snapshot_grouped,
     snapshot_stacked,
+    stacked_by_bucket,
     wide_lines,
+    wide_monthly_bars,
     wide_window_bars,
     window_grouped,
+    window_grouped_long,
     window_returns,
+    window_stacked_by_cat,
 )
 from banks_rag.application.reporting.specs import available_families, get_spec
 from banks_rag.application.reporting.specs.afp_spec import AFP_SPEC
@@ -452,6 +456,99 @@ class TestGenericTransforms:
         a = dict(next(s for s in plot.series if s.label == "A").points)
         # diff: 13-10=3 (09), 14-13=1 (10); last_n=2 → ambos
         assert a["09-06"] == 3.0 and a["10-06"] == 1.0
+
+    def test_window_stacked_by_cat_daily_bars(self, tmp_path):
+        # Parquet LARGO (fecha+fondo+flujo) → barras apiladas por día, últimos N.
+        p = tmp_path / "mov.parquet"
+        rows = []
+        for d in ["2026-06-08", "2026-06-09"]:
+            for f, v in [("A", 10.0), ("B", -5.0)]:
+                rows.append(f"(DATE '{d}', '{f}', {v})")
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(fecha, fondo, flujos_usd)")
+        ds = _ds("mov.parquet", id="movimientos_fondos", chart_type="stacked_bar")
+        plot = window_stacked_by_cat(ds, tmp_path, {"category": "fondo", "value": "flujos_usd",
+                                                    "order": ["A", "B"], "last_n": 2})
+        assert plot.kind == "grouped"
+        cats = [c for c, _ in plot.series[0].points]
+        assert cats == ["08-06", "09-06"]                       # eje X = días
+        assert {s.label for s in plot.series} == {"A", "B"}
+        assert dict(plot.series[0].points)["09-06"] == 10.0     # fondo A
+
+    def test_snapshot_grouped_overlay_marks_neto(self, tmp_path):
+        p = tmp_path / "cb.parquet"
+        _write(p, "SELECT * FROM (VALUES "
+               "('Habitat', 10.0, 20.0, 30.0), ('Modelo', 5.0, -8.0, -3.0)) "
+               "t(Sector_contraparte, Spot, Forward, Neto)")
+        ds = _ds("cb.parquet", id="cambiario_afp", chart_type="grouped_bar")
+        plot = snapshot_grouped(ds, tmp_path, {"group": "Sector_contraparte",
+                                               "values": ["Spot", "Forward", "Neto"],
+                                               "overlay": ["Neto"]})
+        assert plot.overlay == ("Neto",)
+        assert dict(next(s for s in plot.series if s.label == "Neto").points)["Modelo"] == -3.0
+
+    def test_snapshot_stacked_total_overlay(self, tmp_path):
+        p = tmp_path / "at.parquet"
+        rows = ["('A', 'RVI', 3.0)", "('A', 'RFN', -1.0)", "('B', 'RVI', 2.0)", "('B', 'RFN', 1.0)"]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(fondo, Clase, Valor)")
+        ds = _ds("at.parquet", id="attribution", chart_type="stacked_bar")
+        plot = snapshot_stacked(ds, tmp_path, {"x": "fondo", "series": "Clase",
+                                               "value": "Valor", "x_order": ["A", "B"],
+                                               "total_overlay": True})
+        assert plot.overlay == ("Total",)
+        tot = dict(next(s for s in plot.series if s.label == "Total").points)
+        assert tot["A"] == 2.0 and tot["B"] == 3.0             # suma de clases por fondo
+
+    def test_stacked_by_bucket_net_overlay(self, tmp_path):
+        p = tmp_path / "vs.parquet"
+        rows = []
+        for d in ["2026-06-02", "2026-06-09"]:
+            for bucket, tipo, v in [("Menor a 1Y", "PDBC", 100.0 if d == "2026-06-02" else 80.0),
+                                    ("Menor a 1Y", "BTP", 10.0 if d == "2026-06-02" else 25.0)]:
+                rows.append(f"(DATE '{d}', '{bucket}', '{tipo}', 'CLP', {v})")
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows)
+               + ") t(Fecha, Bucket, Tipo, Moneda, Stock_USD)")
+        ds = _ds("vs.parquet", id="variacion_stock_afp", chart_type="stacked_bar")
+        plot = stacked_by_bucket(ds, tmp_path, {"window": "7d", "net_as_overlay": True})
+        assert plot.overlay == ("Neto",)
+        neto = dict(next(s for s in plot.series if s.label == "Neto").points)["Menor a 1Y"]
+        assert neto == -5.0    # PDBC (80-100=-20) + BTP (25-10=+15) = -5
+
+    def test_window_grouped_long_signed_with_net(self, tmp_path):
+        # Formato LARGO con columna Tipo (Suscripción/Vencimiento): apila susc (+) y
+        # vcto (-), Neto = susc - vcto, top_n por |neto|, excluye 'Spot'.
+        p = tmp_path / "ag.parquet"
+        rows = [
+            "(DATE '2026-06-10', 'JP Morgan', 'Suscripción', 100.0)",
+            "(DATE '2026-06-10', 'JP Morgan', 'Vencimiento', 30.0)",
+            "(DATE '2026-06-10', 'JP Morgan', 'Spot', 999.0)",     # excluido
+            "(DATE '2026-06-10', 'BBVA', 'Suscripción', 5.0)",
+            "(DATE '2020-01-01', 'JP Morgan', 'Suscripción', 999.0)",  # fuera de ventana
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Institucion, Tipo, Monto)")
+        ds = _ds("ag.parquet", id="spot_susc_vcto_agente", chart_type="stacked_bar")
+        plot = window_grouped_long(ds, tmp_path, {"group": "Institucion", "type_col": "Tipo",
+                                                  "value": "Monto", "pos": "Suscripción",
+                                                  "neg": "Vencimiento", "exclude_types": ["Spot"],
+                                                  "window_days": 7, "top_n": 1})
+        assert plot.overlay == ("Neto",)
+        cats = [c for c, _ in plot.series[0].points]
+        assert cats == ["JP Morgan"]                       # top_n=1 por |neto|
+        venc = dict(next(s for s in plot.series if s.label == "Vencimiento").points)["JP Morgan"]
+        neto = dict(next(s for s in plot.series if s.label == "Neto").points)["JP Morgan"]
+        assert venc == -30.0 and neto == 70.0              # 100 - 30, Spot ignorado
+
+    def test_wide_monthly_bars_sums_by_month(self, tmp_path):
+        p = tmp_path / "wm.parquet"
+        rows = [
+            "(DATE '2026-05-10', 1.0, 9.0)", "(DATE '2026-05-20', 2.0, 9.0)",  # may: A=3
+            "(DATE '2026-06-05', 4.0, 9.0)",                                    # jun: A=4
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, A, Neto)")
+        ds = _ds("wm.parquet", id="nr_var_posicion_derivados", chart_type="stacked_bar")
+        plot = wide_monthly_bars(ds, tmp_path, {"include": ["A"], "overlay": ["Neto"], "months": 12})
+        assert plot.kind == "grouped" and plot.overlay == ("Neto",)
+        a = dict(next(s for s in plot.series if s.label == "A").points)
+        assert a["may26"] == 3.0 and a["jun26"] == 4.0     # suma dentro del mes
 
     def test_dual_axis_render_has_two_axes(self):
         plot = PlotData(

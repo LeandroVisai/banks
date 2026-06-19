@@ -342,7 +342,8 @@ def composition_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: di
 
 def stacked_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Variación de la ventana (default 7d) del stock DCV por plazo → barras
-    apiladas (X = plazo, una serie por instrumento)."""
+    apiladas (X = plazo, una serie por instrumento). ``net_as_overlay`` agrega un
+    punto "Neto" = suma de instrumentos por plazo (como el informe)."""
     bt, last = _bucket_tipo_series(dataset, parquet_dir)
     if not bt:
         return None
@@ -357,7 +358,14 @@ def stacked_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) 
             base = next((v for iso, v in reversed(s) if iso <= start), s[0][1])
             sd.setdefault(t, {})[b] = s[-1][1] - base
     tipos = _top_tipos(sd)
-    return _grouped(dataset.id, dataset.unit, {t: sd[t] for t in tipos}, buckets, tipos)
+    out = {t: sd[t] for t in tipos}
+    series_order = list(tipos)
+    overlay: tuple[str, ...] = ()
+    if params.get("net_as_overlay"):
+        out["Neto"] = {b: sum(sd[t].get(b, 0.0) for t in tipos) for b in buckets}
+        series_order.append("Neto")
+        overlay = ("Neto",)
+    return _grouped(dataset.id, dataset.unit, out, buckets, series_order, overlay=overlay)
 
 
 def monthly_diff(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -719,12 +727,157 @@ def wide_window_bars(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
     return _grouped(dataset.id, dataset.unit, sd, labels, series_order, overlay=overlay)
 
 
+def window_stacked_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Barras apiladas DIVERGENTES por DÍA (últimos N) de un parquet LARGO
+    (fecha + categoría + valor): eje X = día, una serie por categoría; opcional
+    punto "Neto" = suma por día.
+
+    Réplica de "Traspaso de fondos de FP" del BCCh (flujos diarios por fondo A-E).
+    params: ``category`` / ``value`` (si faltan, ``detect_roles``), ``last_n``
+    (int, default 14), ``order`` (orden de categorías), ``net`` (bool).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        cat = params.get("category") or (roles.category_cols[0] if roles.category_cols else None)
+        val = params.get("value") or (roles.value_cols[0] if roles.value_cols else None)
+        if roles.date_col is None or not cat or not val:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, cat, val])
+    finally:
+        con.close()
+    by_cat = _aggregate_by_category(rows, roles.date_col, cat, val)  # {cat: [(iso, v)]}
+    by_cat = {c: dict(s) for c, s in by_cat.items()}
+    all_dates = sorted({d for s in by_cat.values() for d in s})
+    sel = all_dates[-int(params.get("last_n", 14)):]
+    if not sel:
+        return None
+    labels = [_daymon(d) for d in sel]
+    cats = [c for c in (params.get("order") or sorted(by_cat)) if c in by_cat]
+    sd: dict[str, dict[str, float]] = {
+        c: {labels[i]: by_cat[c].get(sel[i], 0.0) for i in range(len(sel))} for c in cats
+    }
+    series_order = list(cats)
+    overlay: tuple[str, ...] = ()
+    if params.get("net"):
+        sd["Neto"] = {labels[i]: sum(by_cat[c].get(sel[i], 0.0) for c in cats) for i in range(len(sel))}
+        series_order.append("Neto")
+        overlay = ("Neto",)
+    return _grouped(dataset.id, dataset.unit, sd, labels, series_order, overlay=overlay)
+
+
+def window_grouped_long(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Barras apiladas DIVERGENTES por categoría de un parquet LARGO con columna de
+    TIPO (Suscripción/Vencimiento): suma de la última ventana por ``group``,
+    apilando la suscripción (+) y el vencimiento (-, se resta de la posición), con
+    Neto (= suscripción - vencimiento) como punto. Top-N grupos por |Neto|.
+
+    Réplica de "Cambio posición por tipo de derivados" (group=Instrumento) y
+    "Variación posición NR semanal" (group=Institucion) del tablero.
+    params: ``group`` (eje X), ``type_col`` (col de tipo), ``pos`` / ``neg``
+    (valores de tipo que suman / restan), ``value``, ``window_days`` (default 7),
+    ``top_n`` (opcional), ``exclude_types`` (valores de type_col a ignorar).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    group, tcol, val = params.get("group"), params.get("type_col"), params.get("value")
+    pos, neg = params.get("pos"), params.get("neg")
+    if not group or not tcol or not val or not pos or not neg:
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, group, tcol, val])
+    finally:
+        con.close()
+    isos = [str(r[roles.date_col]) for r in rows if r.get(roles.date_col)]
+    if not isos:
+        return None
+    start = (date.fromisoformat(max(isos)[:10]) - timedelta(days=int(params.get("window_days", 7)))).isoformat()
+    exclude = set(params.get("exclude_types") or [])
+    agg: dict[str, dict[str, float]] = {}
+    for r in rows:
+        d, g, t = r.get(roles.date_col), r.get(group), r.get(tcol)
+        if d is None or g is None or str(d) < start or str(t) in exclude:
+            continue
+        try:
+            v = float(r.get(val))
+        except (TypeError, ValueError):
+            continue
+        per = agg.setdefault(str(g), {pos: 0.0, neg: 0.0})
+        if str(t) == pos:
+            per[pos] += v
+        elif str(t) == neg:
+            per[neg] -= v  # el vencimiento resta de la posición
+    if not agg:
+        return None
+    net = {g: per[pos] + per[neg] for g, per in agg.items()}
+    cats = sorted(agg, key=lambda g: abs(net[g]), reverse=True)
+    if params.get("top_n"):
+        cats = cats[: int(params["top_n"])]
+    sd = {pos: {g: agg[g][pos] for g in cats}, neg: {g: agg[g][neg] for g in cats},
+          "Neto": {g: net[g] for g in cats}}
+    return _grouped(dataset.id, dataset.unit, sd, cats, [pos, neg, "Neto"], overlay=("Neto",))
+
+
+def wide_monthly_bars(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Barras apiladas por MES (suma del mes) de un parquet ANCHO: eje X = mes, una
+    serie por columna de valor; la(s) columna(s) en ``overlay`` van como punto.
+
+    Réplica de "Variación posición derivados mensual" del tablero.
+    params: ``include`` (cols a apilar; default = todas menos overlay),
+    ``overlay`` (cols superpuestas, p.ej. ``["Neto"]``), ``months`` (int, default 12).
+    """
+    from banks_rag.infrastructure.sql import series_analytics as sa
+
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None or not roles.value_cols:
+            return None
+        overlay_cols = [c for c in (params.get("overlay") or []) if c in roles.value_cols]
+        include = params.get("include") or [c for c in roles.value_cols if c not in overlay_cols]
+        cols = [c for c in include if c in roles.value_cols and c not in overlay_cols]
+        if not cols:
+            return None
+        wanted = cols + overlay_cols
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, *wanted])
+    finally:
+        con.close()
+    by_col_month: dict[str, dict[str, float]] = {c: {} for c in wanted}
+    for c in wanted:
+        for iso, v in sa.clean_series(rows, roles.date_col, c):
+            mk = _month_key(iso)
+            by_col_month[c][mk] = by_col_month[c].get(mk, 0.0) + v
+    all_months = sorted({m for c in wanted for m in by_col_month[c]})[-int(params.get("months", 12)):]
+    if not all_months:
+        return None
+    labels = [_month_label(m) for m in all_months]
+    sd = {c: {labels[i]: by_col_month[c].get(all_months[i], 0.0) for i in range(len(all_months))} for c in wanted}
+    series_order = list(cols)
+    overlay: tuple[str, ...] = ()
+    if overlay_cols:
+        series_order.append(overlay_cols[0])
+        overlay = (overlay_cols[0],)
+    return _grouped(dataset.id, dataset.unit, sd, labels, series_order, overlay=overlay)
+
+
 def snapshot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Barras agrupadas de un parquet SIN fecha (corte transversal): eje X = una
     columna categórica y una serie por cada columna de valor.
 
-    Para "Flujo cambiario por AFP" (Spot/Forward/Neto por AFP).
-    params: ``group`` (col del eje X), ``values`` (cols de valor), ``order``.
+    Para "Flujo cambiario por AFP" (Spot/Forward apilados + Neto por AFP).
+    params: ``group`` (col del eje X), ``values`` (cols de valor), ``order``,
+    ``overlay`` (cols que van como punto superpuesto, p.ej. ``["Neto"]``).
     """
     path = dataset.parquet_path(parquet_dir)
     if not path.exists():
@@ -753,7 +906,8 @@ def snapshot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
         return None
     cats = [c for c in (params.get("order") or sorted(agg)) if c in agg]
     sd = {v: {c: agg[c].get(v, 0.0) for c in cats} for v in values}
-    return _grouped(dataset.id, dataset.unit, sd, cats, values)
+    overlay = tuple(c for c in (params.get("overlay") or []) if c in values)
+    return _grouped(dataset.id, dataset.unit, sd, cats, values, overlay=overlay)
 
 
 def snapshot_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -762,7 +916,8 @@ def snapshot_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
 
     Para "Atribución por clase de activos" (X = fondo, una serie por Clase).
     params: ``x`` (categórica del eje X), ``series`` (categórica del color),
-    ``value`` (col de valor), ``x_order``/``series_order``.
+    ``value`` (col de valor), ``x_order``/``series_order``, ``total_overlay``
+    (bool: agrega un punto "Total" = suma de las clases por X, como el informe).
     """
     path = dataset.parquet_path(parquet_dir)
     if not path.exists():
@@ -795,7 +950,12 @@ def snapshot_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
         return None
     xcats = [c for c in (params.get("x_order") or sorted(xs)) if c in xs]
     series_order = [s for s in (params.get("series_order") or sorted(ss)) if s in ss]
-    return _grouped(dataset.id, dataset.unit, agg, xcats, series_order)
+    overlay: tuple[str, ...] = ()
+    if params.get("total_overlay"):
+        agg["Total"] = {c: sum(agg[s].get(c, 0.0) for s in series_order) for c in xcats}
+        series_order = [*series_order, "Total"]
+        overlay = ("Total",)
+    return _grouped(dataset.id, dataset.unit, agg, xcats, series_order, overlay=overlay)
 
 
 def latest_snapshot(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -1014,6 +1174,9 @@ _REGISTRY: dict[str, Transform | None] = {
     "wide_lines": wide_lines,
     "window_grouped": window_grouped,
     "wide_window_bars": wide_window_bars,
+    "wide_monthly_bars": wide_monthly_bars,
+    "window_stacked_by_cat": window_stacked_by_cat,
+    "window_grouped_long": window_grouped_long,
     "snapshot_grouped": snapshot_grouped,
     "snapshot_stacked": snapshot_stacked,
     "latest_snapshot": latest_snapshot,

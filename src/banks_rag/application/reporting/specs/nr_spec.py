@@ -65,34 +65,66 @@ _BLOCKS: tuple[ReportBlock, ...] = (
                 "category": "Instrumento", "value": "Net"},
         note="*acumulado del total de agentes, desde ene.",
     ),
+    # Variación MENSUAL de la posición en derivados por plazo (flujos diarios →
+    # suma por mes); barra apilada divergente + Neto punto.
+    ReportBlock(
+        section=_S_DERIV, title="Variación mensual de la posición NR en derivados",
+        unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
+        source_id="nr_var_posicion_derivados", transform="wide_monthly_bars",
+        params={"include": ["1 a 90 días", "91 a 360 días", "Mayor a 360 días"],
+                "overlay": ["Neto"], "months": 12},
+        note="*suma mensual de la variación por tramo; Neto como punto",
+    ),
+    # Cambio por TIPO de instrumento (último mes): suscripción (+) / vencimiento (-)
+    # apilados + Neto punto. Réplica de "Cambio posición por tipo de derivados".
+    ReportBlock(
+        section=_S_DERIV, title="Cambio de posición en derivados por instrumento (último mes)",
+        unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
+        source_id="susc_vcto_agente_instrumento", transform="window_grouped_long",
+        params={"group": "Instrumento", "type_col": "Tipo", "value": "Monto",
+                "pos": "Suscripción", "neg": "Vencimiento", "window_days": 30},
+        note="*suma del último mes por instrumento; Neto = suscripción - vencimiento",
+    ),
+    # Variación semanal de la posición por AGENTE (top 12): suscripción / vencimiento
+    # apilados + Neto punto. Réplica de "Variación posición NR semanal".
+    ReportBlock(
+        section=_S_DERIV, title="Variación semanal de la posición NR por agente",
+        unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
+        source_id="spot_susc_vcto_agente", transform="window_grouped_long",
+        params={"group": "Institucion", "type_col": "Tipo", "value": "Monto",
+                "pos": "Suscripción", "neg": "Vencimiento",
+                "exclude_types": ["Spot"], "window_days": 7, "top_n": 12},
+        note="*12 agentes con mayor variación semanal; Neto = suscripción - vencimiento",
+    ),
     # ── Mercado de Renta Fija (BTP en DCV) ───────────────────────────────────
     ReportBlock(
         section=_S_RF, title="Posición de no residentes en BTP por plazo",
         unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
         source_id="posicion_rfl_nr", transform="straight_series",
     ),
-    ReportBlock(
-        section=_S_RF, title="Variación semanal del stock de BTP en DCV",
-        unit="US$ Mill.", chart="line", status=STATUS_MVP,
-        source_id="variacion_rfl_dcv_nr", transform="straight_series",
-    ),
+    # OJO: el parquet variacion_rfl_dcv_nr YA viene acumulado YtD (es un nivel que
+    # arranca ~489 en ene y llega ~3.750 en jun, no un flujo diario). Se grafica
+    # TAL CUAL (straight): hacerle cumsum lo doble-acumulaba a ~277.000. Réplica de
+    # "NR: Var. Acu. Stock BTP en DCV (YtD)" del tablero.
     ReportBlock(
         section=_S_RF, title="Variación acumulada del stock de BTP en DCV (YtD)",
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
-        source_id="variacion_rfl_dcv_nr", transform="accumulated",
-        params={"window": "ytd", "accumulate": "cumsum"},
+        source_id="variacion_rfl_dcv_nr", transform="straight_series",
     ),
     # ── Mercado SPC (tasas) ──────────────────────────────────────────────────
     # Parquet en US$ mil millones → scale 1000 para mostrar en US$ Mill. (como el
     # informe). Apilado DIVERGENTE: lo que pagan fija va arriba, lo que reciben
     # fija va abajo; el Neto (suma) cruza el cero como línea.
+    # OJO: el informe enviado OMITE el tramo corto "1 a 90 dias" en este gráfico
+    # (es enorme y negativo, ~-34.000, y descuadra el eje). Sin él, el Neto de los
+    # 3 tramos largos da ~+9.000 como en el correo. Replicamos esa vista.
     ReportBlock(
         section=_S_SPC, title="Posición de no residentes en SPC nominal",
         unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
         source_id="posicion_nr_spc", transform="category_series", scale=1000.0,
         params={"category": "Plazos_D", "value": "Monto_USD", "net": "auto",
-                "order": ["1 a 90 dias", "91 a 360 dias", "Entre 1 y 2Y", "Mayor a 2Y"]},
-        note="*pagan fija (+) / reciben fija (-); Neto = suma de tramos",
+                "order": ["91 a 360 dias", "Entre 1 y 2Y", "Mayor a 2Y"]},
+        note="*tramos ≥90d; pagan fija (+) / reciben fija (-); Neto = suma de tramos",
     ),
     # Variación acumulada YtD = nivel rebaseado al inicio del año (el parquet trae
     # niveles); apilado divergente + Neto en línea.

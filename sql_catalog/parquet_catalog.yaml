@@ -1895,6 +1895,22 @@ datasets:
       - {name: "Mayor a 2Y", type: DOUBLE}
       - {name: "Neto", type: DOUBLE}
 
+  - id: nr_var_posicion_derivados
+    file: nr_var_posicion_derivados.parquet
+    chart_type: "stacked_bar"
+    name: "Variación posición derivados NR por plazo (US$ Mill.)"
+    description: >
+      Variación (flujo neto suscripción − vencimiento) de la posición de no residentes en derivados cambiarios, desagregada por tramo de plazo (1 a 90 días, 91 a 360 días, Mayor a 360 días) con su neto. Flujos diarios que se agregan por mes para leer la variación mensual de la posición. La unidad principal de análisis es US$ Mill..
+    segment: no_residentes
+    unit: "US$ Mill."
+    date_range: ["2023-01-03", "2026-06-10"]
+    columns:
+      - {name: "Fecha", type: TIMESTAMP}
+      - {name: "1 a 90 días", type: DOUBLE}
+      - {name: "91 a 360 días", type: DOUBLE}
+      - {name: "Mayor a 360 días", type: DOUBLE}
+      - {name: "Neto", type: DOUBLE}
+
 
   # -- rf_tasas --
 

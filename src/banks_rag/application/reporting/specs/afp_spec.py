@@ -44,10 +44,15 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
         source_id="stock_fondo_afp", transform="straight_series",
     ),
+    # Traspaso entre multifondos: barra apilada DIVERGENTE por día (flujos diarios
+    # por fondo A-E), réplica de "Traspaso de fondos de FP" del tablero.
     ReportBlock(
-        section=_S_ALLOC, title="Traspaso de cotizantes entre fondos",
-        unit="US$ Mill.", chart="line", status=STATUS_MVP,
-        source_id="movimientos_fondos", transform="straight_series",
+        section=_S_ALLOC, title="Traspaso de fondos entre multifondos (diario)",
+        unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
+        source_id="movimientos_fondos", transform="window_stacked_by_cat",
+        params={"category": "fondo", "value": "flujos_usd",
+                "order": ["A", "B", "C", "D", "E"], "last_n": 14},
+        note="*flujos diarios por tipo de fondo, últimas ~2 semanas",
     ),
     # ── Renta Fija (DCV) ─────────────────────────────────────────────────────
     ReportBlock(
@@ -76,7 +81,8 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         section=_S_RF, title="Variación semanal DCV por plazo",
         unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
         source_id="variacion_stock_afp", transform="stacked_by_bucket",
-        params={"window": "7d"},
+        params={"window": "7d", "net_as_overlay": True},
+        note="*variación de la última semana por plazo; Neto como punto",
     ),
     ReportBlock(
         section=_S_RF, title="Composición del portafolio DCV por plazo",
@@ -84,17 +90,26 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         source_id="variacion_stock_afp", transform="composition_by_bucket",
     ),
     # ── Mercado cambiario ────────────────────────────────────────────────────
+    # Flujo de la semana por AFP: barra apilada (Spot + Forward) + Neto (=Spot+Forward)
+    # como punto, réplica de "Flujos cambiarios" del tablero.
     ReportBlock(
-        section=_S_FX, title="Flujo cambiario por AFP (spot / forward / neto)",
-        unit="US$ Mill.", chart="grouped_bar", status=STATUS_MVP,
+        section=_S_FX, title="Flujo cambiario por AFP (spot + forward)",
+        unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
         source_id="cambiario_afp", transform="snapshot_grouped",
-        params={"group": "Sector_contraparte", "values": ["Spot", "Forward", "Neto"]},
-        note="*última semana con datos",
+        params={"group": "Sector_contraparte", "values": ["Spot", "Forward", "Neto"],
+                "overlay": ["Neto"],
+                "order": ["Habitat", "Provida", "Uno", "Cuprum", "Capital", "Modelo", "Planvital"]},
+        note="*última semana; Neto = Spot + Forward como punto",
     ),
+    # Posición acumulada spot vs derivados: área apilada DIVERGENTE (spot compra +,
+    # derivados venden -) + Neto en línea. Flujos diarios → cumsum desde ene.
     ReportBlock(
         section=_S_FX, title="Posición spot y derivados acumulada",
-        unit="US$ Mill.", chart="line", status=STATUS_MVP,
-        source_id="spot_derivados_afp", transform="straight_series",
+        unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
+        source_id="spot_derivados_afp", transform="wide_lines",
+        params={"include": ["Spot", "Derivados"], "accumulate": "cumsum",
+                "window": "ytd", "net": "auto"},
+        note="*acumulado desde ene.; Neto = spot + derivados",
     ),
     # ── Derivados de tasas (swaps) ───────────────────────────────────────────
     ReportBlock(
@@ -113,8 +128,8 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         unit="%", chart="stacked_bar", status=STATUS_MVP,
         source_id="attribution", transform="snapshot_stacked", scale=100.0,
         params={"x": "fondo", "series": "Clase", "value": "Valor",
-                "x_order": ["A", "B", "C", "D", "E"]},
-        note="*contribución al retorno por clase de activo, último corte",
+                "x_order": ["A", "B", "C", "D", "E"], "total_overlay": True},
+        note="*contribución al retorno por clase de activo; Total como punto",
     ),
 )
 
