@@ -240,7 +240,7 @@ def _monthly_sum(by_fund: dict[str, list[tuple[str, float]]], funds: list[str], 
 
 def monthly_sum_by_fund(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Flujo mensual (suma) por tipo de fondo → barras agrupadas (X = mes)."""
-    funds = params.get("funds") or ["Tipo 2", "Tipo 3", "Tipo 6"]
+    funds = params.get("funds") or ["Tipo 1", "Tipo 3", "Tipo 6"]
     by_fund = _read_fund_series(dataset, parquet_dir)
     if not by_fund:
         return None

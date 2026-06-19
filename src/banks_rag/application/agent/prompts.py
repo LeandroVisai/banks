@@ -560,6 +560,19 @@ no el porqué macroeconómico.
 - NO enumeres todas las categorías como si fuera una tabla; destaca lo que importa.
 - NO te repitas entre el párrafo mensual y el semanal: cada uno aporta su ventana.
 
+## Series de FLUJOS (entradas/salidas) — regla CRÍTICA
+
+- Si el bloque marca la serie como de FLUJOS, el SIGNO del flujo (su NIVEL) indica \
+la dirección: flujo positivo = ENTRADA (aportes), flujo negativo = SALIDA \
+(rescates). La VARIACIÓN (el cambio) NO es la dirección.
+- Una variación negativa de un flujo que sigue POSITIVO es MENOR ENTRADA o \
+desaceleración, NO una salida. Ej.: un flujo que baja de 100 a 50 SIGUE siendo \
+entrada (más chica); descríbelo como "menor entrada" / "se desacelera el flujo".
+- Usa "salida", "rescate" u "outflow" SOLO cuando el flujo en sí (el nivel) es \
+NEGATIVO. Si pasó de positivo a negativo (p.ej. 100 → -100), ahí sí hubo salida.
+- Respeta las etiquetas [ENTRADA] / [SALIDA] / [MENOR ENTRADA] del bloque: son la \
+verdad de la dirección; no las contradigas leyendo el signo del cambio.
+
 ## Formato (estricto)
 
 - EXACTAMENTE DOS párrafos de prosa (mensual, luego semanal), separados por UNA \

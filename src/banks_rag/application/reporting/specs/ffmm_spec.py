@@ -32,7 +32,9 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         section=_S_FLUJOS, title="Variación Patrimonio efectivo por tipo de fondo",
         unit="US$ Mill.", chart="grouped_bar", status=STATUS_EXP,
         source_id="flujos_ffmm", transform="monthly_sum_by_fund",
-        params={"funds": ["Tipo 2", "Tipo 3", "Tipo 6"], "months": 6},
+        # Tipo 1 es el fondo dominante (mueve el agregado); debe estar. Estos 3 son
+        # los drivers reales del flujo y coinciden con los que destaca el texto.
+        params={"funds": ["Tipo 1", "Tipo 3", "Tipo 6"], "months": 6},
     ),
     ReportBlock(  # acumulado (cumsum por fondo)
         section=_S_FLUJOS, title="Flujos acumulados por fondo",

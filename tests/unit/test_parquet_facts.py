@@ -133,3 +133,27 @@ class TestFactsToText:
         text = facts_to_text(compute_facts(_ds("snap.parquet"), tmp_path, _W))
         assert "Corte transversal" in text
         assert "DAP" in text
+
+    def test_flow_distinguishes_outflow_from_smaller_inflow(self, tmp_path):
+        # Tipo Salida termina NEGATIVO (salida real); Tipo Baja sigue POSITIVO pero
+        # cae (menor entrada, NO salida). El id contiene 'flujo' → is_flow=True.
+        p = tmp_path / "flow.parquet"
+        rows = []
+        for i, d in enumerate(["2026-06-01", "2026-06-08", "2026-06-15"]):
+            rows.append(f"(DATE '{d}', 'Salida', {100.0 - i * 120})")   # 100, -20, -140
+            rows.append(f"(DATE '{d}', 'Baja', {200.0 - i * 60})")      # 200, 140, 80 (sigue +)
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(fecha, tipo, flujos_usd)")
+        facts = compute_facts(_ds("flow.parquet", id="flujos_ffmm", name="Flujos"), tmp_path, _W)
+        assert facts["is_flow"] is True
+        text = facts_to_text(facts)
+        assert "NOTA — serie de FLUJOS" in text
+        # El que cae pero sigue positivo NO debe marcarse como salida.
+        assert "MENOR ENTRADA" in text
+        assert "SALIDA: flujo negativo" in text
+
+    def test_stock_dataset_has_no_flow_tags(self, tmp_path):
+        _categorical_parquet(tmp_path / "cat.parquet")
+        facts = compute_facts(_ds("cat.parquet", id="stock_nivel_afp", name="Stock"), tmp_path, _W)
+        assert facts["is_flow"] is False
+        text = facts_to_text(facts)
+        assert "ENTRADA" not in text and "SALIDA" not in text

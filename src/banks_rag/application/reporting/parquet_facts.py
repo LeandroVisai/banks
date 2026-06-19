@@ -220,6 +220,22 @@ def _trend_signal(window_variations: list[dict]) -> dict | None:
     }
 
 
+# Palabras del id/nombre que marcan una serie de FLUJOS (entradas/salidas), donde
+# el SIGNO del flujo (no su variación) define la dirección. Para estas series una
+# variación negativa con flujo aún positivo es MENOR ENTRADA, no una salida.
+_FLOW_KEYWORDS = (
+    "flujo", "flow", "movimiento", "traspaso", "aporte", "rescate",
+    "suscrip", "vencim", "captacion", "captación",
+)
+
+
+def _is_flow(dataset: ParquetDataset) -> bool:
+    """``True`` si el dataset es de flujos (su valor es una entrada/salida, no un
+    stock): el signo del valor indica dirección. Heurística por id + nombre."""
+    blob = f"{dataset.id} {dataset.name}".lower()
+    return any(k in blob for k in _FLOW_KEYWORDS)
+
+
 def compute_facts(
     dataset: ParquetDataset,
     parquet_dir: Path,
@@ -249,6 +265,7 @@ def compute_facts(
             "date_col": roles.date_col,
             "value_cols": roles.value_cols,
             "category_cols": roles.category_cols,
+            "is_flow": _is_flow(dataset),
             "last_date": None,
         }
 
@@ -418,6 +435,7 @@ def _contributions(series_by_cat: dict[str, list[sa.Point]], wins: list[dict]) -
                     "categoria": cat,
                     "cambio_absoluto": v["cambio_absoluto"],
                     "variacion_pct": v["variacion_pct"],
+                    "nivel_fin": v.get("valor_fin"),  # nivel al cierre (signo = dirección si es flujo)
                 })
         cambios.sort(key=lambda c: abs(c["cambio_absoluto"]), reverse=True)
         if cambios:
@@ -672,6 +690,19 @@ def _pct(x: float | None) -> str:
     return "s/d" if x is None else f"{x:+.2f}%"
 
 
+def _flow_tag(nivel: float | None, cambio: float | None = None) -> str:
+    """Etiqueta determinista de DIRECCIÓN para series de flujos, según el SIGNO del
+    nivel (no de la variación). Evita que una variación negativa de un flujo aún
+    positivo se lea como 'salida': eso es MENOR ENTRADA."""
+    if nivel is None:
+        return ""
+    if nivel < 0:
+        return " [SALIDA: flujo negativo]"
+    if cambio is not None and cambio < 0:
+        return " [MENOR ENTRADA: flujo sigue positivo, solo desacelera — NO es salida]"
+    return " [ENTRADA: flujo positivo]"
+
+
 def _variation_line(v: dict) -> str:
     """Una ventana → texto. ``v`` es ``{label, desde, hasta, variacion}``."""
     var = v.get("variacion")
@@ -705,13 +736,15 @@ def _trend_lines(trend: dict | None) -> list[str]:
     ]
 
 
-def _contribution_lines(contribuciones: list[dict] | None) -> list[str]:
+def _contribution_lines(contribuciones: list[dict] | None, *, is_flow: bool = False) -> list[str]:
     if not contribuciones:
         return []
     out = ["Drivers del movimiento del total:"]
     for c in contribuciones:
         partes = ", ".join(
-            f"{d['categoria']} ({_num(d['cambio_absoluto'])}, {_pct(d['variacion_pct'])})"
+            f"{d['categoria']} (cambio {_num(d['cambio_absoluto'])}, {_pct(d['variacion_pct'])}"
+            + (f", flujo final {_num(d.get('nivel_fin'))}{_flow_tag(d.get('nivel_fin'), d.get('cambio_absoluto'))}" if is_flow else "")
+            + ")"
             for d in c["drivers"]
         )
         out.append(f"  - {c['label']}: {partes}")
@@ -722,6 +755,7 @@ def facts_to_text(facts: dict) -> str:
     """Renderiza el dict de ``compute_facts`` a un bloque de texto para el LLM."""
     unit = facts.get("unit") or ""
     shape = facts.get("shape")
+    is_flow = bool(facts.get("is_flow"))
     lines: list[str] = [f"Filas: {facts.get('n_rows')}; unidad: {unit or 's/d'}."]
 
     if shape == "snapshot":
@@ -732,6 +766,13 @@ def facts_to_text(facts: dict) -> str:
         return "\n".join(lines)
 
     lines.append(f"Última fecha con datos: {facts.get('last_date')}.")
+    if is_flow:
+        lines.append(
+            "NOTA — serie de FLUJOS: el SIGNO del flujo indica dirección (positivo = "
+            "ENTRADA/aportes, negativo = SALIDA/rescates). Una variación negativa con "
+            "el flujo aún positivo es MENOR ENTRADA (desaceleración), NO una salida; "
+            "solo hay salida cuando el flujo en sí es negativo."
+        )
 
     if shape == "timeseries_categorical":
         lines.append(f"Categoría: {facts.get('category_col')}; métrica: {facts.get('value_col')}.")
@@ -739,13 +780,14 @@ def facts_to_text(facts: dict) -> str:
         for v in facts.get("total_ventanas", []):
             lines.append(f"  - {_variation_line(v)}")
         lines += _trend_lines(facts.get("tendencia"))
-        lines += _contribution_lines(facts.get("contribuciones"))
+        lines += _contribution_lines(facts.get("contribuciones"), is_flow=is_flow)
         comp = facts.get("composicion_corte")
         if comp:
             lines += _composition_lines(comp, unit)
         lines.append("Por categoría (top por nivel):")
         for cat in facts.get("por_categoria", []):
-            lines.append(f"  · {cat['categoria']}: último {_num(cat['ultimo_valor'])} ({cat['ultima_fecha']})")
+            tag = _flow_tag(cat["ultimo_valor"]) if is_flow else ""
+            lines.append(f"  · {cat['categoria']}: último {_num(cat['ultimo_valor'])} ({cat['ultima_fecha']}){tag}")
             for v in cat["ventanas"]:
                 lines.append(f"      {_variation_line(v)}")
         return "\n".join(lines)
@@ -753,7 +795,8 @@ def facts_to_text(facts: dict) -> str:
     if shape == "timeseries_wide":
         lines.append("Por columna (top por nivel):")
         for col in facts.get("por_columna", []):
-            lines.append(f"  · {col['columna']}: último {_num(col['ultimo_valor'])} ({col['ultima_fecha']})")
+            tag = _flow_tag(col["ultimo_valor"]) if is_flow else ""
+            lines.append(f"  · {col['columna']}: último {_num(col['ultimo_valor'])} ({col['ultima_fecha']}){tag}")
             for v in col["ventanas"]:
                 lines.append(f"      {_variation_line(v)}")
         comp = facts.get("composicion_corte")
