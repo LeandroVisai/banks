@@ -1,0 +1,46 @@
+Síntesis — principales movimientos
+El segmento de fondos mutuos de mercado monetario registró un aumento generalizado en la acumulación de stock y flujos netos, acompañado de una expansión de la posición corta en derivados y una consolidación de la rentabilidad acumulada.
+
+Principales movimientos del mes:
+El stock de DCV aumentó en US$ 758,95 Mill. (+0,99%) entre el 18 de mayo y el 17 de junio de 2026, cerrando en US$ 77.568,29 Mill., impulsado por el tramo menor a 1 año (+US$ 481,87 Mill.).
+Los flujos netos mensuales se invirtieron hacia un aporte de US$ 285,33 Mill. a 2026-06-21, liderado por el Tipo 1 con una entrada de US$ 297,73 Mill.
+La posición neta corta en derivados se amplió a US$ 126.865,76 Mill. al 16 de junio, tras una variación de US$ 1.759,74 Mill. (-1,41%) respecto al 18 de mayo.
+La rentabilidad acumulada YtD se consolidó en 4,62 % al 16 de junio de 2026, con tracción selectiva en el Tipo 5 (+6,15 %).
+
+Principales movimientos de la semana:
+La acumulación semanal del stock DCV confirma y acelera la tendencia mensual con un ingreso de US$ 312,23 Mill. (+0,40%) entre el 10 y el 17 de junio, concentrado en el segmento menor a 1 año (+US$ 531,61 Mill.).
+Los flujos netos semanales confirman el impulso alcista mensual con un incremento de US$ 93,41 Mill. (+48,67%), sostenido por entradas adicionales en el Tipo 1 de US$ 94,68 Mill.
+La presión de salidas acumuladas contrasta con la dinámica mensual al moderarse coyunturalmente, ajustando el flujo agregado en US$ 152,22 Mill. (+35,84%) gracias a la reducción de rescates en el Tipo 1 por US$ 218,19 Mill.
+La ampliación de la posición corta en derivados confirma el sesgo mensual con una variación adicional de US$ 500,29 Mill. (-0,40%) entre el 9 y el 16 de junio.
+Se informa que los datasets de asignación por instrumento, composición del portafolio DCV, duración promedio y DV01 no registraron variación medible en la ventana semanal por ausencia de observaciones.
+ 
+Flujos y Retornos
+Variación Patrimonio efectivo por tipo de fondo
+(US$ Mill.)
+Los flujos mensuales consolidan una aceleración decisiva, invirtiendo la dinámica previa para registrar un aporte neto de US$ 285,33 Mill. a 2026-06-21, con una variación de +121,51% respecto al cierre anterior. Este giro está liderado por los fondos Tipo 1, que impulsaron el total con un cambio de US$ 586,91 Mill. hacia una entrada de US$ 297,73 Mill., compensando la menor entrada en Tipo 6 y las salidas en Tipo 3. La estructura del movimiento refleja una concentración en Tipo 1, que absorbe el 104,34% del total, mientras los componentes de salida y menor entrada se mantienen en niveles marginales.
+La ventana semanal confirma y acelera esta trayectoria, registrando un incremento de US$ 93,41 Mill. (+48,67%) que eleva el flujo neto a US$ 285,33 Mill. entre el 2026-06-14 y el 2026-06-21. La dinámica coyuntural se sostiene en la entrada adicional de US$ 94,68 Mill. en Tipo 1, que contrarresta la menor entrada en Tipo 6 y la moderación de las salidas en Tipo 3. Este comportamiento consolida la tendencia de entradas del segmento, manteniendo el balance agregado firmemente en terreno positivo.
+ 
+Flujos acumulados por fondo
+(US$ Mill.)
+Las salidas acumuladas en el segmento de fondos mutuos se intensificaron marcadamente durante el último mes, consolidando una tendencia de desinversión sostenida. Este movimiento fue liderado por el Tipo 1, que concentró el 82,66% del retiro total y registró una expansión neta de US$ 194,53 Mill. en su flujo negativo. Al 16 de junio de 2026, el saldo agregado se ubicó en US$ 272,46 Mill., reflejando una aceleración significativa respecto al nivel previo de la ventana.
+En la coyuntura semanal, la presión de rescates se moderó notablemente, operando una reversión técnica frente a la dinámica mensual. El Tipo 1 lideró esta desaceleración al reducir sus salidas en US$ 218,19 Mill., compensando parcialmente el deterioro de otras categorías y ajustando el flujo agregado en US$ 152,22 Mill. (+35,84%). Esta ventana confirma un enfriamiento coyuntural de la desinversión, aunque el saldo neto mantiene su orientación negativa.
+ 
+Rentabilidad acumulada por tipo de fondo
+(%)
+*acumulada desde 2019 (el parquet no resetea por año)
+La rentabilidad acumulada YtD consolida su tendencia en 4,62 % a 16 de junio de 2026, impulsada por la expansión selectiva en los segmentos de mayor riesgo. El Tipo 5 concentra la tracción con una variación de +6,15 %, mientras que el Tipo 4, principal componente ponderal, registra un avance marginal de +0,38 %. Esta estructura confirma una desaceleración en los tipos conservadores, que operan en rangos laterales o con ligeros retrocesos, manteniendo el acumulado en el nivel reportado.
+La dinámica de la última semana valida la polarización observada en el mes, con una aceleración concentrada en el Tipo 5 (+4,96 %) y el Tipo 8 (+2,98 %). El resto del universo mantiene su comportamiento lateral o de leve erosión, ejemplificado por el retroceso del Tipo 2 (-0,42 %) y el Tipo 7 (-0,78 %). Esta ventana consolida la estructura de retornos sin modificar la composición ponderal que sustenta el acumulado vigente.
+ 
+Lea estuve revisando el informe con los datos del 10 al 17 y de junio, dejé ahí destacado en amarillo los datos que no me calzaban exacto con los números que tengo y en rojo lo que me calzaba menos (que estaría malo).
+ 
+Algunos comentarios, al principio repite el texto de los flujos y además dice cosas contradictorias en ambos textos, que son los primeros dos destacados en rojo. Creo que dejaría uno de flujos no más para no alargarlo innecesariamente. Los flujos y retornos de los fondos es los que más tenía diferencias y derechamente no me calzaba, mientras que el DCV en general estaban más alineados, aunque no calzaban exacto si eras magnitudes más cercanas y misma dirección.
+ 
+Variaciones mensuales:
+ 
+Variaciones semanales:
+ 
+En los principales mensajes de la semana también deje subrayado dos puntos que repiten la misma información pero diciendo cosas distintas, en uno dice que T1 tiene entradas y en el segundo que tiene salidas.
+
+Mira este fue le resultado de uno de los scripts sin embargo mi compñaera me dijo lo siguiente:
+Dicho esto necesito que me des un .zip con estas imagenes y esta explicación un .txt si? y damelo para descargar.
+No elimines nada.
