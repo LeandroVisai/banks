@@ -25,6 +25,13 @@ from .parquet_report import (
     select_datasets,
 )
 from .report_spec import FamilyReportSpec, ReportBlock
+from .verify import (
+    Issue,
+    Ledger,
+    VerificationReport,
+    build_ledger,
+    verify_report,
+)
 
 __all__ = [
     "CuratedBlock",
@@ -33,11 +40,15 @@ __all__ = [
     "DatasetSelection",
     "FamilyReportSpec",
     "InjectStats",
+    "Issue",
+    "Ledger",
     "ParquetReport",
     "PlotData",
     "PlotSeries",
     "ReportBlock",
+    "VerificationReport",
     "build_curated_report",
+    "build_ledger",
     "compute_series",
     "fill_synthesis_slot",
     "fill_text_slots",
@@ -46,4 +57,5 @@ __all__ = [
     "render_curated_html",
     "render_parquet_report_html",
     "select_datasets",
+    "verify_report",
 ]

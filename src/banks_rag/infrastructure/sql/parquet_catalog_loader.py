@@ -67,6 +67,14 @@ class ParquetDataset:
     # declarado como "%" → 100). Lo aplican el informe (``compute_facts`` para el
     # texto y el builder curado para el gráfico), así prosa y gráfico coinciden.
     value_scale: float = 1.0
+    # Naturaleza del valor de la serie, para que el informe describa la dirección
+    # correctamente: "flow" (entrada/salida — el SIGNO del flujo del período manda;
+    # la variación por ventana se SUMA, no se resta punto a punto), "stock"/"level"
+    # (un nivel — la dirección es el signo de la variación), "return" (un índice de
+    # retorno), "rate" (una tasa/%). Vacío = desconocido → se cae a la heurística
+    # de palabras clave (``_FLOW_KEYWORDS``). Robustece la detección de flujos en
+    # datasets cuyo nombre no contiene una palabra-clave (afp/nr).
+    value_kind: str = ""
 
     def parquet_path(self, parquet_dir: Path) -> Path:
         return parquet_dir / self.file
@@ -88,6 +96,7 @@ class ParquetDataset:
             "date_range": self.date_range,
             "chart_type": self.chart_type,
             **({"value_scale": self.value_scale} if self.value_scale != 1.0 else {}),
+            **({"value_kind": self.value_kind} if self.value_kind else {}),
             "columns": [
                 {"name": c.name, "type": c.type, **({"values": c.values} if c.values else {})}
                 for c in self.columns
@@ -226,4 +235,5 @@ def _parse_dataset(raw: dict) -> ParquetDataset:
         columns=columns,
         chart_type=raw.get("chart_type") or "line",
         value_scale=float(raw.get("value_scale", 1.0) or 1.0),
+        value_kind=str(raw.get("value_kind", "") or "").strip().lower(),
     )

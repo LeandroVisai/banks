@@ -37,8 +37,13 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         params={"funds": ["Tipo 1", "Tipo 3", "Tipo 6"], "months": 6},
     ),
     ReportBlock(  # acumulado (cumsum por fondo)
+        # no_text: mantiene el GRÁFICO pero sin comentario propio. El texto de flujos
+        # se escribe UNA vez en "Variación Patrimonio efectivo" (flujos_ffmm) — evita
+        # los dos párrafos de flujos que se contradecían (T1 entrada vs salida) que
+        # marcó la analista. Son métricas distintas (patrimonio vs flujo acumulado);
+        # se grafican ambas, se comenta una.
         section=_S_FLUJOS, title="Flujos acumulados por fondo",
-        unit="US$ Mill.", chart="line", status=STATUS_MVP,
+        unit="US$ Mill.", chart="line", status=STATUS_MVP, no_text=True,
         source_id="flujos_acum_ffmm", transform="accumulated", params={"window": "y2", "accumulate": "cumsum"},
     ),
     # ── Portafolio DCV (imágenes 4-5) ────────────────────────────────────────

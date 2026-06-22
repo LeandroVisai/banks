@@ -169,10 +169,47 @@ def _slice(series: list[sa.Point], start: str, end: str) -> list[sa.Point]:
     return [p for p in series if start <= p[0] <= end]
 
 
-def _window_variations(series: list[sa.Point], windows: list[dict]) -> list[dict]:
+def _flow_window(series_slice: list[sa.Point]) -> dict | None:
+    """Hecho de FLUJOS para una ventana: el flujo NETO del período = SUMA de los
+    flujos observados en ``[start, end]`` (NO último−primero).
+
+    El signo de la suma es la dirección (positivo = entrada/aportes, negativo =
+    salida/rescates), consistente con el gráfico de suma por período
+    (``monthly_sum_by_fund`` / ``monthly_diff`` / ``window_grouped``). ``None`` si
+    la ventana no tiene observaciones. Devuelve un dict shape-compatible con el de
+    ``sa.variation`` (mismas claves usadas por los renderers) más ``is_flow_sum`` y
+    ``flujo_periodo``."""
+    if not series_slice:
+        return None
+    valores = [v for _, v in series_slice]
+    total = sum(valores)
+    return {
+        "is_flow_sum": True,
+        "fecha_inicio_obs": series_slice[0][0],
+        "fecha_fin_obs": series_slice[-1][0],
+        "flujo_periodo": round(total, 6),
+        # Alias para que _contributions (ordena/imprime por cambio_absoluto) y
+        # _flow_tag (lee nivel_fin) operen sobre el flujo del período sin ramas.
+        "cambio_absoluto": round(total, 6),
+        "valor_fin": round(total, 6),
+        "variacion_pct": None,
+        "minimo": round(min(valores), 6),
+        "maximo": round(max(valores), 6),
+        "n_observaciones": len(series_slice),
+    }
+
+
+def _window_change(series_slice: list[sa.Point], *, is_flow: bool) -> dict | None:
+    """Hecho de una ventana: suma de flujos (``is_flow``) o variación de nivel."""
+    return _flow_window(series_slice) if is_flow else sa.variation(series_slice)
+
+
+def _window_variations(
+    series: list[sa.Point], windows: list[dict], *, is_flow: bool = False,
+) -> list[dict]:
     out = []
     for w in windows:
-        v = sa.variation(_slice(series, w["start"], w["end"]))
+        v = _window_change(_slice(series, w["start"], w["end"]), is_flow=is_flow)
         out.append({"label": w["label"], "desde": w["start"], "hasta": w["end"], "variacion": v})
     return out
 
@@ -229,9 +266,28 @@ _FLOW_KEYWORDS = (
 )
 
 
+# Valores de ``value_kind`` (catálogo) que NO son flujos: la dirección es el signo
+# de la VARIACIÓN del nivel, no del valor del período.
+_NON_FLOW_KINDS = frozenset({"stock", "level", "nivel", "return", "retorno", "rate", "tasa"})
+# ``value_kind`` donde SUMAR las categorías no es una métrica real (retornos/tasas):
+# no se calcula total agregado ni composición, solo el detalle por categoría.
+_NON_AGGREGATABLE_KINDS = frozenset({"return", "retorno", "rate", "tasa"})
+
+
 def _is_flow(dataset: ParquetDataset) -> bool:
     """``True`` si el dataset es de flujos (su valor es una entrada/salida, no un
-    stock): el signo del valor indica dirección. Heurística por id + nombre."""
+    stock): el signo del valor indica dirección.
+
+    Prioriza el ``value_kind`` declarado en el catálogo (robusto entre familias);
+    solo cae a la heurística de palabras clave (id + nombre) si ``value_kind`` está
+    vacío — así datasets de afp/nr cuyo nombre no trae una keyword de flujo
+    (``var_pos_derivados``, ``spot_derivados_afp``, ``nr_var_posicion_*``) quedan
+    bien marcados desde el YAML."""
+    kind = (getattr(dataset, "value_kind", "") or "").strip().lower()
+    if kind == "flow":
+        return True
+    if kind in _NON_FLOW_KINDS:
+        return False
     blob = f"{dataset.id} {dataset.name}".lower()
     return any(k in blob for k in _FLOW_KEYWORDS)
 
@@ -258,6 +314,7 @@ def compute_facts(
             f"SELECT count(*) FROM read_parquet({_quote_str(parquet_path.as_posix())})"
         ).fetchone()[0]
 
+        kind = (getattr(dataset, "value_kind", "") or "").strip().lower()
         base: dict[str, Any] = {
             "dataset_id": dataset.id,
             "unit": dataset.unit,
@@ -266,6 +323,12 @@ def compute_facts(
             "value_cols": roles.value_cols,
             "category_cols": roles.category_cols,
             "is_flow": _is_flow(dataset),
+            "value_kind": kind,
+            # ¿Tiene sentido SUMAR las categorías? Para flujos/stocks sí (flujo o
+            # stock total). Para RETORNOS/TASAS no: sumar la rentabilidad de fondos
+            # distintos (o promediar tasas) no es una métrica real → solo se describe
+            # por categoría, sin total agregado ni composición.
+            "aggregatable": kind not in _NON_AGGREGATABLE_KINDS,
             "last_date": None,
         }
 
@@ -304,7 +367,10 @@ def compute_facts(
             base.update(
                 shape="timeseries_categorical",
                 category_col=cat_col, value_col=val_col,
-                **_categorical_facts(rows, roles.date_col, cat_col, val_col, wins, last_date),
+                **_categorical_facts(
+                    rows, roles.date_col, cat_col, val_col, wins, last_date,
+                    is_flow=base["is_flow"], aggregatable=base["aggregatable"],
+                ),
             )
             return base
 
@@ -314,7 +380,10 @@ def compute_facts(
             _scale_rows(rows, roles.value_cols, scale)
             base.update(
                 shape="timeseries_wide",
-                **_wide_facts(rows, roles.date_col, roles.value_cols, wins, last_date),
+                **_wide_facts(
+                    rows, roles.date_col, roles.value_cols, wins, last_date,
+                    is_flow=base["is_flow"], aggregatable=base["aggregatable"],
+                ),
             )
             return base
 
@@ -324,7 +393,7 @@ def compute_facts(
             rows = _read_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, val_col])
             _scale_rows(rows, roles.value_cols, scale)
             series = sa.clean_series(rows, roles.date_col, val_col)
-            wv = _window_variations(series, wins)
+            wv = _window_variations(series, wins, is_flow=base["is_flow"])
             base.update(
                 shape="timeseries_single", value_col=val_col,
                 windows_variation=wv,
@@ -362,9 +431,13 @@ def _snapshot_composition(rows: list[dict], cat_col: str, val_col: str) -> dict 
 
 def _categorical_facts(
     rows: list[dict], date_col: str, cat_col: str, val_col: str,
-    wins: list[dict], last_date: str,
+    wins: list[dict], last_date: str, *, is_flow: bool = False, aggregatable: bool = True,
 ) -> dict:
-    """Total agregado por ventana + composición a la fecha de corte + top categorías."""
+    """Total agregado por ventana + composición a la fecha de corte + top categorías.
+
+    Si ``aggregatable`` es False (retornos/tasas), NO se calcula el total agregado
+    ni la composición (sumar retornos de fondos distintos no es una métrica real):
+    solo el detalle por categoría."""
     # Total por fecha (suma de todas las categorías) → variación por ventana.
     by_date: dict[str, float] = {}
     for row in rows:
@@ -376,7 +449,11 @@ def _categorical_facts(
         except (TypeError, ValueError):
             continue
     total_series = sorted(by_date.items(), key=lambda kv: kv[0])
-    composition = sa.composition(rows, date_col, cat_col, val_col, fecha=last_date)
+    # La composición a la fecha de corte solo tiene sentido para STOCKS (cartera a
+    # un día). Para FLUJOS sería el desglose de los flujos de UN día suelto: shares
+    # >100% / negativos (el total del día es chico y una categoría puede excederlo)
+    # que confunden la lectura. La dirección/magnitud del flujo va en las ventanas.
+    composition = None if is_flow else sa.composition(rows, date_col, cat_col, val_col, fecha=last_date)
 
     # Serie por categoría AGREGANDO por fecha: si el dataset tiene más de una
     # columna categórica (p.ej. Tipo_instrumento x Tipo_fondo en allocation),
@@ -397,7 +474,13 @@ def _categorical_facts(
         cat: sorted(per_date.items(), key=lambda kv: kv[0]) for cat, per_date in agg.items()
     }
     cut_vals = {cat: s[-1][1] for cat, s in series_by_cat.items() if s}
-    top = sorted(cut_vals, key=lambda c: abs(cut_vals[c]), reverse=True)[:_TOP_CATEGORIES]
+    # Para flujos, el "top" de categorías se rankea por el flujo NETO acumulado de
+    # toda la serie (|suma|), no por el último valor de un día suelto (ruidoso).
+    if is_flow:
+        rank = {cat: abs(sum(v for _, v in s)) for cat, s in series_by_cat.items() if s}
+    else:
+        rank = {cat: abs(cut_vals[cat]) for cat in cut_vals}
+    top = sorted(rank, key=lambda c: rank[c], reverse=True)[:_TOP_CATEGORIES]
 
     by_category = []
     for cat in top:
@@ -406,30 +489,42 @@ def _categorical_facts(
             "categoria": cat,
             "ultimo_valor": round(series[-1][1], 6),
             "ultima_fecha": series[-1][0],
-            "ventanas": _window_variations(series, wins),
+            "ventanas": _window_variations(series, wins, is_flow=is_flow),
             "anomalia": sa.anomaly_check(series),
         })
 
-    total_ventanas = _window_variations(total_series, wins)
+    if not aggregatable:
+        # Retornos/tasas: el total por suma no es real → solo detalle por categoría.
+        return {
+            "total_ventanas": [],
+            "tendencia": None,
+            "contribuciones": [],
+            "composicion_corte": None,
+            "por_categoria": by_category,
+        }
+    total_ventanas = _window_variations(total_series, wins, is_flow=is_flow)
     return {
         "total_ventanas": total_ventanas,
         "tendencia": _trend_signal(total_ventanas),
-        "contribuciones": _contributions(series_by_cat, wins),
+        "contribuciones": _contributions(series_by_cat, wins, is_flow=is_flow),
         "composicion_corte": composition,
         "por_categoria": by_category,
     }
 
 
-def _contributions(series_by_cat: dict[str, list[sa.Point]], wins: list[dict]) -> list[dict]:
+def _contributions(
+    series_by_cat: dict[str, list[sa.Point]], wins: list[dict], *, is_flow: bool = False,
+) -> list[dict]:
     """Qué categorías explican el movimiento del total, por ventana.
 
     Para cada ventana, ordena las categorías por |cambio absoluto| y devuelve las
-    de mayor aporte (los "drivers" del movimiento agregado)."""
+    de mayor aporte (los "drivers" del movimiento agregado). Para flujos el
+    "cambio" es el flujo NETO del período (suma), no último−primero."""
     out = []
     for w in wins:
         cambios = []
         for cat, series in series_by_cat.items():
-            v = sa.variation(_slice(series, w["start"], w["end"]))
+            v = _window_change(_slice(series, w["start"], w["end"]), is_flow=is_flow)
             if v and v["cambio_absoluto"]:
                 cambios.append({
                     "categoria": cat,
@@ -445,24 +540,33 @@ def _contributions(series_by_cat: dict[str, list[sa.Point]], wins: list[dict]) -
 
 def _wide_facts(
     rows: list[dict], date_col: str, value_cols: list[str],
-    wins: list[dict], last_date: str,
+    wins: list[dict], last_date: str, *, is_flow: bool = False, aggregatable: bool = True,
 ) -> dict:
-    """Variación por columna + composición wide a la fecha de corte (top columnas)."""
+    """Variación por columna + composición wide a la fecha de corte (top columnas).
+
+    Si ``aggregatable`` es False (retornos/tasas), se omite la composición (sumar
+    columnas de retorno no es una métrica real); solo el detalle por columna."""
     series_by_col = {c: sa.clean_series(rows, date_col, c) for c in value_cols}
     last_vals = {c: (s[-1][1] if s else 0.0) for c, s in series_by_col.items()}
-    top = sorted(value_cols, key=lambda c: abs(last_vals[c]), reverse=True)[:_TOP_CATEGORIES]
+    if is_flow:
+        rank = {c: abs(sum(v for _, v in s)) for c, s in series_by_col.items()}
+    else:
+        rank = {c: abs(last_vals[c]) for c in value_cols}
+    top = sorted(value_cols, key=lambda c: rank.get(c, 0.0), reverse=True)[:_TOP_CATEGORIES]
     por_columna = [
         {
             "columna": c,
             "ultimo_valor": round(series_by_col[c][-1][1], 6) if series_by_col[c] else None,
             "ultima_fecha": series_by_col[c][-1][0] if series_by_col[c] else None,
-            "ventanas": _window_variations(series_by_col[c], wins),
+            "ventanas": _window_variations(series_by_col[c], wins, is_flow=is_flow),
         }
         for c in top
     ]
     return {
         "por_columna": por_columna,
-        "composicion_corte": sa.composition_wide(rows, date_col, value_cols, fecha=last_date),
+        # Retornos/tasas: no se compone (sumar columnas de retorno no es real).
+        "composicion_corte": None if not aggregatable
+        else sa.composition_wide(rows, date_col, value_cols, fecha=last_date),
     }
 
 
@@ -506,6 +610,11 @@ class PlotData:
     # sobre el área/barras en series temporales, un punto por categoría en barras.
     # Réplica del "Neto"/"Total" de los informes BCCh sobre apilados divergentes.
     overlay: tuple[str, ...] = ()
+    # Nota de FECHAS que cubre el gráfico (qué corte/ventana usa cada serie). Para
+    # gráficos de ventana (Mes/YtD/Δ7d/…) donde el eje X NO es la fecha, hace
+    # explícitas las fechas consideradas. El bloque del informe la muestra debajo
+    # del título. Vacío = el eje X ya es temporal (la fecha se ve en el gráfico).
+    date_note: str = ""
 
     def is_empty(self) -> bool:
         return not self.series or all(len(s.points) < 1 for s in self.series)
@@ -708,6 +817,13 @@ def _variation_line(v: dict) -> str:
     var = v.get("variacion")
     if not var:
         return f"{v['label']} ({v['desde']}→{v['hasta']}): sin observaciones suficientes en la ventana"
+    if var.get("is_flow_sum"):
+        return (
+            f"{v['label']} ({var['fecha_inicio_obs']}→{var['fecha_fin_obs']}): "
+            f"flujo neto del período {_num(var['flujo_periodo'])}"
+            f"{_flow_tag(var['flujo_periodo'])}; "
+            f"rango por obs [{_num(var['minimo'])}, {_num(var['maximo'])}], n={var['n_observaciones']}"
+        )
     return (
         f"{v['label']} ({var['fecha_inicio_obs']}→{var['fecha_fin_obs']}): "
         f"de {_num(var['valor_inicio'])} a {_num(var['valor_fin'])}, "
@@ -741,12 +857,19 @@ def _contribution_lines(contribuciones: list[dict] | None, *, is_flow: bool = Fa
         return []
     out = ["Drivers del movimiento del total:"]
     for c in contribuciones:
-        partes = ", ".join(
-            f"{d['categoria']} (cambio {_num(d['cambio_absoluto'])}, {_pct(d['variacion_pct'])}"
-            + (f", flujo final {_num(d.get('nivel_fin'))}{_flow_tag(d.get('nivel_fin'), d.get('cambio_absoluto'))}" if is_flow else "")
-            + ")"
-            for d in c["drivers"]
-        )
+        if is_flow:
+            # En flujos el "cambio" del driver ES su flujo neto del período (suma);
+            # el signo (ENTRADA/SALIDA) lo da _flow_tag sobre esa suma.
+            partes = ", ".join(
+                f"{d['categoria']} (flujo del período {_num(d['cambio_absoluto'])}"
+                f"{_flow_tag(d['cambio_absoluto'])})"
+                for d in c["drivers"]
+            )
+        else:
+            partes = ", ".join(
+                f"{d['categoria']} (cambio {_num(d['cambio_absoluto'])}, {_pct(d['variacion_pct'])})"
+                for d in c["drivers"]
+            )
         out.append(f"  - {c['label']}: {partes}")
     return out
 
@@ -776,27 +899,38 @@ def facts_to_text(facts: dict) -> str:
 
     if shape == "timeseries_categorical":
         lines.append(f"Categoría: {facts.get('category_col')}; métrica: {facts.get('value_col')}.")
-        lines.append("Total agregado (suma de categorías):")
-        for v in facts.get("total_ventanas", []):
-            lines.append(f"  - {_variation_line(v)}")
+        total_ventanas = facts.get("total_ventanas") or []
+        if not facts.get("aggregatable", True):
+            lines.append(
+                "NOTA — serie de RETORNOS/TASAS: no se reporta total agregado (sumar "
+                "retornos de categorías distintas no es una métrica real); se describe "
+                "cada categoría por separado."
+            )
+        elif total_ventanas:
+            lines.append("Total agregado (suma de categorías):")
+            for v in total_ventanas:
+                lines.append(f"  - {_variation_line(v)}")
         lines += _trend_lines(facts.get("tendencia"))
         lines += _contribution_lines(facts.get("contribuciones"), is_flow=is_flow)
         comp = facts.get("composicion_corte")
         if comp:
             lines += _composition_lines(comp, unit)
-        lines.append("Por categoría (top por nivel):")
+        # En flujos el encabezado NO lleva tag de dirección (sería el de un día
+        # suelto, que puede contradecir el flujo NETO del período): la dirección
+        # autoritativa va en cada línea de ventana (flujo neto).
+        lines.append("Por categoría (top por flujo neto):" if is_flow else "Por categoría (top por nivel):")
         for cat in facts.get("por_categoria", []):
-            tag = _flow_tag(cat["ultimo_valor"]) if is_flow else ""
-            lines.append(f"  · {cat['categoria']}: último {_num(cat['ultimo_valor'])} ({cat['ultima_fecha']}){tag}")
+            head = "último flujo obs" if is_flow else "último"
+            lines.append(f"  · {cat['categoria']}: {head} {_num(cat['ultimo_valor'])} ({cat['ultima_fecha']})")
             for v in cat["ventanas"]:
                 lines.append(f"      {_variation_line(v)}")
         return "\n".join(lines)
 
     if shape == "timeseries_wide":
-        lines.append("Por columna (top por nivel):")
+        lines.append("Por columna (top por flujo neto):" if is_flow else "Por columna (top por nivel):")
         for col in facts.get("por_columna", []):
-            tag = _flow_tag(col["ultimo_valor"]) if is_flow else ""
-            lines.append(f"  · {col['columna']}: último {_num(col['ultimo_valor'])} ({col['ultima_fecha']}){tag}")
+            head = "último flujo obs" if is_flow else "último"
+            lines.append(f"  · {col['columna']}: {head} {_num(col['ultimo_valor'])} ({col['ultima_fecha']})")
             for v in col["ventanas"]:
                 lines.append(f"      {_variation_line(v)}")
         comp = facts.get("composicion_corte")

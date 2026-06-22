@@ -60,6 +60,12 @@ class ReportBlock:
     text_slot: str = ""
     note: str = ""  # nota visible (p.ej. "*Datos hasta el 8/6")
     scale: float = 1.0
+    # ``True`` → el bloque dibuja su GRÁFICO pero NO recibe párrafo de texto. Sirve
+    # para vistas redundantes del mismo concepto (p.ej. dos gráficos de flujos): se
+    # conservan ambos gráficos, pero el comentario se escribe UNA sola vez (en el
+    # otro bloque), evitando prosa duplicada o contradictoria. ``_resolve_text_slots``
+    # no le asigna ``text_slot`` y la síntesis excluye su párrafo.
+    no_text: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,3 +89,8 @@ class FamilyReportSpec:
         for b in self.blocks:
             counts[b.status] = counts.get(b.status, 0) + 1
         return counts
+
+    def no_text_source_ids(self) -> set[str]:
+        """``source_id`` de los bloques ``no_text`` (vistas redundantes): la síntesis
+        excluye su párrafo para no mezclar comentarios solapados del mismo concepto."""
+        return {b.source_id for b in self.blocks if b.no_text and b.source_id}

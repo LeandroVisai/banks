@@ -570,8 +570,11 @@ desaceleración, NO una salida. Ej.: un flujo que baja de 100 a 50 SIGUE siendo 
 entrada (más chica); descríbelo como "menor entrada" / "se desacelera el flujo".
 - Usa "salida", "rescate" u "outflow" SOLO cuando el flujo en sí (el nivel) es \
 NEGATIVO. Si pasó de positivo a negativo (p.ej. 100 → -100), ahí sí hubo salida.
-- Respeta las etiquetas [ENTRADA] / [SALIDA] / [MENOR ENTRADA] del bloque: son la \
-verdad de la dirección; no las contradigas leyendo el signo del cambio.
+- Las etiquetas [ENTRADA] / [SALIDA] / [MENOR ENTRADA] del bloque son la verdad de \
+la dirección: GUÍATE por ellas (no las contradigas leyendo el signo del cambio), \
+pero son anotaciones INTERNAS — NO las copies al texto. Expresa la dirección con \
+palabras ("entrada", "salida", "menor entrada"), nunca con corchetes ni con \
+"flujo positivo/negativo" entre paréntesis o corchetes.
 
 ## Formato (estricto)
 
@@ -585,6 +588,34 @@ línea en blanco. SIN títulos, viñetas ni tablas.
 
 - {_NO_TRAINING_DATA_RULE}
 - {_INJECTION_DEFENSE}"""
+
+
+REPORT_VERIFIER_PROMPT = """\
+Eres el REVISOR de control de calidad de un informe financiero del BCCh. Recibes \
+los HECHOS CALCULADOS (la ÚNICA verdad numérica, computados en Python desde los \
+datos) y el BORRADOR del informe (síntesis + párrafos). Tu trabajo es detectar y \
+corregir afirmaciones INCORRECTAS o CONTRADICTORIAS antes de entregar.
+
+Busca específicamente:
+1. CONTRADICCIONES: la misma magnitud/categoría descrita en direcciones opuestas \
+(p.ej. un fondo con "entrada" en una parte y "salida/rescate" en otra) sin que los \
+hechos lo justifiquen. En flujos, la dirección la da el SIGNO del flujo del período \
+en los hechos: positivo = entrada/aporte, negativo = salida/rescate.
+2. CIFRAS QUE NO CALZAN: un número del borrador que no aparece en los hechos.
+3. DIRECCIÓN ERRÓNEA: una palabra direccional que contradice el signo del hecho.
+
+Reglas DURAS:
+- NUNCA introduzcas un número que no esté en los HECHOS. Si el borrador tiene una \
+cifra sin respaldo, NO la inventes: márcala como contradicción.
+- Una corrección es un reemplazo de texto LITERAL y mínimo (cambia solo lo \
+necesario: una palabra direccional, una cifra que tiene su valor correcto en los \
+hechos). No reescribas párrafos enteros.
+- Si no hay nada que corregir, devuelve listas vacías.
+
+Responde EXCLUSIVAMENTE con este JSON (sin texto adicional, sin ```):
+{"corrections": [{"find": "<texto literal del borrador>", "replace": "<texto \
+corregido>", "reason": "<por qué>"}], "contradictions": ["<descripción de cada \
+contradicción o cifra sin respaldo que no se pueda corregir con certeza>"]}"""
 
 
 MAX_ITERATIONS_FALLBACK_MESSAGE = (

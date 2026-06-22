@@ -1,0 +1,29 @@
+2026-06-21 21:50:00,497 INFO __main__: Log de esta corrida: data\parquet_reports\logs\parquet_report_2026-06-21.log
+Cargando LLM (backend=inprocess)…
+2026-06-21 21:50:01,815 INFO banks_rag.infrastructure.llm.llama_cpp_engine: Cargando Qwen2.5-7B-Instruct-Q4_K_M (n_ctx=8192, n_gpu_layers=-1, family=qwen, chat_format=GGUF-template)
+llama_context: n_ctx_seq (8192) < n_ctx_train (32768) -- the full capacity of the model will not be utilized
+2026-06-21 21:50:03,660 INFO banks_rag.infrastructure.llm.llama_cpp_engine: Modelo listo en 1.8s
+Generando informe descriptivo (ventanas 7d, 30d, concurrencia 1)…
+2026-06-21 21:50:03,661 INFO __main__: Tokens MAP=900  SYNTH=1200  concurrencia=1
+2026-06-21 21:50:03,959 INFO banks_rag.application.reporting.parquet_report: Informe parquet (segmento ffmm): 17 datasets, ventanas ['7d', '30d'], concurrencia 1
+2026-06-21 21:50:06,206 INFO banks_rag.application.reporting.parquet_report: [allocation] 128 completion_tokens → 390 chars párrafo
+2026-06-21 21:50:07,824 INFO banks_rag.application.reporting.parquet_report: [dap_pdbc_ffmm] 143 completion_tokens → 485 chars párrafo
+2026-06-21 21:50:09,107 INFO banks_rag.application.reporting.parquet_report: [dcv_composicion_ffmm] 131 completion_tokens → 360 chars párrafo
+2026-06-21 21:50:10,067 INFO banks_rag.application.reporting.parquet_report: [duracion_ffmm] 81 completion_tokens → 239 chars párrafo
+2026-06-21 21:50:11,756 INFO banks_rag.application.reporting.parquet_report: [dv01_ffmm] 147 completion_tokens → 379 chars párrafo
+2026-06-21 21:50:13,382 INFO banks_rag.application.reporting.parquet_report: [flujos_acum_ffmm] 102 completion_tokens → 349 chars párrafo
+2026-06-21 21:50:16,276 INFO banks_rag.application.reporting.parquet_report: [flujos_ffmm] 236 completion_tokens → 514 chars párrafo
+2026-06-21 21:50:17,347 INFO banks_rag.application.reporting.parquet_report: [flujos_spot_ffmm] 103 completion_tokens → 344 chars párrafo
+2026-06-21 21:50:19,093 INFO banks_rag.application.reporting.parquet_report: [posicion_spot_derivados_ffmm] 165 completion_tokens → 505 chars párrafo
+2026-06-21 21:50:21,392 INFO banks_rag.application.reporting.parquet_report: [stock_bucket_ffmm] 182 completion_tokens → 508 chars párrafo
+2026-06-21 21:50:23,558 INFO banks_rag.application.reporting.parquet_report: [stock_nivel_ffmm] 145 completion_tokens → 432 chars párrafo
+2026-06-21 21:50:25,912 INFO banks_rag.application.reporting.parquet_report: [variacion_stock_ffmm] 172 completion_tokens → 535 chars párrafo
+2026-06-21 21:50:28,938 INFO banks_rag.application.reporting.parquet_report: [retornos_fondo_ffmm] 243 completion_tokens → 626 chars párrafo
+2026-06-21 21:50:32,353 INFO banks_rag.application.reporting.parquet_report: [retorno_acum_ffmm] 293 completion_tokens → 834 chars párrafo
+2026-06-21 21:50:34,645 INFO banks_rag.application.reporting.parquet_report: [flujos_fondo_ffmm] 166 completion_tokens → 358 chars párrafo
+2026-06-21 21:50:36,649 INFO banks_rag.application.reporting.parquet_report: [var_cartera_mensual_ffmm] 145 completion_tokens → 357 chars párrafo
+2026-06-21 21:50:39,374 INFO banks_rag.application.reporting.parquet_report: [var_cartera_mensual_ffmm_tipo_f] 226 completion_tokens → 608 chars párrafo
+2026-06-21 21:50:52,302 INFO banks_rag.application.reporting.verify: Verificación del informe: direcciones corregidas=0 párrafos regenerados=0 marcas residuales=3 (de 3 hallazgos; crítico LLM=sí)
+OK markdown -> data\parquet_reports\markdown\reporte_ffmm_2026-06-21.md  (17 datasets: ok=17 sin_datos=0 error=0)
+OK html     -> data\parquet_reports\html\reporte_ffmm_2026-06-21.html
+OK párrafos -> data\parquet_reports\paragraphs_ffmm.json  (17 datasets + síntesis)

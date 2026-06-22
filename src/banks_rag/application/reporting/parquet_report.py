@@ -30,6 +30,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from banks_rag.application.agent.prompts import NO_THINK_DIRECTIVE, PARQUET_REPORTER_PROMPT
 from banks_rag.application.reporting.parquet_facts import compute_facts, facts_to_text
@@ -287,6 +288,11 @@ class DatasetSection:
     paragraph: str
     status: str  # "ok" | "no_data" | "error"
     total_tokens: int = 0
+    # Hechos calculados (compute_facts) que vio el LLM: el verificador los usa como
+    # fuente de verdad para contrastar la prosa. Se conservan, no se descartan.
+    facts: dict | None = None
+    # Texto tal como lo generó el LLM, ANTES del verificador (para diff antes/después).
+    raw_paragraph: str = ""
 
 
 def _build_user_prompt(dataset: ParquetDataset, facts: dict, *, think: bool = True) -> str:
@@ -315,14 +321,31 @@ def _build_user_prompt(dataset: ParquetDataset, facts: dict, *, think: bool = Tr
     return text
 
 
+# Etiquetas INTERNAS de los facts (scaffolding para el LLM): no deben aparecer en
+# el informe. El modelo chico tiende a copiarlas literal ("[ENTRADA: flujo
+# positivo]") pese al prompt; se eliminan de forma determinista.
+_FACT_TAG_RE = re.compile(
+    r"[ \t]*\[\s*(?:ENTRADA|SALIDA|MENOR\s+ENTRADA)\b[^\]]*\]", re.IGNORECASE
+)
+
+
+def _strip_fact_tags(text: str) -> str:
+    """Quita las etiquetas internas ``[ENTRADA…]``/``[SALIDA…]``/``[MENOR ENTRADA…]``
+    que el redactor pudo copiar de los datos al texto final. Colapsa solo espacios/
+    tabs (NO newlines: conserva la separación en párrafos)."""
+    out = _FACT_TAG_RE.sub("", text or "")
+    return re.sub(r"[ \t]{2,}", " ", out)
+
+
 def _clean_paragraph(text: str) -> str:
     """Limpia la salida del LLM CONSERVANDO la separación en párrafos.
 
     El redactor produce dos párrafos (mensual / semanal) separados por una línea
     en blanco. Se quitan encabezados/viñetas que el modelo haya metido pese al
-    formato pedido, se colapsan los saltos de línea DENTRO de cada párrafo, y se
-    devuelven los párrafos unidos por ``\\n\\n`` (separador estable que el
-    ensamblado a markdown/HTML interpreta como párrafos distintos)."""
+    formato pedido, las etiquetas internas de los facts, se colapsan los saltos de
+    línea DENTRO de cada párrafo, y se devuelven los párrafos unidos por ``\\n\\n``
+    (separador estable que el ensamblado a markdown/HTML interpreta como párrafos
+    distintos)."""
     blocks: list[str] = []
     current: list[str] = []
     for raw in (text or "").splitlines():
@@ -337,7 +360,7 @@ def _clean_paragraph(text: str) -> str:
         current.append(s)
     if current:
         blocks.append(" ".join(current))
-    return "\n\n".join(b for b in blocks if b)
+    return _strip_fact_tags("\n\n".join(b for b in blocks if b))
 
 
 async def _describe_dataset(
@@ -374,6 +397,7 @@ async def _describe_dataset(
         section.paragraph = _NO_DATA_PARAGRAPH
         return section
 
+    section.facts = facts  # fuente de verdad para el verificador
     section.last_date = facts.get("last_date")
 
     try:
@@ -432,14 +456,22 @@ async def _synthesize_overview(
     llm,
     selector_desc: str,
     max_tokens: int = 2048,
+    redundant_ids: set[str] | None = None,
 ) -> str:
-    ok = [s for s in sections if s.status == "ok"]
+    # Excluye de la síntesis las vistas redundantes (bloques no_text del spec):
+    # sus gráficos se mantienen, pero su párrafo NO entra al reduce, así la síntesis
+    # no mezcla dos comentarios del mismo concepto con direcciones distintas.
+    redundant_ids = redundant_ids or set()
+    ok = [s for s in sections if s.status == "ok" and s.dataset_id not in redundant_ids]
     if not ok:
         return _EMPTY_OVERVIEW
     parts = [f"Informe descriptivo — {selector_desc}.", "", "Párrafos por dataset:"]
     for s in ok:
         parts.append(f"\n[{s.dataset_id}] {s.name}\n{s.paragraph}")
-    skipped = len(sections) - len(ok)
+    # "Sin datos" cuenta SOLO los datasets sin estado ok (no_data/error), NO los
+    # excluidos por redundantes (esos tienen gráfico y párrafo propio, solo no van
+    # a la síntesis).
+    skipped = sum(1 for s in sections if s.status != "ok")
     if skipped:
         parts.append(f"\n(Nota: {skipped} dataset(s) de la selección quedaron sin datos.)")
     parts.append(
@@ -457,7 +489,66 @@ async def _synthesize_overview(
         top_p=_SYNTH_TOP_P,
         max_tokens=max_tokens,
     )
-    return (result.text or "").strip() or _EMPTY_OVERVIEW
+    return _strip_fact_tags((result.text or "").strip()) or _EMPTY_OVERVIEW
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Verificación: regeneración de párrafo + utilidades
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _regenerate_paragraph(
+    section: DatasetSection, issues: list, *, llm, map_max_tokens: int, think: bool = False,
+) -> str:
+    """Reescribe el párrafo de una sección con una NOTA de las fallas detectadas por
+    el verificador (cifras sin sustento / contradicción). Reusa los mismos facts y el
+    prompt del redactor; SOLO redacta sobre los datos calculados."""
+    note = "; ".join(getattr(i, "detail", str(i)) for i in issues[:4])
+    head = [
+        f"Dataset: {section.name} (`{section.dataset_id}`)",
+        f"Unidad: {section.unit}" if section.unit else "",
+        f"Segmento: {section.segment}" if section.segment else "",
+        "",
+        "DATOS YA CALCULADOS (úsalos tal cual, no recalcules):",
+        facts_to_text(section.facts or {}),
+        "",
+        "Tu borrador anterior tenía problemas que detectó el control de calidad: "
+        f"{note}. Reescribe los DOS párrafos corrigiéndolos, usando EXCLUSIVAMENTE "
+        "las cifras y direcciones de los datos de arriba; no inventes números.",
+    ]
+    text = "\n".join(line for line in head if line != "")
+    if not think:
+        text = f"{NO_THINK_DIRECTIVE}\n\n{text}"
+    result = await llm.generate(
+        [
+            {"role": "system", "content": PARQUET_REPORTER_PROMPT},
+            {"role": "user", "content": text},
+        ],
+        tools=None, temperature=_MAP_TEMPERATURE, top_p=_MAP_TOP_P, max_tokens=map_max_tokens,
+    )
+    return _clean_paragraph(result.text or "")
+
+
+def _redundant_dataset_ids(selected_ids: set[str]) -> set[str]:
+    """``source_id`` de bloques ``no_text`` (vistas redundantes) presentes en la
+    selección, leídos de los specs curados. La síntesis los excluye."""
+    from banks_rag.application.reporting.specs import available_families, get_spec
+
+    out: set[str] = set()
+    for fam in available_families():
+        spec = get_spec(fam)
+        if spec is not None:
+            out |= {sid for sid in spec.no_text_source_ids() if sid in selected_ids}
+    return out
+
+
+def _facts_digest(sections: Sequence[DatasetSection]) -> str:
+    """Digest compacto de los facts (texto) de las secciones ok, para el crítico LLM."""
+    parts = []
+    for s in sections:
+        if s.status == "ok" and s.facts:
+            parts.append(f"[{s.dataset_id}] {s.name}\n{facts_to_text(s.facts)}")
+    return "\n\n".join(parts)[:8000]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -477,6 +568,11 @@ class ParquetReport:
     overview_md: str
     sections: list[DatasetSection] = field(default_factory=list)
     missing_ids: tuple[str, ...] = ()
+    # Resultado del verificador post-síntesis (None si no se corrió). Lleva los
+    # hallazgos, las autocorrecciones y las marcas residuales.
+    verification: Any = None
+    # Síntesis tal como la generó el LLM, ANTES del verificador (diff antes/después).
+    raw_overview_md: str = ""
 
     def status_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -484,8 +580,23 @@ class ParquetReport:
             counts[s.status] = counts.get(s.status, 0) + 1
         return counts
 
+    def _residual_flags(self, where: str) -> list[str]:
+        """Marcas de verificación NO resueltas para ``where`` (dataset o síntesis)."""
+        vr = self.verification
+        if vr is None:
+            return []
+        try:
+            return [i.detail for i in vr.residual_for(where)]
+        except Exception:  # verification con shape inesperado: no romper el render
+            return []
+
     def to_markdown(self) -> str:
         lines = [f"# {self.title}", "", "## Síntesis", "", self.overview_md.strip(), ""]
+        from banks_rag.application.reporting.verify import SYNTHESIS_KEY
+        for flag in self._residual_flags(SYNTHESIS_KEY):
+            lines.append(f"> ⚠ Verificación: {flag}")
+        if self._residual_flags(SYNTHESIS_KEY):
+            lines.append("")
         for i, s in enumerate(self.sections, 1):
             meta = [f"Dataset `{s.dataset_id}`"]
             if s.unit:
@@ -499,6 +610,9 @@ class ParquetReport:
             lines.append(f"*{' · '.join(meta)}*")
             lines.append("")
             lines.append(s.paragraph)
+            for flag in self._residual_flags(s.dataset_id):
+                lines.append("")
+                lines.append(f"> ⚠ Verificación: {flag}")
             lines.append("")
         counts = self.status_counts()
         lines.append("## Referencias y metodología")
@@ -514,6 +628,8 @@ class ParquetReport:
             f"- Ventanas de análisis: {', '.join(self.windows)} "
             "(ancladas a la última fecha disponible de cada dataset)"
         )
+        if self.verification is not None:
+            lines.append(f"- Verificación de afirmaciones: {self.verification.summary()}")
         lines.append(f"- Generado: {self.generated_at}")
         lines.append("- Fuente: sql_catalog/parquet_catalog.yaml")
         lines.append("")
@@ -532,14 +648,18 @@ async def generate_parquet_report(
     map_max_tokens: int = 32768,
     synthesis_max_tokens: int = 8192,
     think: bool = False,
+    verify: bool = True,
     catalog_path: Path | str | None = None,
     entries: list[ParquetDataset] | None = None,
     parquet_dir: Path | None = None,
 ) -> ParquetReport:
-    """Genera el informe descriptivo completo (map-reduce SIN tools).
+    """Genera el informe descriptivo completo (map-reduce SIN tools + verificación).
 
     ``entries``/``catalog_path``/``parquet_dir`` son inyectables para tests; por
     defecto se carga ``sql_catalog/parquet_catalog.yaml`` y su ``parquet_dir``.
+    ``verify`` corre el verificador post-síntesis (determinista + crítico LLM):
+    autocorrige direcciones, regenera párrafos con cifras sin sustento y marca lo
+    residual. Best-effort: nunca tumba la generación.
     """
     window_specs = _window_specs(windows)  # valida temprano, antes de cargar nada
 
@@ -570,12 +690,13 @@ async def generate_parquet_report(
     )
     sections = list(await asyncio.gather(*(_bounded(ds) for ds in selection.datasets)))
 
+    redundant_ids = _redundant_dataset_ids({d.id for d in selection.datasets})
     overview = await _synthesize_overview(
         sections, llm=llm, selector_desc=selection.selector_desc,
-        max_tokens=synthesis_max_tokens,
+        max_tokens=synthesis_max_tokens, redundant_ids=redundant_ids,
     )
 
-    return ParquetReport(
+    report = ParquetReport(
         title=f"Informe descriptivo — {selection.selector_desc}",
         selector_label=selection.selector_label,
         selector_desc=selection.selector_desc,
@@ -585,3 +706,23 @@ async def generate_parquet_report(
         sections=sections,
         missing_ids=selection.missing_ids,
     )
+
+    if verify:
+        from banks_rag.application.reporting.verify import verify_report
+
+        # Snapshot del texto ANTES de verificar (para comparar antes/después).
+        report.raw_overview_md = report.overview_md
+        for s in report.sections:
+            s.raw_paragraph = s.paragraph
+
+        async def _regen(section: DatasetSection, issues: list) -> str:
+            return await _regenerate_paragraph(
+                section, issues, llm=llm, map_max_tokens=map_max_tokens, think=think,
+            )
+
+        report.verification = await verify_report(
+            report, llm=llm, regenerate=_regen, facts_digest=_facts_digest(sections),
+            redundant_ids=redundant_ids,
+        )
+
+    return report

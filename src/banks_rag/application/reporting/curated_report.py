@@ -50,6 +50,7 @@ def _scale_plot(plot: PlotData, factor: float) -> PlotData:
             for s in plot.series
         ],
         overlay=plot.overlay,
+        date_note=plot.date_note,
     )
 
 # Familias objetivo que NO se pueden aproximar como serie (tabla): placeholder.
@@ -65,6 +66,7 @@ class CuratedBlock:
     body_html: str         # SVG inline o inner del placeholder
     reason: str = ""       # por qué placeholder (para la tarjeta)
     preliminary: bool = False  # gráfico dibujado como línea, tipo final pendiente
+    date_note: str = ""    # fechas/ventanas que cubre el gráfico (eje X no temporal)
 
 
 @dataclass
@@ -154,7 +156,7 @@ def _process_block(
     # Preliminar solo si la forma del dato NO permite el tipo objetivo (cae a
     # línea/composición). Con su transform propia, el bloque sale en su tipo final.
     preliminary = not renders_natively(plot.kind, block.chart)
-    return CuratedBlock(block, "chart", svg, preliminary=preliminary)
+    return CuratedBlock(block, "chart", svg, preliminary=preliminary, date_note=plot.date_note)
 
 
 def _resolve_text_slots(spec: FamilyReportSpec) -> list[ReportBlock]:
@@ -168,7 +170,12 @@ def _resolve_text_slots(spec: FamilyReportSpec) -> list[ReportBlock]:
     resolved: list[ReportBlock] = []
     for b in spec.blocks:
         slot = b.text_slot
-        if not slot and b.source_id and b.source_id not in seen and b.status != STATUS_SKIP:
+        # Un bloque ``no_text`` dibuja su gráfico pero NO recibe párrafo: vista
+        # redundante de un concepto cuyo comentario ya va en otro bloque.
+        if (
+            not slot and not b.no_text and b.source_id
+            and b.source_id not in seen and b.status != STATUS_SKIP
+        ):
             slot = f"{spec.family}:{b.source_id}"
         if b.source_id:
             seen.add(b.source_id)
@@ -226,6 +233,7 @@ _SHELL = """<!DOCTYPE html>
   .block-title { color:var(--blue); font-size:16px; font-weight:700; margin:12px 0 2px; }
   .block-unit { color:var(--muted); font-size:12px; margin:0 0 6px; }
   .block-note { color:var(--muted); font-size:11px; font-style:italic; margin:0 0 6px; }
+  .block-dates { color:var(--blue); font-size:11px; font-weight:600; background:#eef3f9; border:1px solid #d8dee8; border-radius:4px; padding:2px 8px; margin:0 0 6px; display:inline-block; }
   .prelim-note { color:#9a4b00; font-size:11px; margin:0 0 2px; }
   .section-text { min-height:18px; margin:4px 0 10px; color:var(--text); font-size:14px; }
   .section-text:empty::before { content:"—"; color:#cfcfcf; }
@@ -414,6 +422,10 @@ def _block_html(cb: CuratedBlock) -> str:
         parts.append(f'<div class="block-unit">({_esc(b.unit)})</div>')
     if b.note:
         parts.append(f'<div class="block-note">{_esc(b.note)}</div>')
+    # Fechas/ventanas que cubre el gráfico (para gráficos de ventana donde el eje X
+    # no es la fecha: Mes/YtD/Δ7d/corte). Hace explícito qué datos toma cada serie.
+    if cb.date_note:
+        parts.append(f'<div class="block-dates">📅 {_esc(cb.date_note)}</div>')
     if b.text_slot:
         parts.append(f'<div class="section-text" data-text-slot="{_attr(b.text_slot)}"></div>')
     if cb.render_kind == "chart":

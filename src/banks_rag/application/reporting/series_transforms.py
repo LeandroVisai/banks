@@ -128,12 +128,31 @@ def monthly_var_alloc(dataset: ParquetDataset, parquet_dir: Path, params: dict) 
         mes[inst] = last_v - prev_v
         ytd[inst] = last_v - base
     insts = sorted(ytd, key=lambda k: abs(ytd[k]), reverse=True)[:_MAX_PLOT_SERIES + 2]
-    return _grouped(dataset.id, dataset.unit, {"Mes": mes, "YtD": ytd}, insts, ["Mes", "YtD"])
+    # Fechas explícitas: Mes = mes previo → último; YtD = inicio de año → último.
+    all_dates = sorted({iso for s in by_inst.values() for iso, _ in s})
+    note = ""
+    if all_dates:
+        last = all_dates[-1]
+        prev = all_dates[-2] if len(all_dates) >= 2 else last
+        ystart = next((d for d in all_dates if d[:4] == last[:4]), all_dates[0])
+        note = (f"Mes: {_fmt_date(prev)} → {_fmt_date(last)}  ·  "
+                f"YtD: {_fmt_date(ystart)} → {_fmt_date(last)}")
+    return _grouped(dataset.id, dataset.unit, {"Mes": mes, "YtD": ytd}, insts, ["Mes", "YtD"],
+                    date_note=note)
 
 
 # ── Transforms que producen datos "grouped" (barras agrupadas/apiladas) ───────
 
 _MONTHS_ES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+def _fmt_date(iso: str) -> str:
+    """``YYYY-MM-DD`` → ``DD-mmm-YYYY`` (legible: 10-jun-2026)."""
+    try:
+        d = date.fromisoformat(iso[:10])
+    except ValueError:
+        return iso[:10]
+    return f"{d.day:02d}-{_MONTHS_ES[d.month - 1]}-{d.year}"
 
 
 def _month_key(iso: str) -> str:
@@ -147,16 +166,18 @@ def _month_label(month_key: str) -> str:
 def _grouped(
     dataset_id: str, unit: str,
     series_dict: dict[str, dict[str, float]], cat_order: list[str], series_order: list[str],
-    *, overlay: tuple[str, ...] = (),
+    *, overlay: tuple[str, ...] = (), date_note: str = "",
 ) -> PlotData | None:
     """``{serie: {categoria: valor}}`` → PlotData ``kind='grouped'`` (eje X =
     categorías, una serie por color). ``overlay`` marca series que se dibujan
-    superpuestas (punto "Neto"/"Total" por categoría) en vez de barra."""
+    superpuestas (punto "Neto"/"Total" por categoría) en vez de barra. ``date_note``
+    hace explícitas las fechas/ventanas que cubre el gráfico (eje X no temporal)."""
     series = [
         PlotSeries(label=sl, points=[(c, series_dict[sl].get(c, 0.0)) for c in cat_order])
         for sl in series_order
     ]
-    plot = PlotData(dataset_id, "grouped_bar", "grouped", unit, series, overlay=overlay)
+    plot = PlotData(dataset_id, "grouped_bar", "grouped", unit, series, overlay=overlay,
+                    date_note=date_note)
     return None if not cat_order or plot.is_empty() else plot
 
 
@@ -205,12 +226,15 @@ def window_returns(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> 
     last = max(p[0] for s in by_fund.values() for p in s)
     series_dict: dict[str, dict[str, float]] = {}
     labels: list[str] = []
+    note_parts: list[str] = []
     for win in windows:
         label, days = _win_meta(win)
         labels.append(label)
         start = f"{last[:4]}-01-01" if days is None else (date.fromisoformat(last[:10]) - timedelta(days=days)).isoformat()
         series_dict[label] = {f: _index_change(by_fund.get(f, []), start) for f in funds}
-    return _grouped(dataset.id, "%", series_dict, funds, labels)
+        note_parts.append(f"{label}: {_fmt_date(start)} → {_fmt_date(last)}")
+    return _grouped(dataset.id, "%", series_dict, funds, labels,
+                    date_note="  ·  ".join(note_parts))
 
 
 def _month_end_values(points: list[tuple[str, float]]) -> dict[str, float]:
@@ -245,7 +269,9 @@ def monthly_sum_by_fund(dataset: ParquetDataset, parquet_dir: Path, params: dict
     if not by_fund:
         return None
     series_dict, labels = _monthly_sum(by_fund, funds, params.get("months", 6))
-    return _grouped(dataset.id, dataset.unit, series_dict, labels, funds)
+    last = max((iso for s in by_fund.values() for iso, _ in s), default="")
+    note = f"Suma por mes · datos hasta {_fmt_date(last)}" if last else ""
+    return _grouped(dataset.id, dataset.unit, series_dict, labels, funds, date_note=note)
 
 
 def monthly_returns(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -271,7 +297,9 @@ def monthly_returns(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
             cur, base = me[f].get(k), (me[f].get(prev) if prev else None)
             col[_month_label(k)] = cur - base if cur is not None and base is not None else 0.0
         sd[f] = col
-    return _grouped(dataset.id, "%", sd, [_month_label(k) for k in keys], funds)
+    last = max((iso for s in by_fund.values() for iso, _ in s), default="")
+    note = f"Retorno por mes · datos hasta {_fmt_date(last)}" if last else ""
+    return _grouped(dataset.id, "%", sd, [_month_label(k) for k in keys], funds, date_note=note)
 
 
 _BUCKET_ORDER = ("Menor a 1Y", "Entre 1 y 2Y", "Entre 2 y 5Y", "Entre 5 y 10Y", "Mayor a 10Y")
@@ -327,7 +355,7 @@ def _top_tipos(sd: dict[str, dict[str, float]]) -> list[str]:
 def composition_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Composición DCV por plazo a la fecha de corte → barras apiladas
     (X = plazo, una serie por instrumento)."""
-    bt, _last = _bucket_tipo_series(dataset, parquet_dir)
+    bt, last = _bucket_tipo_series(dataset, parquet_dir)
     if not bt:
         return None
     buckets = _order_buckets(bt)
@@ -337,7 +365,9 @@ def composition_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: di
             if s:
                 sd.setdefault(t, {})[b] = s[-1][1]
     tipos = _top_tipos(sd)
-    return _grouped(dataset.id, dataset.unit, {t: sd[t] for t in tipos}, buckets, tipos)
+    note = f"Corte: {_fmt_date(last)}" if last else ""
+    return _grouped(dataset.id, dataset.unit, {t: sd[t] for t in tipos}, buckets, tipos,
+                    date_note=note)
 
 
 def stacked_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -365,7 +395,9 @@ def stacked_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) 
         out["Neto"] = {b: sum(sd[t].get(b, 0.0) for t in tipos) for b in buckets}
         series_order.append("Neto")
         overlay = ("Neto",)
-    return _grouped(dataset.id, dataset.unit, out, buckets, series_order, overlay=overlay)
+    note = f"Variación {_fmt_date(start)} → {_fmt_date(last)}"
+    return _grouped(dataset.id, dataset.unit, out, buckets, series_order, overlay=overlay,
+                    date_note=note)
 
 
 def monthly_diff(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -388,7 +420,10 @@ def monthly_diff(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Pl
         by_month[_month_key(iso)] = by_month.get(_month_key(iso), 0.0) + v
     keys = sorted(by_month)[-params.get("months", 12):]
     sd = {"Flujo mensual": {_month_label(k): by_month[k] for k in keys}}
-    return _grouped(dataset.id, dataset.unit, sd, [_month_label(k) for k in keys], ["Flujo mensual"])
+    last = series[-1][0] if series else ""
+    note = f"Suma por mes · datos hasta {_fmt_date(last)}" if last else ""
+    return _grouped(dataset.id, dataset.unit, sd, [_month_label(k) for k in keys], ["Flujo mensual"],
+                    date_note=note)
 
 
 def _window_start(last_iso: str, window: str | None) -> str | None:
@@ -477,7 +512,16 @@ def accumulated_series(dataset: ParquetDataset, parquet_dir: Path, params: dict)
             if not pts:
                 continue
             series.append(PlotSeries(label=k, points=_downsample(_accumulate(pts, mode))))
-        plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit, series)
+        last = max((p[0] for s in by_cat.values() for p in s), default="")
+        note = ""
+        if mode == "cumsum" and start:
+            note = f"Acumulado (suma corrida) desde {_fmt_date(start)}"
+        elif mode == "cumsum" and last:
+            note = f"Acumulado (suma corrida) hasta {_fmt_date(last)}"
+        elif start:
+            note = f"Variación acumulada desde {_fmt_date(start)} → {_fmt_date(last)}"
+        plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries",
+                        dataset.unit, series, date_note=note)
         return None if plot.is_empty() else plot
     finally:
         con.close()
@@ -519,12 +563,14 @@ def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
     by_cat = _aggregate_by_category(rows, roles.date_col, cat, val)
     # Ventana + acumulado (cumsum/rebase) ANTES del downsample, como accumulated_series.
     mode, window = params.get("accumulate"), params.get("window")
+    acc_start = None
     if mode or window:
         start = None
         if window:
             all_pts = [p for s in by_cat.values() for p in s]
             if all_pts:
                 start = _window_start(max(p[0] for p in all_pts), window)
+        acc_start = start
         for c, pts in list(by_cat.items()):
             if start:
                 pts = [p for p in pts if p[0] >= start]
@@ -545,7 +591,13 @@ def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
         if net_pts:
             series.append(PlotSeries(label="Neto", points=_downsample(net_pts)))
             overlay = ("Neto",)
-    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit, series, overlay=overlay)
+    note = ""
+    if mode == "cumsum" and acc_start:
+        note = f"Acumulado (suma corrida) desde {_fmt_date(acc_start)}"
+    elif acc_start:
+        note = f"Acumulado desde {_fmt_date(acc_start)}"
+    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit,
+                    series, overlay=overlay, date_note=note)
     return None if plot.is_empty() else plot
 
 
@@ -662,7 +714,8 @@ def window_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> 
         series_order.append("Neto")
         if params.get("net_as_overlay"):
             overlay = ("Neto",)
-    return _grouped(dataset.id, dataset.unit, sd, cats, series_order, overlay=overlay)
+    return _grouped(dataset.id, dataset.unit, sd, cats, series_order, overlay=overlay,
+                    date_note=f"Suma {_fmt_date(start)} → {_fmt_date(last)}")
 
 
 def _daymon(iso: str) -> str:
@@ -724,7 +777,10 @@ def wide_window_bars(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
     if overlay_cols:
         series_order.append(overlay_cols[0])
         overlay = (overlay_cols[0],)
-    return _grouped(dataset.id, dataset.unit, sd, labels, series_order, overlay=overlay)
+    kind_txt = "Variación diaria" if do_diff else "Por día"
+    note = f"{kind_txt} · {_fmt_date(sel[0])} → {_fmt_date(sel[-1])}"
+    return _grouped(dataset.id, dataset.unit, sd, labels, series_order, overlay=overlay,
+                    date_note=note)
 
 
 def window_stacked_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -766,7 +822,9 @@ def window_stacked_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: di
         sd["Neto"] = {labels[i]: sum(by_cat[c].get(sel[i], 0.0) for c in cats) for i in range(len(sel))}
         series_order.append("Neto")
         overlay = ("Neto",)
-    return _grouped(dataset.id, dataset.unit, sd, labels, series_order, overlay=overlay)
+    note = f"Por día · {_fmt_date(sel[0])} → {_fmt_date(sel[-1])}"
+    return _grouped(dataset.id, dataset.unit, sd, labels, series_order, overlay=overlay,
+                    date_note=note)
 
 
 def window_grouped_long(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -823,7 +881,9 @@ def window_grouped_long(dataset: ParquetDataset, parquet_dir: Path, params: dict
         cats = cats[: int(params["top_n"])]
     sd = {pos: {g: agg[g][pos] for g in cats}, neg: {g: agg[g][neg] for g in cats},
           "Neto": {g: net[g] for g in cats}}
-    return _grouped(dataset.id, dataset.unit, sd, cats, [pos, neg, "Neto"], overlay=("Neto",))
+    note = f"Suma {_fmt_date(start)} → {_fmt_date(max(isos))}"
+    return _grouped(dataset.id, dataset.unit, sd, cats, [pos, neg, "Neto"], overlay=("Neto",),
+                    date_note=note)
 
 
 def wide_monthly_bars(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -868,7 +928,10 @@ def wide_monthly_bars(dataset: ParquetDataset, parquet_dir: Path, params: dict) 
     if overlay_cols:
         series_order.append(overlay_cols[0])
         overlay = (overlay_cols[0],)
-    return _grouped(dataset.id, dataset.unit, sd, labels, series_order, overlay=overlay)
+    last_iso = max((iso for c in wanted for iso, _ in sa.clean_series(rows, roles.date_col, c)), default="")
+    note = f"Suma por mes · datos hasta {_fmt_date(last_iso)}" if last_iso else ""
+    return _grouped(dataset.id, dataset.unit, sd, labels, series_order, overlay=overlay,
+                    date_note=note)
 
 
 def snapshot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -1003,6 +1066,7 @@ def latest_snapshot(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
     return PlotData(
         dataset.id, chart_family(dataset.chart_type), "snapshot", dataset.unit,
         [PlotSeries(label=cat, points=[(k, round(v, 6)) for k, v in ordered])],
+        date_note=f"Corte: {_fmt_date(last)}",
     )
 
 
