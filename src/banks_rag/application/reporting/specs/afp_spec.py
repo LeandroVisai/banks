@@ -73,7 +73,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         note="*composición al último día con datos",
     ),
     ReportBlock(
-        section=_S_RF, title="Variación DCV (Δ T-5 / Δ T-20 por instrumento y plazo)",
+        section=_S_RF, title="Variación DCV (Δ T-7 / Δ T-30 por instrumento y plazo)",
         unit="US$ Mill.", chart="heatmap_table", status=STATUS_MVP,
         source_id="variacion_stock_afp", transform="dcv_heatmap",
     ),

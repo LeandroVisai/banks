@@ -88,7 +88,7 @@ class TestFfmmSpec:
 
     def test_has_all_sections_in_order(self):
         secs = FFMM_SPEC.sections()
-        assert secs[0] == "Flujos y Retornos"
+        assert secs[0] == "Flujos"
         assert "Portafolio DCV" in secs
         assert secs[-1] == "Mercado cambiario"
         assert "Carteras DCV" not in secs  # sección eliminada (su único gráfico era duplicado)
@@ -234,7 +234,7 @@ class TestTransforms:
         result = dcv_cut_dates(ds, tmp_path, {})
         assert isinstance(result, HtmlTable)
         assert "BB" in result.html and "BTP" in result.html
-        assert "T-5" in result.html and "T-20" in result.html
+        assert "T-7" in result.html and "T-30" in result.html
 
     def test_dcv_heatmap_returns_html_table(self, tmp_path):
         p = tmp_path / "var.parquet"
@@ -249,7 +249,7 @@ class TestTransforms:
         assert isinstance(result, HtmlTable)
         assert "BB" in result.html and "DAP" in result.html
         assert "Menor a 1Y" in result.html
-        assert "T-5" in result.html
+        assert "T-7" in result.html
 
     def test_dcv_transforms_return_none_for_wrong_structure(self, tmp_path):
         # parquet de una sola categórica (duracion) no tiene la estructura DCV

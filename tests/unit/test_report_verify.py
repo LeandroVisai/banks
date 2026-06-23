@@ -177,15 +177,22 @@ def test_parse_number_locales(tok, expected):
 def test_no_text_block_has_no_slot():
     from banks_rag.application.reporting.curated_report import _resolve_text_slots
 
-    resolved = {b.source_id: b for b in _resolve_text_slots(FFMM_SPEC)}
-    assert resolved["flujos_ffmm"].text_slot == "ffmm:flujos_ffmm"   # comenta
-    assert resolved["flujos_acum_ffmm"].text_slot == ""              # no_text → sin slot
-    # ...pero ambos bloques siguen presentes (gráficos se dibujan).
-    assert resolved["flujos_acum_ffmm"].no_text is True
+    # Los DOS bloques de flujos comparten source_id (flujos_acum_ffmm): el primero
+    # (diferencial t-7/t-30) comenta una vez; el segundo (acumulado) es no_text.
+    flujos = [b for b in _resolve_text_slots(FFMM_SPEC) if b.source_id == "flujos_acum_ffmm"]
+    assert len(flujos) == 2
+    commenting = [b for b in flujos if not b.no_text]
+    redundant = [b for b in flujos if b.no_text]
+    assert len(commenting) == 1 and len(redundant) == 1
+    assert commenting[0].text_slot == "ffmm:flujos_acum_ffmm"   # comenta una vez
+    assert redundant[0].text_slot == ""                          # no_text → sin slot
 
 
 def test_spec_no_text_source_ids():
-    assert "flujos_acum_ffmm" in FFMM_SPEC.no_text_source_ids()
+    # flujos_acum_ffmm también alimenta el bloque comentado (diferencial t-7/t-30),
+    # así que NO es redundante: su párrafo debe entrar a la síntesis.
+    assert "flujos_acum_ffmm" not in FFMM_SPEC.no_text_source_ids()
+    assert FFMM_SPEC.no_text_source_ids() == set()
 
 
 # ── Integración: verify_report sobre un informe ──────────────────────────────

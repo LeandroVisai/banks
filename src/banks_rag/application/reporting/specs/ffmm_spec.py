@@ -18,7 +18,7 @@ from banks_rag.application.reporting.report_spec import (
     ReportBlock,
 )
 
-_S_FLUJOS = "Flujos y Retornos"
+_S_FLUJOS = "Flujos"
 _S_PORTAFOLIO = "Portafolio DCV"
 _S_RENT = "Rentabilidad"
 _S_ALLOC = "Allocation Carteras mensuales"
@@ -27,21 +27,24 @@ _S_VARALLOC = "Variación en allocation carteras mensuales"
 _S_FX = "Mercado cambiario"
 
 _BLOCKS: tuple[ReportBlock, ...] = (
-    # ── Flujos y Retornos (imagen 1) ─────────────────────────────────────────
+    # ── Flujos (imagen 1) ────────────────────────────────────────────────────
     ReportBlock(
         section=_S_FLUJOS, title="Variación Patrimonio efectivo por tipo de fondo",
         unit="US$ Mill.", chart="grouped_bar", status=STATUS_EXP,
-        source_id="flujos_ffmm", transform="monthly_sum_by_fund",
-        # Tipo 1 es el fondo dominante (mueve el agregado); debe estar. Estos 3 son
-        # los drivers reales del flujo y coinciden con los que destaca el texto.
+        # MISMAS barras mensuales por fondo de antes (eje X = mes, una barra por tipo
+        # de fondo), pero construidas con flujos_acum_ffmm: flujos DIARIOS
+        # (Incremento_USD) — pese al nombre NO están acumulados — más precisos que la
+        # serie semanal flujos_ffmm. monthly_sum_by_fund los agrega por mes (suma de
+        # los flujos diarios del mes) por tipo de fondo.
+        source_id="flujos_acum_ffmm", transform="monthly_sum_by_fund",
         params={"funds": ["Tipo 1", "Tipo 3", "Tipo 6"], "months": 6},
     ),
     ReportBlock(  # acumulado (cumsum por fondo)
         # no_text: mantiene el GRÁFICO pero sin comentario propio. El texto de flujos
-        # se escribe UNA vez en "Variación Patrimonio efectivo" (flujos_ffmm) — evita
-        # los dos párrafos de flujos que se contradecían (T1 entrada vs salida) que
-        # marcó la analista. Son métricas distintas (patrimonio vs flujo acumulado);
-        # se grafican ambas, se comenta una.
+        # se escribe UNA vez en "Variación Patrimonio efectivo" (mismo flujos_acum_ffmm)
+        # — evita los dos párrafos de flujos que se contradecían (T1 entrada vs salida)
+        # que marcó la analista. El bloque de arriba muestra el diferencial t-7/t-30 y
+        # este la suma corrida; se grafican ambas vistas, se comenta una.
         section=_S_FLUJOS, title="Flujos acumulados por fondo",
         unit="US$ Mill.", chart="line", status=STATUS_MVP, no_text=True,
         source_id="flujos_acum_ffmm", transform="accumulated", params={"window": "y2", "accumulate": "cumsum"},
@@ -51,12 +54,12 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     #  salían también aquí/antes; eran duplicados de los bloques de Rentabilidad y
     #  Portafolio DCV, así que se eliminaron para no repetir el mismo gráfico.)
     ReportBlock(
-        section=_S_PORTAFOLIO, title="Fechas de corte DCV (T, T-5, T-20)",
+        section=_S_PORTAFOLIO, title="Fechas de corte DCV (T, T-7, T-30)",
         chart="heatmap_table", status=STATUS_EXP,
         source_id="stock_nivel_ffmm", transform="dcv_cut_dates",
     ),
     ReportBlock(
-        section=_S_PORTAFOLIO, title="Variación DCV (Δ T-5 / Δ T-20 por instrumento y plazo)",
+        section=_S_PORTAFOLIO, title="Variación DCV (Δ T-7 / Δ T-30 por instrumento y plazo)",
         unit="US$ Mill.", chart="heatmap_table", status=STATUS_EXP,
         source_id="variacion_stock_ffmm", transform="dcv_heatmap",
     ),

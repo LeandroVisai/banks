@@ -91,6 +91,17 @@ class FamilyReportSpec:
         return counts
 
     def no_text_source_ids(self) -> set[str]:
-        """``source_id`` de los bloques ``no_text`` (vistas redundantes): la síntesis
-        excluye su párrafo para no mezclar comentarios solapados del mismo concepto."""
-        return {b.source_id for b in self.blocks if b.no_text and b.source_id}
+        """``source_id`` que SOLO alimentan bloques ``no_text`` (vistas redundantes sin
+        comentario propio): la síntesis excluye su párrafo para no mezclar comentarios
+        solapados del mismo concepto.
+
+        Si el MISMO ``source_id`` alimenta también un bloque que SÍ comenta (p.ej.
+        ``flujos_acum_ffmm``: barras t-7/t-30 comentadas + línea acumulada ``no_text``),
+        NO es redundante: su único párrafo es el de ese bloque y debe entrar a la
+        síntesis. Solo se excluyen las fuentes cuyo conjunto de bloques es 100%
+        ``no_text``."""
+        commented = {b.source_id for b in self.blocks if not b.no_text and b.source_id}
+        return {
+            b.source_id for b in self.blocks
+            if b.no_text and b.source_id and b.source_id not in commented
+        }

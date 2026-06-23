@@ -905,9 +905,10 @@ def render_dcv_cut_table(
     data: dict[str, tuple[float | None, float | None, float | None]],
     unit: str = "US$ Mill.",
 ) -> str:
-    """Tabla de fechas de corte DCV (T, T-5, T-20): filas=instrumento,
-    columnas=(T, T-5, T-20, Delta T-5, Delta T-20). Deltas coloreados verde/rojo."""
-    t_iso, t5_iso, t20_iso = dates
+    """Tabla de fechas de corte DCV (T, T-7, T-30): filas=instrumento,
+    columnas=(T, T-7, T-30, Δ T-7, Δ T-30). Deltas (variación a 1 semana / 1 mes)
+    coloreados verde/rojo."""
+    t_iso, t7_iso, t30_iso = dates
     th = "text-align:right;padding:6px 8px;background:#4a5a72;color:#fff;white-space:nowrap;font-size:12px"
     thl = "text-align:left;padding:6px 8px;background:#4a5a72;color:#fff;font-size:12px"
     td = "text-align:right;padding:5px 8px;border-bottom:1px solid #eee;font-size:12px"
@@ -917,27 +918,27 @@ def render_dcv_cut_table(
         f'<thead><tr>'
         f'<th style="{thl}">Instrumento</th>'
         f'<th style="{th}">T&nbsp;({_fmt_date(t_iso)})</th>'
-        f'<th style="{th}">T-5&nbsp;({_fmt_date(t5_iso)})</th>'
-        f'<th style="{th}">T-20&nbsp;({_fmt_date(t20_iso)})</th>'
-        f'<th style="{th}">Δ T-5</th>'
-        f'<th style="{th}">Δ T-20</th>'
+        f'<th style="{th}">T-7&nbsp;({_fmt_date(t7_iso)})</th>'
+        f'<th style="{th}">T-30&nbsp;({_fmt_date(t30_iso)})</th>'
+        f'<th style="{th}">Δ T-7</th>'
+        f'<th style="{th}">Δ T-30</th>'
         f'</tr></thead>'
     )
     body_rows = []
     for tipo in tipos:
-        vt, vt5, vt20 = data.get(tipo, (None, None, None))
-        d5 = (vt - vt5) if vt is not None and vt5 is not None else None
-        d20 = (vt - vt20) if vt is not None and vt20 is not None else None
-        d5_sty = f"{td};{_delta_style(d5)}" if d5 else td
-        d20_sty = f"{td};{_delta_style(d20)}" if d20 else td
+        vt, vt7, vt30 = data.get(tipo, (None, None, None))
+        d7 = (vt - vt7) if vt is not None and vt7 is not None else None
+        d30 = (vt - vt30) if vt is not None and vt30 is not None else None
+        d7_sty = f"{td};{_delta_style(d7)}" if d7 else td
+        d30_sty = f"{td};{_delta_style(d30)}" if d30 else td
         body_rows.append(
             f'<tr>'
             f'<td style="{tdl}">{_esc(tipo)}</td>'
             f'<td style="{td}">{_fmt_num(vt) if vt is not None else "&#8212;"}</td>'
-            f'<td style="{td}">{_fmt_num(vt5) if vt5 is not None else "&#8212;"}</td>'
-            f'<td style="{td}">{_fmt_num(vt20) if vt20 is not None else "&#8212;"}</td>'
-            f'<td style="{d5_sty}">{_fmt_delta(d5)}</td>'
-            f'<td style="{d20_sty}">{_fmt_delta(d20)}</td>'
+            f'<td style="{td}">{_fmt_num(vt7) if vt7 is not None else "&#8212;"}</td>'
+            f'<td style="{td}">{_fmt_num(vt30) if vt30 is not None else "&#8212;"}</td>'
+            f'<td style="{d7_sty}">{_fmt_delta(d7)}</td>'
+            f'<td style="{d30_sty}">{_fmt_delta(d30)}</td>'
             f'</tr>'
         )
     unit_note = f'<div style="font-size:11px;color:#777;margin:2px 0 0">{_esc(unit)}</div>' if unit else ""
@@ -952,12 +953,13 @@ def render_dcv_cut_table(
 def render_dcv_heatmap_tables(
     tipos: list[str],
     buckets: list[str],
-    delta5: dict[str, dict[str, float | None]],
-    delta20: dict[str, dict[str, float | None]],
+    delta7: dict[str, dict[str, float | None]],
+    delta30: dict[str, dict[str, float | None]],
     unit: str = "US$ Mill.",
 ) -> str:
-    """Dos matrices heatmap (Delta T-5 / Delta T-20): filas=instrumento,
-    cols=plazo, celdas coloreadas verde (positivo) / rojo (negativo)."""
+    """Dos matrices heatmap (Delta T-7 / Delta T-30, variación a 1 semana / 1 mes):
+    filas=instrumento, cols=plazo, celdas coloreadas verde (positivo) / rojo
+    (negativo)."""
 
     def _matrix(label: str, matrix: dict[str, dict[str, float | None]]) -> str:
         th = "text-align:right;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap"
@@ -984,7 +986,7 @@ def render_dcv_heatmap_tables(
     unit_note = f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)}</div>' if unit else ""
     return (
         '<div style="overflow-x:auto;max-width:760px;margin:6px auto">'
-        + _matrix("Δ T-5", delta5)
-        + _matrix("Δ T-20", delta20)
+        + _matrix("Δ T-7", delta7)
+        + _matrix("Δ T-30", delta30)
         + unit_note + "</div>"
     )

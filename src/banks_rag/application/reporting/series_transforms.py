@@ -1084,16 +1084,27 @@ def _distinct_dates_sorted(con: duckdb.DuckDBPyConnection, parquet_path: Path, d
 
 
 def _cut_indices(dates: list[str]) -> tuple[str, str, str]:
-    """T = última, T-5 = 5ª desde el final (o primera), T-20 = 20ª desde el final."""
+    """Fechas de corte por CALENDARIO: ``T`` = última fecha con dato; ``T-7`` =
+    última fecha ≤ (T − 7 días naturales) y ``T-30`` = última fecha ≤ (T − 30 días).
+
+    La analista toma la variación a 1 semana (7 días) y 1 mes (30 días) de calendario,
+    NO por posición de día hábil (antes era la 5ª/20ª fecha desde el final ≈ 1 sem/1 mes
+    de días hábiles, impreciso ante feriados o huecos en la serie). ``dates`` viene
+    ordenado ASC; se busca la última fecha que no supere el corte."""
     t = dates[-1]
-    t5 = dates[-6] if len(dates) >= 6 else dates[0]
-    t20 = dates[-21] if len(dates) >= 21 else dates[0]
-    return t, t5, t20
+    t_d = date.fromisoformat(t[:10])
+
+    def _at_or_before(days: int) -> str:
+        cutoff = (t_d - timedelta(days=days)).isoformat()
+        return next((d for d in reversed(dates) if d <= cutoff), dates[0])
+
+    return t, _at_or_before(7), _at_or_before(30)
 
 
 def dcv_cut_dates(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
-    """Tabla de fechas de corte DCV (T, T-5, T-20): stock por instrumento +
-    deltas coloreados. Lee ``stock_nivel_ffmm`` (Fecha, Tipo, Stock_USD)."""
+    """Tabla de fechas de corte DCV (T, T-7, T-30): stock por instrumento +
+    deltas coloreados (variación a 1 semana y 1 mes). Lee ``stock_nivel_ffmm``
+    (Fecha, Tipo, Stock_USD)."""
     from .svg_chart import render_dcv_cut_table
 
     parquet_path = dataset.parquet_path(parquet_dir)
@@ -1109,9 +1120,9 @@ def dcv_cut_dates(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> H
         dates = _distinct_dates_sorted(con, parquet_path, roles.date_col)
         if len(dates) < 3:
             return None
-        t_iso, t5_iso, t20_iso = _cut_indices(dates)
+        t_iso, t7_iso, t30_iso = _cut_indices(dates)
 
-        in_clause = ", ".join(f"DATE '{d}'" for d in {t_iso, t5_iso, t20_iso})
+        in_clause = ", ".join(f"DATE '{d}'" for d in {t_iso, t7_iso, t30_iso})
         src = f"read_parquet('{parquet_path.as_posix()}')"
         rows = con.execute(
             f"SELECT TRY_CAST({roles.date_col} AS DATE) AS d, {cat_col}, SUM({val_col}) "
@@ -1135,17 +1146,18 @@ def dcv_cut_dates(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> H
 
     tipos = sorted(by_tipo)
     data = {
-        t: (by_tipo[t].get(t_iso), by_tipo[t].get(t5_iso), by_tipo[t].get(t20_iso))
+        t: (by_tipo[t].get(t_iso), by_tipo[t].get(t7_iso), by_tipo[t].get(t30_iso))
         for t in tipos
     }
     return HtmlTable(
-        html=render_dcv_cut_table(tipos, (t_iso, t5_iso, t20_iso), data, unit=dataset.unit),
+        html=render_dcv_cut_table(tipos, (t_iso, t7_iso, t30_iso), data, unit=dataset.unit),
         dataset_id=dataset.id,
     )
 
 
 def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
-    """Variacion del stock DCV (Delta T-5 / Delta T-20) por instrumento y plazo.
+    """Variacion del stock DCV (Delta T-7 / Delta T-30) por instrumento y plazo
+    (variación a 1 semana y 1 mes).
     Lee ``variacion_stock_ffmm`` (Fecha, Bucket, Tipo, Moneda, Stock_USD)."""
     from .svg_chart import render_dcv_heatmap_tables
 
@@ -1165,9 +1177,9 @@ def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Htm
         dates = _distinct_dates_sorted(con, parquet_path, roles.date_col)
         if len(dates) < 3:
             return None
-        t_iso, t5_iso, t20_iso = _cut_indices(dates)
+        t_iso, t7_iso, t30_iso = _cut_indices(dates)
 
-        in_clause = ", ".join(f"DATE '{d}'" for d in {t_iso, t5_iso, t20_iso})
+        in_clause = ", ".join(f"DATE '{d}'" for d in {t_iso, t7_iso, t30_iso})
         src = f"read_parquet('{parquet_path.as_posix()}')"
         rows = con.execute(
             f"SELECT TRY_CAST({roles.date_col} AS DATE) AS d, {bucket_col}, {tipo_col}, SUM({val_col}) "
@@ -1200,19 +1212,19 @@ def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Htm
 
     tipos = sorted(tipos_seen)
     buckets = _order_buckets(buckets_seen)
-    delta5: dict[str, dict[str, float | None]] = {t: {} for t in tipos}
-    delta20: dict[str, dict[str, float | None]] = {t: {} for t in tipos}
+    delta7: dict[str, dict[str, float | None]] = {t: {} for t in tipos}
+    delta30: dict[str, dict[str, float | None]] = {t: {} for t in tipos}
     for (tipo, bucket), by_date in cell.items():
         vt = by_date.get(t_iso)
-        vt5 = by_date.get(t5_iso)
-        vt20 = by_date.get(t20_iso)
-        if vt is not None and vt5 is not None:
-            delta5[tipo][bucket] = vt - vt5
-        if vt is not None and vt20 is not None:
-            delta20[tipo][bucket] = vt - vt20
+        vt7 = by_date.get(t7_iso)
+        vt30 = by_date.get(t30_iso)
+        if vt is not None and vt7 is not None:
+            delta7[tipo][bucket] = vt - vt7
+        if vt is not None and vt30 is not None:
+            delta30[tipo][bucket] = vt - vt30
 
     return HtmlTable(
-        html=render_dcv_heatmap_tables(tipos, buckets, delta5, delta20, unit=dataset.unit),
+        html=render_dcv_heatmap_tables(tipos, buckets, delta7, delta30, unit=dataset.unit),
         dataset_id=dataset.id,
     )
 
