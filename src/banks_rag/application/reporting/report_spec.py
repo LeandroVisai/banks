@@ -75,6 +75,11 @@ class FamilyReportSpec:
     family: str
     title: str
     blocks: tuple[ReportBlock, ...]
+    # Secciones cuyas variaciones SEMANALES comparten una misma fecha de corte
+    # (mín de las fechas máximas de SUS datasets de alta frecuencia). El resto de
+    # secciones se ancla al máximo de su propio parquet. Vacío = todas las de alta
+    # frecuencia comparten corte (comportamiento por defecto para otras familias).
+    weekly_anchor_sections: tuple[str, ...] = ()
 
     def sections(self) -> list[str]:
         """Secciones en orden de aparición (sin repetir)."""

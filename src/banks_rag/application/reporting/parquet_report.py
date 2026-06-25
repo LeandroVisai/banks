@@ -91,23 +91,26 @@ _EMPTY_OVERVIEW = (
 
 _REPORT_SYNTHESIS_SYSTEM = """\
 Eres un analista senior de la División de Mercados Financieros del BCCh. \
-Recibes los párrafos descriptivos de un informe (uno por dataset del catálogo) \
-y redactas la SÍNTESIS EJECUTIVA que lo encabeza: los PRINCIPALES MOVIMIENTOS \
-del mes y de la semana, para que la gerencia capte lo importante de un vistazo.
+Recibes los párrafos descriptivos de un informe SEMANAL (uno por dataset del \
+catálogo) y redactas la SÍNTESIS EJECUTIVA que lo encabeza. El foco es la SEMANA: \
+lo prioritario son los movimientos de la última semana; lo mensual es contexto \
+secundario.
 
 Estructura EXACTA (en este orden):
-1. UNA frase de apertura con el estado general del segmento.
-2. Una línea ``**Principales movimientos del mes:**`` seguida de 2 a 4 viñetas \
-``- `` con los movimientos mensuales más relevantes (cada viñeta: qué se movió, \
-cuánto y su cifra/fecha/unidad exacta).
-3. Una línea ``**Principales movimientos de la semana:**`` seguida de 2 a 4 \
-viñetas ``- `` con lo más relevante de la última semana, marcando si confirma o \
-contrasta con el mes.
+1. UNA frase de apertura con el estado general del segmento en la semana.
+2. Una línea ``**Principales movimientos de la semana:**`` seguida de 3 a 4 \
+viñetas ``- `` con lo más relevante de la última semana (cada viñeta: qué se \
+movió, cuánto y su cifra/fecha/unidad exacta; marca si confirma o contrasta con \
+el mes).
+3. Una línea ``**Contexto del mes:**`` seguida de 1 a 2 viñetas ``- `` BREVES con \
+el telón de fondo mensual, solo si aporta.
 
 Reglas:
 - Usa SOLO las cifras que aparecen en los párrafos recibidos: NO inventes ni \
 recalcules números, y conserva su unidad y fecha al citarlos.
-- Prioriza los movimientos más significativos; no listes todos los datasets.
+- INDICA SIEMPRE la VENTANA de datos de cada cifra (el rango de fechas hasta el que \
+llega), porque la fecha de corte puede diferir entre series.
+- Prioriza los movimientos SEMANALES más significativos; no listes todos los datasets.
 - Cada viñeta es una sola línea, concisa.
 - Si te indican que algunos datasets quedaron sin datos, menciónalo en una \
 frase al final.
@@ -293,10 +296,20 @@ class DatasetSection:
     facts: dict | None = None
     # Texto tal como lo generó el LLM, ANTES del verificador (para diff antes/después).
     raw_paragraph: str = ""
+    # ¿El párrafo lleva sub-párrafo MENSUAL? (False = solo semanal; mensual una vez
+    # por sección). Lo respeta la regeneración del verificador.
+    include_monthly: bool = True
 
 
-def _build_user_prompt(dataset: ParquetDataset, facts: dict, *, think: bool = True) -> str:
+def _build_user_prompt(
+    dataset: ParquetDataset, facts: dict, *, think: bool = True, include_monthly: bool = True,
+) -> str:
     """Mensaje de usuario para el LLM: identidad del dataset + hechos calculados.
+
+    ``include_monthly`` controla cuántos párrafos se piden: con ``True`` el redactor
+    escribe DOS (semanal primero, mensual después); con ``False`` UNO solo (semanal)
+    — la sección ya tiene su lectura mensual en otro bloque (mensual una vez por
+    sección). El informe ffmm es SEMANAL: el énfasis va en la última semana.
 
     Con ``think=False`` antepone ``/no_think`` al turno de usuario — es el
     único lugar donde el template Jinja de Qwen3 lo lee para suprimir la
@@ -304,6 +317,20 @@ def _build_user_prompt(dataset: ParquetDataset, facts: dict, *, think: bool = Tr
     modelo piensa de todas formas, consumiendo los tokens y dejando ``content``
     vacío en la respuesta.
     """
+    if include_monthly:
+        ask = (
+            "Redacta DOS párrafos: el PRIMERO sobre la variación SEMANAL (última "
+            "semana) y el SEGUNDO sobre la MENSUAL (último mes). Describe SOLO el "
+            "comportamiento relevante; no expliques qué mide la variable ni para qué "
+            "sirve la serie."
+        )
+    else:
+        ask = (
+            "Redacta UN SOLO párrafo sobre la variación SEMANAL (última semana). NO "
+            "escribas párrafo mensual: esta sección ya tiene su lectura del mes en "
+            "otro bloque. Describe SOLO el comportamiento relevante; no expliques qué "
+            "mide la variable ni para qué sirve la serie."
+        )
     head = [
         f"Dataset: {dataset.name} (`{dataset.id}`)",
         f"Unidad: {dataset.unit}" if dataset.unit else "",
@@ -312,8 +339,7 @@ def _build_user_prompt(dataset: ParquetDataset, facts: dict, *, think: bool = Tr
         "DATOS YA CALCULADOS (úsalos tal cual, no recalcules):",
         facts_to_text(facts),
         "",
-        "Redacta UN párrafo describiendo SOLO el comportamiento relevante de "
-        "estos datos. No expliques qué mide la variable ni para qué sirve la serie.",
+        ask,
     ]
     text = "\n".join(line for line in head if line != "")
     if not think:
@@ -340,12 +366,12 @@ def _strip_fact_tags(text: str) -> str:
 def _clean_paragraph(text: str) -> str:
     """Limpia la salida del LLM CONSERVANDO la separación en párrafos.
 
-    El redactor produce dos párrafos (mensual / semanal) separados por una línea
-    en blanco. Se quitan encabezados/viñetas que el modelo haya metido pese al
-    formato pedido, las etiquetas internas de los facts, se colapsan los saltos de
-    línea DENTRO de cada párrafo, y se devuelven los párrafos unidos por ``\\n\\n``
-    (separador estable que el ensamblado a markdown/HTML interpreta como párrafos
-    distintos)."""
+    El redactor produce uno o dos párrafos (semanal y, si se pidió, mensual)
+    separados por una línea en blanco. Se quitan encabezados/viñetas que el modelo
+    haya metido pese al formato pedido, las etiquetas internas de los facts, se
+    colapsan los saltos de línea DENTRO de cada párrafo, y se devuelven los párrafos
+    unidos por ``\\n\\n`` (separador estable que el ensamblado a markdown/HTML
+    interpreta como párrafos distintos)."""
     blocks: list[str] = []
     current: list[str] = []
     for raw in (text or "").splitlines():
@@ -371,8 +397,14 @@ async def _describe_dataset(
     parquet_dir: Path,
     map_max_tokens: int = 32768,
     think: bool = False,
+    weekly_asof: str | None = None,
+    include_monthly: bool = True,
 ) -> DatasetSection:
-    """Genera la sección de un dataset: facts en Python + UNA llamada al LLM."""
+    """Genera la sección de un dataset: facts en Python + UNA llamada al LLM.
+
+    ``weekly_asof`` = corte / T común del informe (ancla TODAS las ventanas de los
+    facts: semanal y mensual). ``include_monthly`` decide si el párrafo lleva también
+    la lectura mensual (solo el primer dataset de cada sección) o solo la semanal."""
     section = DatasetSection(
         dataset_id=dataset.id,
         name=dataset.name,
@@ -382,9 +414,10 @@ async def _describe_dataset(
         last_date=None,
         paragraph="",
         status="ok",
+        include_monthly=include_monthly,
     )
     try:
-        facts = compute_facts(dataset, parquet_dir, list(window_specs))
+        facts = compute_facts(dataset, parquet_dir, list(window_specs), weekly_asof=weekly_asof)
     except Exception as exc:
         log.exception("[%s] el cálculo de hechos falló", dataset.id)
         section.status = "error"
@@ -404,7 +437,8 @@ async def _describe_dataset(
         result = await llm.generate(
             [
                 {"role": "system", "content": PARQUET_REPORTER_PROMPT},
-                {"role": "user", "content": _build_user_prompt(dataset, facts, think=think)},
+                {"role": "user", "content": _build_user_prompt(
+                    dataset, facts, think=think, include_monthly=include_monthly)},
             ],
             tools=None,
             temperature=_MAP_TEMPERATURE,
@@ -442,6 +476,8 @@ def _facts_empty(facts: dict) -> bool:
         return not facts.get("por_columna")
     if shape == "timeseries_single":
         return not facts.get("estadisticas")
+    if shape == "return_index":
+        return not facts.get("por_fondo")
     return False
 
 
@@ -476,8 +512,8 @@ async def _synthesize_overview(
         parts.append(f"\n(Nota: {skipped} dataset(s) de la selección quedaron sin datos.)")
     parts.append(
         "\nRedacta ahora la síntesis ejecutiva con la estructura pedida: una frase "
-        "de apertura, luego los principales movimientos del mes y de la semana en "
-        "viñetas."
+        "de apertura, luego los principales movimientos de la SEMANA en viñetas y, al "
+        "final, un breve contexto del mes."
     )
     result = await llm.generate(
         [
@@ -504,6 +540,10 @@ async def _regenerate_paragraph(
     el verificador (cifras sin sustento / contradicción). Reusa los mismos facts y el
     prompt del redactor; SOLO redacta sobre los datos calculados."""
     note = "; ".join(getattr(i, "detail", str(i)) for i in issues[:4])
+    que = (
+        "los DOS párrafos (semanal y mensual)" if section.include_monthly
+        else "el párrafo (solo semanal)"
+    )
     head = [
         f"Dataset: {section.name} (`{section.dataset_id}`)",
         f"Unidad: {section.unit}" if section.unit else "",
@@ -513,7 +553,7 @@ async def _regenerate_paragraph(
         facts_to_text(section.facts or {}),
         "",
         "Tu borrador anterior tenía problemas que detectó el control de calidad: "
-        f"{note}. Reescribe los DOS párrafos corrigiéndolos, usando EXCLUSIVAMENTE "
+        f"{note}. Reescribe {que} corrigiéndolos, usando EXCLUSIVAMENTE "
         "las cifras y direcciones de los datos de arriba; no inventes números.",
     ]
     text = "\n".join(line for line in head if line != "")
@@ -671,6 +711,46 @@ async def generate_parquet_report(
     if parquet_dir is None:
         parquet_dir = get_parquet_dir(catalog_path)
 
+    # Corte semanal común + qué datasets reciben el sub-párrafo MENSUAL (una vez por
+    # sección). Ambos derivan del spec curado de la familia (segment), así el corte
+    # coincide EXACTAMENTE con el del proceso de gráficos (build_curated_report).
+    weekly_asof: str | None = None
+    monthly_ids: set[str] = set()
+    spec_ids: set[str] = set()
+    anchor_ids: set[str] = set()
+    try:
+        from banks_rag.application.reporting.curated_report import (
+            _spec_source_ids,
+            compute_weekly_cutoff,
+            monthly_section_source_ids,
+            weekly_anchor_source_ids,
+        )
+        from banks_rag.application.reporting.specs import get_spec
+
+        spec = get_spec(segment) if segment else None
+        if spec is not None:
+            weekly_asof = compute_weekly_cutoff(spec, entries, parquet_dir)
+            monthly_ids = monthly_section_source_ids(spec)
+            spec_ids = set(_spec_source_ids(spec))
+            anchor_ids = weekly_anchor_source_ids(spec)
+        else:
+            from banks_rag.application.reporting.parquet_facts import weekly_cutoff
+
+            weekly_asof = weekly_cutoff(list(selection.datasets), parquet_dir)
+            anchor_ids = {d.id for d in selection.datasets}
+    except Exception:
+        log.exception("corte semanal/secciones: cálculo falló; se sigue sin corte")
+    if weekly_asof:
+        log.info("Informe parquet: corte semanal común = %s", weekly_asof)
+
+    def _include_monthly(ds_id: str) -> bool:
+        # Con spec: el sub-párrafo mensual solo en el primer dataset de cada sección;
+        # los datasets fuera del spec (standalone) lo conservan; sin spec, todos
+        # (comportamiento previo).
+        if not spec_ids:
+            return True
+        return ds_id not in spec_ids or ds_id in monthly_ids
+
     semaphore = asyncio.Semaphore(max(1, concurrency))
 
     async def _bounded(ds: ParquetDataset) -> DatasetSection:
@@ -682,6 +762,10 @@ async def generate_parquet_report(
                 parquet_dir=parquet_dir,
                 map_max_tokens=map_max_tokens,
                 think=think,
+                # El corte solo ancla la variación semanal de las secciones de anclaje
+                # (Flujos+DCV en ffmm); el resto usa el máximo de su propio parquet.
+                weekly_asof=weekly_asof if ds.id in anchor_ids else None,
+                include_monthly=_include_monthly(ds.id),
             )
 
     log.info(

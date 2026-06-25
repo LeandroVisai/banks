@@ -152,16 +152,33 @@ def _scale_rows(rows: list[dict], value_cols: list[str], scale: float) -> None:
                 row[col] = float(v) * scale
 
 
-def _windows(last_date: str, windows: list[tuple[str, int]]) -> list[dict]:
-    """``[(label, days)]`` → ``[{label, start, end}]`` anclados a ``last_date``."""
-    anchor = date.fromisoformat(last_date)
+# Gap mediano (días) máximo para considerar un dataset de ALTA FRECUENCIA
+# (diario/semanal). Por encima (mensual, p.ej. carteras a fin de mes) NO entra al
+# cálculo del corte común.
+_HIGH_FREQ_MAX_GAP_DAYS = 10
+# Una ventana es "semanal" si cubre <= estos días.
+_WEEKLY_MAX_DAYS = 7
+
+
+def _windows(
+    last_date: str, windows: list[tuple[str, int]], *, weekly_asof: str | None = None,
+) -> list[dict]:
+    """``[(label, days)]`` → ``[{label, start, end, days, is_weekly, anchored}]``.
+
+    ``weekly_asof`` es la fecha de corte / ``T`` COMÚN del informe (solo lo reciben los
+    datasets de las secciones de anclaje: Flujos + Portafolio DCV). Cuando se pasa,
+    ``anchored=True`` y TODAS las ventanas (semanal Y mensual) se anclan al mismo
+    ``end`` → esos datasets comparten ``T``, ``T-7`` y ``T-30`` (los mismos días). Sin
+    corte (``weekly_asof=None``), cada ventana se ancla al ``last_date`` del propio
+    parquet. ``is_weekly`` / ``anchored`` le indican a ``_window_value`` qué resolución
+    usar (ver ahí)."""
+    anchored = weekly_asof is not None
+    anchor = weekly_asof or last_date
     out = []
     for label, days in windows:
-        out.append({
-            "label": label,
-            "start": (anchor - timedelta(days=days)).isoformat(),
-            "end": last_date,
-        })
+        start = (date.fromisoformat(anchor[:10]) - timedelta(days=days)).isoformat()
+        out.append({"label": label, "start": start, "end": anchor, "days": days,
+                    "is_weekly": days <= _WEEKLY_MAX_DAYS, "anchored": anchored})
     return out
 
 
@@ -199,9 +216,100 @@ def _flow_window(series_slice: list[sa.Point]) -> dict | None:
     }
 
 
+def _value_asof(series: list[sa.Point], d: str) -> sa.Point | None:
+    """Último ``(fecha, valor)`` con ``fecha <= d`` (serie ordenada ASC); ``None``
+    si no hay ningún punto en o antes de ``d``."""
+    out: sa.Point | None = None
+    for p in series:
+        if p[0] <= d:
+            out = p
+        else:
+            break
+    return out
+
+
+def weekly_delta(
+    series: list[sa.Point], asof: str, *, days: int = 7, is_flow: bool = False,
+) -> dict | None:
+    """Variación semanal CANÓNICA anclada a ``asof`` — la MISMA que dibuja el
+    gráfico, para que el texto y la tabla/barra coincidan siempre.
+
+    - flujos: suma de las observaciones en ``[asof - days, asof]`` (idéntico a
+      ``_flow_window`` sobre ese slice).
+    - niveles: ``valor_asof(asof) - valor_asof(asof - days)`` con resolución
+      *at-or-before* en ambos extremos (igual que ``series_transforms.stacked_by_bucket``);
+      si no hay punto en o antes del inicio, cae al primer punto de la serie.
+
+    El dict resultante es shape-compatible con ``sa.variation`` / ``_flow_window``
+    (lo consumen ``_variation_line`` y los renderers). ``None`` si la serie está
+    vacía o no hay punto en o antes de ``asof``."""
+    if not series:
+        return None
+    start = (date.fromisoformat(asof[:10]) - timedelta(days=days)).isoformat()
+    window = _slice(series, start, asof)
+    if is_flow:
+        return _flow_window(window)
+    fin = _value_asof(series, asof)
+    if fin is None:
+        return None
+    ini = _value_asof(series, start) or series[0]
+    out = sa.variation([(ini[0], ini[1]), (fin[0], fin[1])])
+    # min/max/n informativos sobre la ventana observada (no solo los 2 extremos).
+    if out and window:
+        vals = [v for _, v in window]
+        out["minimo"], out["maximo"] = round(min(vals), 6), round(max(vals), 6)
+        out["n_observaciones"] = len(window)
+    return out
+
+
+def geom_return(points: list[sa.Point], start: str, end: str) -> float | None:
+    """Retorno COMPUESTO entre ``start`` y ``end`` de un ÍNDICE de retorno acumulado
+    (en fracción): ``(1+i_end)/(1+i_start)-1`` con resolución at-or-before en ambos
+    extremos. Para índices de retorno la "variación" de una ventana es el retorno
+    compuesto, NO la resta del índice (que sobreestima al crecer el índice).
+    ``None`` si no hay datos."""
+    if not points:
+        return None
+    i_end = next((v for iso, v in reversed(points) if iso <= end), None)
+    if i_end is None:
+        return None
+    i_start = next((v for iso, v in reversed(points) if iso <= start), points[0][1])
+    denom = 1.0 + i_start
+    if denom == 0:
+        return None
+    return (1.0 + i_end) / denom - 1.0
+
+
+def geom_ytd(points: list[sa.Point], ytd_start: str) -> list[sa.Point]:
+    """Serie de rentabilidad acumulada YTD geométrica: ``(1+i_t)/(1+i_base)-1`` para
+    ``t >= ytd_start``, con ``i_base`` = último índice ANTES de ``ytd_start`` (cierre
+    del año previo; o el primer punto si la serie arranca dentro del año)."""
+    if not points:
+        return []
+    base = next((v for iso, v in reversed(points) if iso < ytd_start), points[0][1])
+    denom = 1.0 + base
+    if denom == 0:
+        return []
+    return [(iso, (1.0 + v) / denom - 1.0) for iso, v in points if iso >= ytd_start]
+
+
 def _window_change(series_slice: list[sa.Point], *, is_flow: bool) -> dict | None:
-    """Hecho de una ventana: suma de flujos (``is_flow``) o variación de nivel."""
+    """Hecho de una ventana clásica: suma de flujos (``is_flow``) o variación de nivel
+    (último menos primer punto DENTRO del slice)."""
     return _flow_window(series_slice) if is_flow else sa.variation(series_slice)
+
+
+def _window_value(series: list[sa.Point], w: dict, *, is_flow: bool) -> dict | None:
+    """Variación de UNA ventana.
+
+    - Ventana SEMANAL (``is_weekly``) → ``weekly_delta`` (resolución canónica
+      at-or-before / suma) SIEMPRE: así la barra/tabla semanal y el texto coinciden.
+    - Ventana MENSUAL → ``weekly_delta`` SOLO si el dataset está ANCLADO (Flujos +
+      Portafolio DCV, que comparten T, T-7 y T-30); el RESTO de parquets conserva la
+      variación de ventana clásica (``_window_change``), sin cambios."""
+    if w.get("is_weekly") or w.get("anchored"):
+        return weekly_delta(series, w["end"], days=w.get("days", 7), is_flow=is_flow)
+    return _window_change(_slice(series, w["start"], w["end"]), is_flow=is_flow)
 
 
 def _window_variations(
@@ -209,8 +317,10 @@ def _window_variations(
 ) -> list[dict]:
     out = []
     for w in windows:
-        v = _window_change(_slice(series, w["start"], w["end"]), is_flow=is_flow)
-        out.append({"label": w["label"], "desde": w["start"], "hasta": w["end"], "variacion": v})
+        out.append({
+            "label": w["label"], "desde": w["start"], "hasta": w["end"],
+            "variacion": _window_value(series, w, is_flow=is_flow),
+        })
     return out
 
 
@@ -271,7 +381,7 @@ _FLOW_KEYWORDS = (
 _NON_FLOW_KINDS = frozenset({"stock", "level", "nivel", "return", "retorno", "rate", "tasa"})
 # ``value_kind`` donde SUMAR las categorías no es una métrica real (retornos/tasas):
 # no se calcula total agregado ni composición, solo el detalle por categoría.
-_NON_AGGREGATABLE_KINDS = frozenset({"return", "retorno", "rate", "tasa"})
+_NON_AGGREGATABLE_KINDS = frozenset({"return", "retorno", "rate", "tasa", "return_index"})
 
 
 def _is_flow(dataset: ParquetDataset) -> bool:
@@ -292,14 +402,83 @@ def _is_flow(dataset: ParquetDataset) -> bool:
     return any(k in blob for k in _FLOW_KEYWORDS)
 
 
+def _distinct_dates(con: duckdb.DuckDBPyConnection, parquet_path: Path, date_col: str) -> list[str]:
+    """Fechas distintas (ISO, ASC) del parquet — para clasificar la cadencia."""
+    src = f"read_parquet({_quote_str(parquet_path.as_posix())})"
+    rows = con.sql(
+        f"SELECT DISTINCT CAST({_quote_ident(date_col)} AS DATE) AS d "
+        f"FROM {src} WHERE {_quote_ident(date_col)} IS NOT NULL ORDER BY d"
+    ).fetchall()
+    return [str(r[0]) for r in rows if r[0] is not None]
+
+
+def _median_gap_days(dates: list[str], *, tail: int = 12) -> float | None:
+    """Gap mediano (días) entre las últimas ``tail`` fechas distintas; ``None`` si
+    hay menos de 2."""
+    recent = dates[-tail:]
+    if len(recent) < 2:
+        return None
+    gaps = sorted(
+        (date.fromisoformat(recent[i + 1][:10]) - date.fromisoformat(recent[i][:10])).days
+        for i in range(len(recent) - 1)
+    )
+    mid = len(gaps) // 2
+    return float(gaps[mid]) if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2.0
+
+
+def is_high_frequency(dates: list[str]) -> bool:
+    """True si la cadencia reciente de la serie es sub-mensual (gap mediano
+    ≤ ``_HIGH_FREQ_MAX_GAP_DAYS``) → entra al corte semanal común. Series mensuales
+    o con una sola fecha quedan fuera."""
+    gap = _median_gap_days(dates)
+    return gap is not None and gap <= _HIGH_FREQ_MAX_GAP_DAYS
+
+
+def weekly_cutoff(datasets: list[ParquetDataset], parquet_dir: Path) -> str | None:
+    """Fecha de corte semanal COMÚN del informe = ``min`` de las fechas máximas de
+    los datasets de ALTA FRECUENCIA (diarios/semanales).
+
+    Los mensuales NO entran (su máximo a fin de mes arrastraría el corte semanal de
+    todos hacia atrás). Determinista: el mismo conjunto de datasets da el mismo corte
+    en el proceso de gráficos y en el de texto, garantizando cifras semanales
+    referidas a una sola fecha. ``None`` si ningún dataset califica (→ cada parquet
+    se ancla a su propio máximo, comportamiento previo)."""
+    maxes: list[str] = []
+    con = duckdb.connect()
+    try:
+        for ds in datasets:
+            path = ds.parquet_path(parquet_dir)
+            if not path.exists():
+                continue
+            try:
+                roles = detect_roles(path, con)
+                if roles.date_col is None:
+                    continue
+                dates = _distinct_dates(con, path, roles.date_col)
+            except Exception:
+                log.exception("[weekly_cutoff] no se pudieron leer fechas de %s", ds.id)
+                continue
+            if dates and is_high_frequency(dates):
+                maxes.append(dates[-1])
+    finally:
+        con.close()
+    return min(maxes) if maxes else None
+
+
 def compute_facts(
     dataset: ParquetDataset,
     parquet_dir: Path,
     windows: list[tuple[str, int]],
+    *,
+    weekly_asof: str | None = None,
 ) -> dict[str, Any] | None:
     """Calcula los hechos descriptivos relevantes de un dataset.
 
     ``windows`` es ``[(etiqueta, días)]`` (p.ej. ``[("última semana", 7), …]``).
+    ``weekly_asof`` (opcional) es la fecha de corte / ``T`` COMÚN del informe (ver
+    ``weekly_cutoff``): ancla TODAS las ventanas (semanal y mensual) ahí en vez del
+    máximo del propio parquet, para que Flujos y DCV compartan T, T-7 y T-30 (mismos
+    días) y la variación del texto coincida con la del gráfico/tabla.
     Devuelve ``None`` si el parquet no existe (→ el caller marca ``no_data``).
     El dict resultante incluye ``shape`` y un bloque de hechos por forma de dato.
     """
@@ -356,8 +535,20 @@ def compute_facts(
             base.update(shape="empty")
             return base
         last_date = str(last_date)
-        wins = _windows(last_date, windows)
+        wins = _windows(last_date, windows, weekly_asof=weekly_asof)
         base.update(last_date=last_date, windows=[{"label": w["label"], "desde": w["start"], "hasta": w["end"]} for w in wins])
+
+        # ── Índice de retorno acumulado (return_index) ───────────────────────
+        # La "variación" de una ventana es el retorno COMPUESTO (geom_return), no la
+        # resta del índice. NO se escala en filas: se computa en fracción y se lleva a
+        # % con value_scale dentro de _return_index_facts.
+        if kind == "return_index" and roles.value_cols:
+            rows = _read_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, *roles.value_cols])
+            base.update(
+                shape="return_index",
+                **_return_index_facts(rows, roles.date_col, roles.value_cols, wins, value_scale=scale),
+            )
+            return base
 
         # ── Serie temporal con categoría ─────────────────────────────────────
         if roles.category_cols and roles.value_cols:
@@ -429,6 +620,14 @@ def _snapshot_composition(rows: list[dict], cat_col: str, val_col: str) -> dict 
     return {"total": round(total, 6), "n_categorias": len(breakdown), "breakdown": breakdown}
 
 
+def _asof_data_date(rows: list[dict], date_col: str, ref: str) -> str:
+    """Última fecha CON dato ≤ ``ref`` en ``rows`` (at-or-before); ``ref`` si no hay
+    ninguna. Sirve para tomar la composición 'a corte' del ancla aunque el parquet no
+    tenga dato justo ese día."""
+    avail = {str(r[date_col]) for r in rows if r.get(date_col) is not None}
+    return max((d for d in avail if d <= ref), default=ref)
+
+
 def _categorical_facts(
     rows: list[dict], date_col: str, cat_col: str, val_col: str,
     wins: list[dict], last_date: str, *, is_flow: bool = False, aggregatable: bool = True,
@@ -453,7 +652,16 @@ def _categorical_facts(
     # un día). Para FLUJOS sería el desglose de los flujos de UN día suelto: shares
     # >100% / negativos (el total del día es chico y una categoría puede excederlo)
     # que confunden la lectura. La dirección/magnitud del flujo va en las ventanas.
-    composition = None if is_flow else sa.composition(rows, date_col, cat_col, val_col, fecha=last_date)
+    # Se cita "a corte" del ANCLA (``wins[0]['end']`` = corte común si lo hay, o el
+    # máximo propio): el valor se toma at-or-before, pero la fecha mostrada es el corte
+    # → consistente con las ventanas, aunque el parquet no tenga dato justo ese día.
+    comp_ref = wins[0]["end"] if wins else last_date
+    composition = None
+    if not is_flow:
+        composition = sa.composition(
+            rows, date_col, cat_col, val_col, fecha=_asof_data_date(rows, date_col, comp_ref))
+        if composition:
+            composition["fecha"] = comp_ref
 
     # Serie por categoría AGREGANDO por fecha: si el dataset tiene más de una
     # columna categórica (p.ej. Tipo_instrumento x Tipo_fondo en allocation),
@@ -524,7 +732,7 @@ def _contributions(
     for w in wins:
         cambios = []
         for cat, series in series_by_cat.items():
-            v = _window_change(_slice(series, w["start"], w["end"]), is_flow=is_flow)
+            v = _window_value(series, w, is_flow=is_flow)
             if v and v["cambio_absoluto"]:
                 cambios.append({
                     "categoria": cat,
@@ -562,12 +770,54 @@ def _wide_facts(
         }
         for c in top
     ]
+    # Composición "a corte" del ancla (corte común si lo hay, o máx propio): valor
+    # at-or-before, fecha mostrada = el corte (ver _categorical_facts).
+    comp_ref = wins[0]["end"] if wins else last_date
+    composicion = None
+    if aggregatable:
+        composicion = sa.composition_wide(
+            rows, date_col, value_cols, fecha=_asof_data_date(rows, date_col, comp_ref))
+        if composicion:
+            composicion["fecha"] = comp_ref
     return {
         "por_columna": por_columna,
         # Retornos/tasas: no se compone (sumar columnas de retorno no es real).
-        "composicion_corte": None if not aggregatable
-        else sa.composition_wide(rows, date_col, value_cols, fecha=last_date),
+        "composicion_corte": composicion,
     }
+
+
+# Fondos que el informe ffmm reporta SIEMPRE (1/2/3/6).
+_RETURN_INDEX_FUNDS = ("Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6")
+
+
+def _return_index_facts(
+    rows: list[dict], date_col: str, value_cols: list[str], wins: list[dict],
+    *, value_scale: float, funds: tuple[str, ...] = _RETURN_INDEX_FUNDS,
+) -> dict:
+    """Hechos de un ÍNDICE de retorno acumulado (fracción): por fondo, el RETORNO
+    COMPUESTO de cada ventana (``geom_return``, en %), más el índice acumulado al
+    cierre. El retorno se computa en fracción y se lleva a % con ``value_scale``.
+    Foco en los fondos pedidos (default Tipo 1/2/3/6)."""
+    cols = [c for c in funds if c in value_cols] or list(value_cols)
+    por_fondo: list[dict] = []
+    for c in cols:
+        series = sa.clean_series(rows, date_col, c)
+        if not series:
+            continue
+        ventanas = []
+        for w in wins:
+            r = geom_return(series, w["start"], w["end"])
+            ventanas.append({
+                "label": w["label"], "desde": w["start"], "hasta": w["end"],
+                "retorno_pct": None if r is None else round(r * value_scale, 4),
+            })
+        por_fondo.append({
+            "fondo": c,
+            "indice_acum_pct": round(series[-1][1] * value_scale, 4),
+            "ultima_fecha": series[-1][0],
+            "ventanas": ventanas,
+        })
+    return {"por_fondo": por_fondo}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -813,19 +1063,24 @@ def _flow_tag(nivel: float | None, cambio: float | None = None) -> str:
 
 
 def _variation_line(v: dict) -> str:
-    """Una ventana → texto. ``v`` es ``{label, desde, hasta, variacion}``."""
+    """Una ventana → texto. ``v`` es ``{label, desde, hasta, variacion}``.
+
+    Muestra la VENTANA pedida (``desde``→``hasta`` = el corte común si lo hay), no las
+    fechas observadas: así Flujos y DCV citan EXACTAMENTE la misma ventana aunque DCV
+    no tenga dato justo en el corte (el valor se resuelve at-or-before, pero la fecha
+    citada es la del corte)."""
     var = v.get("variacion")
     if not var:
         return f"{v['label']} ({v['desde']}→{v['hasta']}): sin observaciones suficientes en la ventana"
     if var.get("is_flow_sum"):
         return (
-            f"{v['label']} ({var['fecha_inicio_obs']}→{var['fecha_fin_obs']}): "
+            f"{v['label']} ({v['desde']}→{v['hasta']}): "
             f"flujo neto del período {_num(var['flujo_periodo'])}"
             f"{_flow_tag(var['flujo_periodo'])}; "
             f"rango por obs [{_num(var['minimo'])}, {_num(var['maximo'])}], n={var['n_observaciones']}"
         )
     return (
-        f"{v['label']} ({var['fecha_inicio_obs']}→{var['fecha_fin_obs']}): "
+        f"{v['label']} ({v['desde']}→{v['hasta']}): "
         f"de {_num(var['valor_inicio'])} a {_num(var['valor_fin'])}, "
         f"cambio {_num(var['cambio_absoluto'])} ({_pct(var['variacion_pct'])}); "
         f"rango [{_num(var['minimo'])}, {_num(var['maximo'])}], n={var['n_observaciones']}"
@@ -896,6 +1151,27 @@ def facts_to_text(facts: dict) -> str:
             "el flujo aún positivo es MENOR ENTRADA (desaceleración), NO una salida; "
             "solo hay salida cuando el flujo en sí es negativo."
         )
+
+    if shape == "return_index":
+        lines.append(
+            "RENTABILIDAD por tipo de fondo — RETORNO COMPUESTO de cada ventana (NO es "
+            "la resta del índice). El signo indica si el fondo rentó positivo o negativo."
+        )
+        for f in facts.get("por_fondo", []):
+            lines.append(
+                f"  · {f['fondo']} (índice acumulado {_pct(f['indice_acum_pct'])} al "
+                f"{f['ultima_fecha']}):"
+            )
+            for v in f["ventanas"]:
+                rp = v.get("retorno_pct")
+                if rp is None:
+                    lines.append(f"      {v['label']} ({v['desde']}→{v['hasta']}): sin dato suficiente")
+                else:
+                    direccion = "positivo" if rp >= 0 else "negativo"
+                    lines.append(
+                        f"      {v['label']} ({v['desde']}→{v['hasta']}): rentó {direccion} {_pct(rp)}"
+                    )
+        return "\n".join(lines)
 
     if shape == "timeseries_categorical":
         lines.append(f"Categoría: {facts.get('category_col')}; métrica: {facts.get('value_col')}.")

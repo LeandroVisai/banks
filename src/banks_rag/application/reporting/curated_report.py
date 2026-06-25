@@ -28,7 +28,7 @@ from banks_rag.infrastructure.sql.parquet_catalog_loader import (
     load_parquet_catalog,
 )
 
-from .parquet_facts import HtmlTable, PlotData, PlotSeries, compute_series
+from .parquet_facts import HtmlTable, PlotData, PlotSeries, compute_series, weekly_cutoff
 from .report_spec import STATUS_SKIP, FamilyReportSpec, ReportBlock
 from .series_transforms import get_transform
 from .svg_chart import render_plot_svg, renders_natively
@@ -96,8 +96,65 @@ class CuratedReport:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _spec_source_ids(spec: FamilyReportSpec) -> list[str]:
+    """``source_id`` distintos del spec, en orden de aparición."""
+    seen: list[str] = []
+    for b in spec.blocks:
+        if b.source_id and b.source_id not in seen:
+            seen.append(b.source_id)
+    return seen
+
+
+def weekly_anchor_source_ids(spec: FamilyReportSpec) -> set[str]:
+    """``source_id`` cuyas variaciones semanales comparten el corte común: los de
+    las secciones en ``spec.weekly_anchor_sections``. Si el spec no declara secciones
+    de anclaje, devuelve TODOS los source_ids (corte global, comportamiento por
+    defecto para otras familias)."""
+    sections = set(spec.weekly_anchor_sections)
+    if not sections:
+        return set(_spec_source_ids(spec))
+    return {b.source_id for b in spec.blocks if b.source_id and b.section in sections}
+
+
+def compute_weekly_cutoff(
+    spec: FamilyReportSpec, entries: list[ParquetDataset], parquet_dir: Path,
+) -> str | None:
+    """Corte semanal COMÚN del informe = ``weekly_cutoff`` sobre los datasets de las
+    secciones de anclaje (``weekly_anchor_source_ids``; ``weekly_cutoff`` se queda
+    solo con los de alta frecuencia).
+
+    Es el conjunto CANÓNICO: el proceso de gráficos (``build_curated_report``) y el
+    de texto (``generate_parquet_report``) lo calculan sobre los MISMOS source_ids
+    → mismo corte en ambos, sin pasar datos de un proceso a otro. Para ffmm el
+    anclaje es Flujos + Portafolio DCV: si flujos llega al 21 y DCV al 22, el corte
+    es el 21 (mín de los máximos)."""
+    anchor = weekly_anchor_source_ids(spec)
+    datasets = [
+        d for sid in _spec_source_ids(spec)
+        if sid in anchor and (d := get_dataset(entries, sid)) is not None
+    ]
+    return weekly_cutoff(datasets, parquet_dir)
+
+
+def monthly_section_source_ids(spec: FamilyReportSpec) -> set[str]:
+    """``source_id`` que ABREN su sección: el PRIMER bloque con ``text_slot`` de cada
+    sección del spec. Solo estos reciben el sub-párrafo MENSUAL (una vez por sección);
+    el resto de la sección lleva solo el semanal. Reusa ``_resolve_text_slots`` (la
+    misma asignación de slots que el HTML curado)."""
+    seen_sections: set[str] = set()
+    out: set[str] = set()
+    for b in _resolve_text_slots(spec):
+        if not b.text_slot or not b.source_id:
+            continue
+        if b.section not in seen_sections:
+            seen_sections.add(b.section)
+            out.add(b.source_id)
+    return out
+
+
 def _process_block(
     block: ReportBlock, *, entries: list[ParquetDataset], parquet_dir: Path,
+    weekly_asof: str | None = None,
 ) -> CuratedBlock:
     """Dibuja el bloque siempre que el dato sea graficable como serie/composición.
 
@@ -120,9 +177,12 @@ def _process_block(
         log.warning("[%s] source_id %r no está en el catálogo", block.title, block.source_id)
         return CuratedBlock(block, "placeholder", "", f"dataset {block.source_id} no encontrado")
 
+    # Inyecta el corte semanal común en los params para las transforms semanales
+    # (stacked_by_bucket, dcv_*): leen params["weekly_asof"] y anclan ahí la ventana.
+    params = {**block.params, "weekly_asof": weekly_asof} if weekly_asof else block.params
     try:
         if transform is not None:
-            result = transform(dataset, parquet_dir, block.params)
+            result = transform(dataset, parquet_dir, params)
         else:
             # Vista preliminar: serie natural, filtrada por las categorías pedidas.
             cf = list(block.params.get("funds") or block.params.get("types") or []) or None
@@ -198,7 +258,21 @@ def build_curated_report(
         parquet_dir = get_parquet_dir(catalog_path)
 
     resolved = _resolve_text_slots(spec)
-    blocks = [_process_block(b, entries=entries, parquet_dir=parquet_dir) for b in resolved]
+    # Corte común (mín de máximos de Flujos+DCV) → ancla T, T-7 y T-30 de las tablas
+    # DCV y la variación de flujos a la MISMA ventana temporal (los mismos días), en
+    # gráficos Y texto. Solo las secciones de anclaje lo usan; el resto, su máximo.
+    cutoff = compute_weekly_cutoff(spec, entries, parquet_dir)
+    anchor_ids = weekly_anchor_source_ids(spec)
+    if cutoff:
+        log.info("Informe curado %s: corte común = %s (anclaje: %s)",
+                 spec.family, cutoff, ", ".join(spec.weekly_anchor_sections) or "todas")
+    blocks = [
+        _process_block(
+            b, entries=entries, parquet_dir=parquet_dir,
+            weekly_asof=cutoff if b.source_id in anchor_ids else None,
+        )
+        for b in resolved
+    ]
     report = CuratedReport(spec=spec, generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"), blocks=blocks)
     log.info("Informe curado %s: %s", spec.family, report.summary())
     return report
@@ -304,6 +378,56 @@ _TIP_JS = """
     var pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;
     return pt.matrixTransform(svg.getScreenCTM().inverse());
   }
+  // Re-apila las series VISIBLES de un gráfico apilado (área/barra) recomputando
+  // su geometría con el eje fijo embebido en data-stack: al ocultar una serie las
+  // demás se completan hacia la base en vez de dejar un hueco. Replica exactamente
+  // el apilado divergente de svg_chart.py (positivos sobre 0, negativos bajo 0).
+  function restack(svg){
+    var raw=svg.getAttribute('data-stack');
+    if(!raw) return;
+    var st; try{st=JSON.parse(raw);}catch(err){return;}
+    var span=(st.ymax-st.ymin)||1;
+    function py(v){return st.top+st.ph*(1-(v-st.ymin)/span);}
+    function visible(i){
+      var lg=svg.querySelector('.lg-item[data-idx="'+i+'"]');
+      return !lg||lg.getAttribute('data-hidden')!=='1';
+    }
+    if(st.k==='area'){
+      var X=st.x,n=X.length,pos=[],neg=[];
+      for(var k=0;k<n;k++){pos.push(0);neg.push(0);}
+      st.s.forEach(function(ser){
+        if(!visible(ser.i)) return;  // oculta: no acumula ni se redibuja
+        var poly=svg.querySelector('polygon[data-si="'+ser.i+'"]');
+        if(!poly) return;
+        var upper=[],lower=[];
+        for(var j=0;j<n;j++){
+          var v=ser.v[j],lo,hi;
+          if(v>=0){lo=pos[j];hi=pos[j]+v;pos[j]=hi;}
+          else{hi=neg[j];lo=neg[j]+v;neg[j]=lo;}
+          upper.push(X[j].toFixed(1)+','+py(hi).toFixed(1));
+          lower.push(X[j].toFixed(1)+','+py(lo).toFixed(1));
+        }
+        lower.reverse();
+        poly.setAttribute('points',upper.join(' ')+' '+lower.join(' '));
+      });
+    } else if(st.k==='bar'){
+      var ncat=st.s.length?st.s[0].v.length:0;
+      for(var ci=0;ci<ncat;ci++){
+        var posAcc=0,negAcc=0;
+        st.s.forEach(function(ser){
+          if(!visible(ser.i)) return;  // oculta: no acumula
+          var v=ser.v[ci],yTop,yBot;
+          if(v>=0){yTop=py(posAcc+v);yBot=py(posAcc);posAcc+=v;}
+          else{yTop=py(negAcc);yBot=py(negAcc+v);negAcc+=v;}
+          var rect=svg.querySelector('rect[data-si="'+ser.i+'"][data-ci="'+ci+'"]');
+          if(rect){
+            rect.setAttribute('y',Math.min(yTop,yBot).toFixed(1));
+            rect.setAttribute('height',Math.abs(yBot-yTop).toFixed(1));
+          }
+        });
+      }
+    }
+  }
   document.querySelectorAll('svg.report-chart').forEach(function(svg){
     // ── Leyenda clickeable ────────────────────────────────────────────────────
     svg.querySelectorAll('.lg-item').forEach(function(lg){
@@ -317,6 +441,7 @@ _TIP_JS = """
           lg.setAttribute('data-hidden','1');lg.style.opacity='0.25';
           svg.querySelectorAll('[data-si="'+idx+'"]').forEach(function(el){el.style.display='none';});
         }
+        restack(svg);  // re-apila las visibles (área/barra apilada); no-op si no hay data-stack
       });
     });
     // ── Crosshair unificado + highlight de serie más cercana ─────────────────

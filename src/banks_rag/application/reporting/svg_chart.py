@@ -27,8 +27,11 @@ from datetime import date
 from .parquet_facts import PlotData, PlotSeries
 
 # Paleta: azules del informe + acentos distinguibles, segura en impresión B/N
-# (varían en luminancia, no solo en tono).
-_PALETTE = ["#0b3766", "#c8102e", "#0a8a5f", "#e08a00", "#6a3d9a", "#1f9bcf"]
+# (varían en luminancia, no solo en tono). Los 6 primeros son los del informe; los
+# extra (7-10) solo se usan en gráficos con muchas series (p.ej. rentabilidad
+# acumulada con TODOS los fondos) — los demás gráficos topan en 6 y no cambian.
+_PALETTE = ["#0b3766", "#c8102e", "#0a8a5f", "#e08a00", "#6a3d9a", "#1f9bcf",
+            "#8a6d3b", "#e5559e", "#5c5c5c", "#17807e"]
 
 # Color de la serie superpuesta "Neto"/"Total" (rojo del informe BCCh).
 _OVERLAY_COLOR = "#c8102e"
@@ -577,7 +580,25 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
         return top + plot_h * (1 - (v - ymin) / (ymax - ymin))
 
     group_w = plot_w / len(cats)
-    out = _svg_open(width, height, f"{plot.dataset_id} — barras")
+    # data-stack: igual que el área apilada, datos crudos por serie + eje fijo para
+    # que el JS re-apile las barras visibles al ocultar una serie (solo apiladas;
+    # las agrupadas no se re-apilan). Las rects llevan data-ci para mapear su
+    # categoría aunque alguna barra ~0 no se haya dibujado.
+    extra_attrs = ""
+    if stacked:
+        stack_json = _json.dumps(
+            {
+                "k": "bar",
+                "top": top, "ph": plot_h, "ymin": round(ymin, 6), "ymax": round(ymax, 6),
+                "s": [
+                    {"i": si, "v": [round(lut[si].get(c, 0.0), 6) for c in cats]}
+                    for si in range(len(series))
+                ],
+            },
+            ensure_ascii=False, separators=(",", ":"),
+        )
+        extra_attrs = f' data-stack="{_esc(stack_json)}"'
+    out = _svg_open(width, height, f"{plot.dataset_id} — barras", extra_attrs)
 
     for tick in ticks:
         y = py(tick)
@@ -603,7 +624,7 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
                 if h > 0.2:
                     col = pal[si % len(pal)]
                     attrs = _tip_attrs(col, s=series[si].label, k=c, v=_val_unit(v, plot.unit))
-                    out.append(f'<rect x="{x:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw:.1f}" height="{h:.1f}" fill="{col}" data-si="{si}"{attrs}/>')
+                    out.append(f'<rect x="{x:.1f}" y="{min(y_top, y_bot):.1f}" width="{bw:.1f}" height="{h:.1f}" fill="{col}" data-si="{si}" data-ci="{ci}"{attrs}/>')
         else:
             inner = group_w * 0.8
             bw = inner / len(series)
@@ -700,8 +721,23 @@ def _render_stacked_area(plot: PlotData, width: int, height: int) -> str:
     ]
     colors = [pal[i % len(pal)] for i in range(len(series))] + [_OVERLAY_COLOR] * len(overlays)
     pts_json = _build_pts_json(parsed_pts, px, ord_to_date, plot.unit, colors=colors)
+    # data-stack: datos crudos por serie APILADA (sin acumular) + geometría del
+    # eje fijo, para que el JS de la leyenda re-apile en el cliente al ocultar una
+    # serie (las visibles se completan hacia la base; ver _TIP_JS → restack).
+    stack_json = _json.dumps(
+        {
+            "k": "area",
+            "x": [round(px(ordv[k]), 1) for k in range(len(dates))],
+            "top": top, "ph": plot_h, "ymin": round(ymin, 6), "ymax": round(ymax, 6),
+            "s": [
+                {"i": si, "v": [round(lut[si].get(dates[k], 0.0), 6) for k in range(len(dates))]}
+                for si in range(len(series))
+            ],
+        },
+        ensure_ascii=False, separators=(",", ":"),
+    )
     out = _svg_open(width, height, f"{plot.dataset_id} — área apilada",
-                    f' data-pts="{_esc(pts_json)}"')
+                    f' data-pts="{_esc(pts_json)}" data-stack="{_esc(stack_json)}"')
 
     for tick in ticks:
         y = py(tick)

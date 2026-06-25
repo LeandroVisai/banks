@@ -877,7 +877,10 @@ datasets:
   - id: retorno_acum_ffmm
     file: retorno_acum_ffmm.parquet
     chart_type: "line"
-    value_kind: "return"   # rentabilidad acumulada (nivel de índice, no flujo)
+    # return_index: índice de retorno acumulado GEOMÉTRICO en fracción desde 2019.
+    # La variación de una ventana es el retorno COMPUESTO (1+i_t)/(1+i_s)-1, no la
+    # resta del índice; el texto y el gráfico YTD lo computan geométricamente.
+    value_kind: "return_index"
     name: "Rentabilidad acumulada por tipo de fondo (%)"
     description: >
       Serie ancha de rentabilidad acumulada por tipo de fondo: una columna por tipo (Tipo 1..Tipo 8). El parquet viene en FRACCIÓN (0,58 = 58%) y acumula desde 2019 (no resetea por año), por eso value_scale 100 la lleva a porcentaje. Útil para el gráfico de rentabilidad acumulada por tipo de fondo (multi-línea).

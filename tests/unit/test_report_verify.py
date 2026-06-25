@@ -72,10 +72,11 @@ def test_flow_window_sums_period_flows():
 
 def test_window_variations_flow_vs_stock():
     series = [("2026-06-01", 100.0), ("2026-06-10", 50.0), ("2026-06-20", 40.0)]
+    # Ventana mensual NO anclada (resto de parquets) → variación clásica por slice.
     wins = [{"label": "v", "start": "2026-06-01", "end": "2026-06-20"}]
     flow = _window_variations(series, wins, is_flow=True)[0]["variacion"]
     stock = _window_variations(series, wins, is_flow=False)[0]["variacion"]
-    assert flow["flujo_periodo"] == pytest.approx(190.0)        # suma
+    assert flow["flujo_periodo"] == pytest.approx(190.0)        # suma de la ventana
     assert stock["cambio_absoluto"] == pytest.approx(-60.0)     # 40-100 (punto a punto)
 
 
