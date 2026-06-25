@@ -527,7 +527,7 @@ _TIP_JS = """
 """
 
 _DISCLAIMER = (
-    "Informe generado automáticamente desde los parquets (sin IA en el texto) — "
+    "Informe generado automáticamente desde bases DACE (Todos los textos fueron generados con IA) — "
     "uso interno; validar cifras antes de citar."
 )
 

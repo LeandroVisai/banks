@@ -887,6 +887,95 @@ def window_stacked_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: di
                     date_note=note)
 
 
+def _accum_windows(
+    dataset: ParquetDataset, parquet_dir: Path, params: dict,
+) -> tuple[list[str], dict[str, dict[str, float]], list[tuple[str, str, str]]] | None:
+    """Núcleo compartido del flujo ACUMULADO por categoría en ventanas.
+
+    Lee un parquet LARGO (fecha + categoría + valor) y suma el flujo de cada
+    ventana por categoría. Devuelve ``(cats, accum, spans)`` donde
+    ``accum = {ventana_label: {cat: suma}}`` y ``spans = [(label, start, last)]``;
+    ``None`` si el parquet no tiene la forma esperada.
+
+    params: ``category`` / ``value`` (si faltan, ``detect_roles``), ``order``
+    (orden de categorías), ``windows`` (lista de ``[label, días]``; default
+    ``[["Variación semanal", 7], ["Variación mensual", 30]]``).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        cat = params.get("category") or (roles.category_cols[0] if roles.category_cols else None)
+        val = params.get("value") or (roles.value_cols[0] if roles.value_cols else None)
+        if roles.date_col is None or not cat or not val:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, cat, val])
+    finally:
+        con.close()
+    by_cat = _aggregate_by_category(rows, roles.date_col, cat, val)  # {cat: [(iso, v)]}
+    cats = [c for c in (params.get("order") or sorted(by_cat)) if c in by_cat]
+    if not cats:
+        return None
+    last = max(iso for s in by_cat.values() for iso, _ in s)
+    windows = params.get("windows") or [["Variación semanal", 7], ["Variación mensual", 30]]
+    accum: dict[str, dict[str, float]] = {}
+    spans: list[tuple[str, str, str]] = []
+    for label, days in windows:
+        start = (date.fromisoformat(last[:10]) - timedelta(days=int(days))).isoformat()
+        accum[label] = {c: sum(v for iso, v in by_cat.get(c, []) if iso >= start) for c in cats}
+        spans.append((label, start, last))
+    return cats, accum, spans
+
+
+def window_accum_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Flujo ACUMULADO por categoría (fondo) en ventanas → barras AGRUPADAS:
+    eje X = categoría (A-E), una serie por ventana = SUMA de los flujos de la
+    ventana. Vista de variación semanal / mensual del mismo dato que el gráfico
+    diario (``window_stacked_by_cat``): para cada fondo, el traspaso neto acumulado
+    de la última semana y del último mes, lado a lado.
+
+    params: ver ``_accum_windows``.
+    """
+    res = _accum_windows(dataset, parquet_dir, params)
+    if res is None:
+        return None
+    cats, accum, spans = res
+    series_order = [label for label, _, _ in spans]
+    note_parts = [
+        f"{label}: {_fmt_date(start)} → {_fmt_date(last)}"
+        for label, start, last in spans
+    ]
+    return _grouped(dataset.id, dataset.unit, accum, cats, series_order,
+                    date_note="  ·  ".join(note_parts))
+
+
+def window_accum_stacked_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Flujo ACUMULADO APILADO POR FONDO en ventanas → barras APILADAS DIVERGENTES:
+    eje X = ventana (semanal / mensual), una serie por FONDO (A-E, mismos colores
+    que el gráfico diario). El alto neto de cada columna ES el flujo neto de la
+    ventana y la composición muestra cómo aportó cada fondo. Vista "neta" que cierra
+    el bloque de traspasos: cómo quedaron los fondos entre sí en la semana vs. el mes.
+
+    params: ver ``_accum_windows`` (las categorías del parquet pasan a SER las
+    series apiladas; las ventanas pasan a ser el eje X).
+    """
+    res = _accum_windows(dataset, parquet_dir, params)
+    if res is None:
+        return None
+    cats, accum, spans = res  # cats = fondos; accum = {ventana: {fondo: suma}}
+    win_labels = [label for label, _, _ in spans]
+    # Transpone: una serie por fondo, su valor en cada ventana (eje X).
+    series_dict = {f: {w: accum[w].get(f, 0.0) for w in win_labels} for f in cats}
+    note_parts = [
+        f"{label}: {_fmt_date(start)} → {_fmt_date(last)}"
+        for label, start, last in spans
+    ]
+    return _grouped(dataset.id, dataset.unit, series_dict, win_labels, list(cats),
+                    date_note="  ·  ".join(note_parts))
+
+
 def window_grouped_long(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Barras apiladas DIVERGENTES por categoría de un parquet LARGO con columna de
     TIPO (Suscripción/Vencimiento): suma de la última ventana por ``group``,
@@ -1329,6 +1418,8 @@ _REGISTRY: dict[str, Transform | None] = {
     "wide_window_bars": wide_window_bars,
     "wide_monthly_bars": wide_monthly_bars,
     "window_stacked_by_cat": window_stacked_by_cat,
+    "window_accum_by_cat": window_accum_by_cat,
+    "window_accum_stacked_by_cat": window_accum_stacked_by_cat,
     "window_grouped_long": window_grouped_long,
     "snapshot_grouped": snapshot_grouped,
     "snapshot_stacked": snapshot_stacked,

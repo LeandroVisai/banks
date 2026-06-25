@@ -44,6 +44,31 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
         source_id="stock_fondo_afp", transform="straight_series",
     ),
+    # Traspaso entre multifondos — VARIACIÓN: barras agrupadas por fondo (A-E) con el
+    # flujo acumulado de la última semana y del último mes, lado a lado. Va ARRIBA del
+    # gráfico diario para leer la variación semanal/mensual de un vistazo.
+    ReportBlock(
+        section=_S_ALLOC, title="Traspaso de fondos entre multifondos (acumulado semanal y mensual)",
+        unit="US$ Mill.", chart="grouped_bar", status=STATUS_MVP,
+        source_id="movimientos_fondos", transform="window_accum_by_cat",
+        params={"category": "fondo", "value": "flujos_usd",
+                "order": ["A", "B", "C", "D", "E"],
+                "windows": [["Δ T-7", 7], ["Δ T-30", 30]]},
+        note="*flujo acumulado por tipo de fondo: última semana vs. último mes",
+    ),
+    # Vista NETA: las dos ventanas (semanal / mensual) como columnas APILADAS por
+    # fondo (mismos colores que el gráfico diario). El alto neto de cada columna es
+    # el flujo neto de la ventana; muestra cómo quedaron los fondos entre sí.
+    ReportBlock(
+        section=_S_ALLOC, title="Traspaso de fondos entre multifondos (neto apilado por fondo)",
+        unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
+        source_id="movimientos_fondos", transform="window_accum_stacked_by_cat",
+        params={"category": "fondo", "value": "flujos_usd",
+                "order": ["A", "B", "C", "D", "E"],
+                "windows": [["Δ T-7", 7], ["Δ T-30", 30]]},
+        note="*composición del flujo neto por fondo: semanal vs. mensual",
+        no_text=True,  # comentario único en el bloque de variación de arriba
+    ),
     # Traspaso entre multifondos: barra apilada DIVERGENTE por día (flujos diarios
     # por fondo A-E), réplica de "Traspaso de fondos de FP" del tablero.
     ReportBlock(
@@ -53,6 +78,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         params={"category": "fondo", "value": "flujos_usd",
                 "order": ["A", "B", "C", "D", "E"], "last_n": 14},
         note="*flujos diarios por tipo de fondo, últimas ~2 semanas",
+        no_text=True,  # comentario único en el bloque de variación de arriba
     ),
     # ── Renta Fija (DCV) ─────────────────────────────────────────────────────
     ReportBlock(
@@ -115,12 +141,15 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     ReportBlock(
         section=_S_TASAS, title="MtM de swaps por tipo de fondo",
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
-        source_id="mtm_afp", transform="straight_series",
+        source_id="mtm_afp", transform="category_series",
+        params={"category": "fondo", "value": "mtm",
+                "order": ["A", "B", "C", "D", "E"], "net": "auto"},  # + línea Neto = suma de fondos
     ),
     ReportBlock(
         section=_S_TASAS, title="DV01 proyectado en swap por moneda",
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
-        source_id="dv01_spc_afp", transform="straight_series",
+        source_id="dv01_spc_afp", transform="filter_fund",
+        params={"funds": ["CLP", "US$"]},  # se excluye UF a pedido
     ),
     # ── Atribución de retorno ────────────────────────────────────────────────
     ReportBlock(
