@@ -793,9 +793,33 @@ class TestWeeklyAnchorAndFunds:
             weekly_anchor_source_ids,
         )
 
-        # AFP no declara weekly_anchor_sections → corte global (todos los source_ids).
-        assert not AFP_SPEC.weekly_anchor_sections
-        assert weekly_anchor_source_ids(AFP_SPEC) == set(_spec_source_ids(AFP_SPEC))
+        # Un spec que comparte corte y NO declara weekly_anchor_sections → corte
+        # global (todos los source_ids).
+        spec = FamilyReportSpec(
+            family="demo", title="Demo",
+            blocks=(
+                ReportBlock(section="S", title="A", chart="line", status=STATUS_MVP,
+                            source_id="ds_a", transform="straight_series"),
+                ReportBlock(section="S", title="B", chart="line", status=STATUS_MVP,
+                            source_id="ds_b", transform="straight_series"),
+            ),
+        )
+        assert not spec.weekly_anchor_sections
+        assert spec.share_weekly_cutoff  # default
+        assert weekly_anchor_source_ids(spec) == set(_spec_source_ids(spec))
+
+    def test_afp_disables_shared_cutoff(self, tmp_path):
+        # AFP fija share_weekly_cutoff=False: cada parquet se ancla a su propio
+        # máximo (no hay corte común que arrastre todo a la fecha más vieja).
+        from banks_rag.application.reporting.curated_report import (
+            compute_weekly_cutoff,
+            weekly_anchor_source_ids,
+        )
+
+        assert AFP_SPEC.share_weekly_cutoff is False
+        assert weekly_anchor_source_ids(AFP_SPEC) == set()
+        # Con anchor vacío el corte común es None (no toca parquets reales).
+        assert compute_weekly_cutoff(AFP_SPEC, [], tmp_path) is None
 
     def test_funds_1_2_3_6_in_key_blocks(self):
         by_id = {(b.source_id, b.transform): b for b in FFMM_SPEC.blocks}

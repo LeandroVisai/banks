@@ -62,8 +62,9 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
         source_id="flujos_acumulados_derivados", transform="category_series",
         params={"filter_col": "Institucion", "filter_val": "Total",
-                "category": "Instrumento", "value": "Net"},
-        note="*acumulado del total de agentes, desde ene.",
+                "category": "Instrumento", "value": "Net",
+                "accumulate": "cumsum", "window": "ytd"},  # Net es flujo diario → cumsum = acumulado YtD
+        note="*flujo acumulado (suma corrida) del total de agentes, desde ene.",
     ),
     # Variación MENSUAL de la posición en derivados por plazo (flujos diarios →
     # suma por mes); barra apilada divergente + Neto punto.
@@ -121,7 +122,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     ReportBlock(
         section=_S_SPC, title="Posición de no residentes en SPC nominal",
         unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
-        source_id="posicion_nr_spc", transform="category_series", scale=1000.0,
+        source_id="posicion_nr_spc", transform="category_series",  # scale 1000 ahora en el catálogo (chart Y texto)
         params={"category": "Plazos_D", "value": "Monto_USD", "net": "auto",
                 "order": ["91 a 360 dias", "Entre 1 y 2Y", "Mayor a 2Y"]},
         note="*tramos ≥90d; pagan fija (+) / reciben fija (-); Neto = suma de tramos",
@@ -131,7 +132,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     ReportBlock(
         section=_S_SPC, title="Variación acumulada de la posición NR en SPC (YtD)",
         unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
-        source_id="nr_var_posicion_spc", transform="wide_lines", scale=1000.0,
+        source_id="nr_var_posicion_spc", transform="wide_lines",  # scale 1000 ahora en el catálogo
         params={"overlay": ["Neto"], "window": "ytd", "accumulate": "rebase"},
     ),
     # Variación DIARIA = diferencia día-a-día del nivel (últimos días); barra
@@ -139,7 +140,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     ReportBlock(
         section=_S_SPC, title="Variación diaria de la posición NR en SPC por plazo",
         unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
-        source_id="nr_var_posicion_spc", transform="wide_window_bars", scale=1000.0,
+        source_id="nr_var_posicion_spc", transform="wide_window_bars",  # scale 1000 ahora en el catálogo
         params={"overlay": ["Neto"], "last_n": 6, "diff": True},
         note="*variación diaria (Δ día anterior) de los últimos días; Neto como punto",
     ),
@@ -169,4 +170,7 @@ NR_SPEC = FamilyReportSpec(
     family="nr",
     title="Informe No Residentes",
     blocks=_BLOCKS,
+    # Los parquets NR cierran en fechas distintas. Sin corte común, el TEXTO (y los
+    # gráficos) usan el máximo de SU propio parquet, no la fecha del de menor fecha.
+    share_weekly_cutoff=False,
 )

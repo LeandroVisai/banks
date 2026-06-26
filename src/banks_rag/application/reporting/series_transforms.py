@@ -710,7 +710,17 @@ def wide_lines(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Plot
         if net_pts:
             series.append(PlotSeries(label="Neto", points=_downsample(net_pts)))
             overlay = ("Neto",)
-    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit, series, overlay=overlay)
+    # Ventana del acumulado (eje X temporal): hace explícitas las fechas que considera.
+    note = ""
+    if mode and series:
+        all_isos = [iso for s in series for iso, _ in s.points]
+        if all_isos:
+            last_iso = max(all_isos)
+            start_iso = (window and _window_start(last_iso, window)) or min(all_isos)
+            label = "Acumulado (suma corrida)" if mode == "cumsum" else "Acumulado"
+            note = f"{label} {_fmt_date(start_iso)} → {_fmt_date(last_iso)}"
+    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit,
+                    series, overlay=overlay, date_note=note)
     return None if plot.is_empty() else plot
 
 
@@ -1089,7 +1099,9 @@ def snapshot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
 
     Para "Flujo cambiario por AFP" (Spot/Forward apilados + Neto por AFP).
     params: ``group`` (col del eje X), ``values`` (cols de valor), ``order``,
-    ``overlay`` (cols que van como punto superpuesto, p.ej. ``["Neto"]``).
+    ``overlay`` (cols que van como punto superpuesto, p.ej. ``["Neto"]``),
+    ``title_col`` (col cuyo texto trae la ventana de fechas tras un "·",
+    p.ej. ``_title_override`` = "… · 03-06 al 10-06-2026" → date_note).
     """
     path = dataset.parquet_path(parquet_dir)
     if not path.exists():
@@ -1098,9 +1110,11 @@ def snapshot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
     values = list(params.get("values") or [])
     if not group or not values:
         return None
+    title_col = params.get("title_col")
+    read_cols = [group, *values] + ([title_col] if title_col else [])
     con = duckdb.connect()
     try:
-        rows = _read_rows(con, path, date_col=None, columns=[group, *values])
+        rows = _read_rows(con, path, date_col=None, columns=read_cols)
     finally:
         con.close()
     agg: dict[str, dict[str, float]] = {}
@@ -1119,7 +1133,15 @@ def snapshot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
     cats = [c for c in (params.get("order") or sorted(agg)) if c in agg]
     sd = {v: {c: agg[c].get(v, 0.0) for c in cats} for v in values}
     overlay = tuple(c for c in (params.get("overlay") or []) if c in values)
-    return _grouped(dataset.id, dataset.unit, sd, cats, values, overlay=overlay)
+    # Ventana de fechas: el parquet no tiene columna fecha, pero la trae embebida en
+    # una columna de título (tras un "·"). La mostramos como date_note del corte.
+    date_note = ""
+    if title_col:
+        raw = next((r.get(title_col) for r in rows if r.get(title_col)), None)
+        if raw:
+            txt = str(raw)
+            date_note = txt.split("·", 1)[1].strip() if "·" in txt else txt.strip()
+    return _grouped(dataset.id, dataset.unit, sd, cats, values, overlay=overlay, date_note=date_note)
 
 
 def snapshot_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -1340,9 +1362,9 @@ def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Htm
         dates = _distinct_dates_sorted(con, parquet_path, roles.date_col)
         if len(dates) < 3:
             return None
-        # El heatmap no muestra fechas en encabezados: solo necesita las fechas CON
-        # dato (at-or-before del corte) para los deltas Δ T-7 / Δ T-30.
-        _disp, (t_iso, t7_iso, t30_iso) = _cut_indices(dates, params.get("weekly_asof"))
+        # display = (T, T-7, T-30) para rotular el span de cada matriz; value = fechas
+        # CON dato (at-or-before del corte) para calcular los deltas Δ T-7 / Δ T-30.
+        (t_disp, t7_disp, t30_disp), (t_iso, t7_iso, t30_iso) = _cut_indices(dates, params.get("weekly_asof"))
 
         in_clause = ", ".join(f"DATE '{d}'" for d in {t_iso, t7_iso, t30_iso})
         src = f"read_parquet('{parquet_path.as_posix()}')"
@@ -1388,8 +1410,11 @@ def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Htm
         if vt is not None and vt30 is not None:
             delta30[tipo][bucket] = vt - vt30
 
+    label7 = f"Δ T-7 · {_fmt_date(t7_disp)} → {_fmt_date(t_disp)}"
+    label30 = f"Δ T-30 · {_fmt_date(t30_disp)} → {_fmt_date(t_disp)}"
     return HtmlTable(
-        html=render_dcv_heatmap_tables(tipos, buckets, delta7, delta30, unit=dataset.unit),
+        html=render_dcv_heatmap_tables(tipos, buckets, delta7, delta30, unit=dataset.unit,
+                                       label7=label7, label30=label30),
         dataset_id=dataset.id,
     )
 

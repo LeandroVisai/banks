@@ -67,6 +67,10 @@ class CuratedBlock:
     reason: str = ""       # por qué placeholder (para la tarjeta)
     preliminary: bool = False  # gráfico dibujado como línea, tipo final pendiente
     date_note: str = ""    # fechas/ventanas que cubre el gráfico (eje X no temporal)
+    # Fuente del gráfico (``PlotData`` o ``HtmlTable``), para re-renderizar el chart
+    # en otro backend (p.ej. PNG matplotlib para el cuerpo de un correo). ``None`` en
+    # placeholders/skip o cuando el resultado fue HTML inline (tablas heatmap).
+    plot: object | None = None
 
 
 @dataclass
@@ -110,6 +114,8 @@ def weekly_anchor_source_ids(spec: FamilyReportSpec) -> set[str]:
     las secciones en ``spec.weekly_anchor_sections``. Si el spec no declara secciones
     de anclaje, devuelve TODOS los source_ids (corte global, comportamiento por
     defecto para otras familias)."""
+    if not spec.share_weekly_cutoff:
+        return set()  # sin corte común: cada parquet se ancla a su propio máximo
     sections = set(spec.weekly_anchor_sections)
     if not sections:
         return set(_spec_source_ids(spec))
@@ -128,6 +134,8 @@ def compute_weekly_cutoff(
     → mismo corte en ambos, sin pasar datos de un proceso a otro. Para ffmm el
     anclaje es Flujos + Portafolio DCV: si flujos llega al 21 y DCV al 22, el corte
     es el 21 (mín de los máximos)."""
+    if not spec.share_weekly_cutoff:
+        return None  # familia sin corte común (cada parquet se ancla a su máximo)
     anchor = weekly_anchor_source_ids(spec)
     datasets = [
         d for sid in _spec_source_ids(spec)
@@ -193,7 +201,7 @@ def _process_block(
 
     # Resultado HTML inline (tablas con color — heatmap DCV).
     if isinstance(result, HtmlTable):
-        return CuratedBlock(block, "chart", result.html, preliminary=False)
+        return CuratedBlock(block, "chart", result.html, preliminary=False, plot=result)
 
     plot = result
     if plot is None or plot.is_empty():
@@ -216,7 +224,8 @@ def _process_block(
     # Preliminar solo si la forma del dato NO permite el tipo objetivo (cae a
     # línea/composición). Con su transform propia, el bloque sale en su tipo final.
     preliminary = not renders_natively(plot.kind, block.chart)
-    return CuratedBlock(block, "chart", svg, preliminary=preliminary, date_note=plot.date_note)
+    return CuratedBlock(block, "chart", svg, preliminary=preliminary,
+                        date_note=plot.date_note, plot=plot)
 
 
 def _resolve_text_slots(spec: FamilyReportSpec) -> list[ReportBlock]:

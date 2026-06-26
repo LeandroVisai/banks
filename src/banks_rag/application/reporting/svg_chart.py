@@ -992,10 +992,13 @@ def render_dcv_heatmap_tables(
     delta7: dict[str, dict[str, float | None]],
     delta30: dict[str, dict[str, float | None]],
     unit: str = "US$ Mill.",
+    label7: str = "Δ T-7",
+    label30: str = "Δ T-30",
 ) -> str:
     """Dos matrices heatmap (Delta T-7 / Delta T-30, variación a 1 semana / 1 mes):
     filas=instrumento, cols=plazo, celdas coloreadas verde (positivo) / rojo
-    (negativo)."""
+    (negativo). ``label7``/``label30`` rotulan cada matriz (incluyen el span de
+    fechas que considera el delta)."""
 
     def _matrix(label: str, matrix: dict[str, dict[str, float | None]]) -> str:
         th = "text-align:right;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap"
@@ -1022,7 +1025,7 @@ def render_dcv_heatmap_tables(
     unit_note = f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)}</div>' if unit else ""
     return (
         '<div style="overflow-x:auto;max-width:760px;margin:6px auto">'
-        + _matrix("Δ T-7", delta7)
-        + _matrix("Δ T-30", delta30)
+        + _matrix(label7, delta7)
+        + _matrix(label30, delta30)
         + unit_note + "</div>"
     )

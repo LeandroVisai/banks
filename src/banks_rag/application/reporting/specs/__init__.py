@@ -18,10 +18,20 @@ _SPECS: dict[str, FamilyReportSpec] = {
     AFP_SPEC.family: AFP_SPEC,
 }
 
+# El ``segment`` del catálogo no siempre coincide con el ``family`` del spec
+# (NR: segment ``no_residentes`` vs family ``nr``). El proceso de TEXTO
+# (``generate_parquet_report``) resuelve el spec por SEGMENT; sin este alias caería
+# al corte común e ignoraría ``share_weekly_cutoff``. Mantener sincronizado con los
+# ``segment`` reales del catálogo.
+_SEGMENT_ALIASES: dict[str, str] = {
+    "no_residentes": NR_SPEC.family,
+}
+
 
 def get_spec(family: str) -> FamilyReportSpec | None:
-    """Spec curado de una familia (``None`` si no hay)."""
-    return _SPECS.get(family.strip().lower())
+    """Spec curado de una familia o ``segment`` del catálogo (``None`` si no hay)."""
+    key = family.strip().lower()
+    return _SPECS.get(_SEGMENT_ALIASES.get(key, key))
 
 
 def available_families() -> list[str]:

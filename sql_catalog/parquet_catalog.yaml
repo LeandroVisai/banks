@@ -8,6 +8,7 @@ datasets:
   - id: allocation_int_nac
     file: allocation_int_nac.parquet
     chart_type: "multi_line_dual"
+    facts: {composition_exclude: ["AUM"]}   # AUM (US$ Mill, eje der.) NO entra a la composicion de allocation %
     name: "Distribución internacional vs local"
     description: >
       Serie de distribución internacional vs local para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Nacional, Extranjero, AUM. Cubre el período entre 2008-09-30 y 2026-04-30. La unidad principal de análisis es %. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -23,11 +24,12 @@ datasets:
   - id: attribution
     file: attribution.parquet
     chart_type: "bar_scatter_dual"
+    value_scale: 100.0   # Valor/Retorno vienen en FRACCION (~0,08) -> x100 = % (chart Y texto)
     name: "Distribución fondos por clase de activos"
     description: >
       Serie de distribución fondos por clase de activos para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por fondo (A, B, C, D, E), Clase. Incluye las métricas Valor, Retorno. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: afp
-    unit: "valor"
+    unit: "%"
     date_range: []
     columns:
       - {name: "fondo", type: VARCHAR, values: ["A", "B", "C", "D", "E"]}
@@ -38,6 +40,7 @@ datasets:
   - id: cambiario_afp
     file: cambiario_afp.parquet
     chart_type: "bar_scatter_dual"
+    facts: {category: "Sector_contraparte", value: "Neto"}   # el dato relevante es el Neto por AFP (no la 1a col Spot)
     name: "Flujo cambiario (US$ Mill.)"
     description: >
       Serie de flujo cambiario (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Sector_contraparte, _title_override (Flujo cambiario AFP (US$ Mill.) · 22-05 al 29-05-2026). Incluye las métricas Spot, Forward, Neto. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -54,6 +57,8 @@ datasets:
   - id: dv01_spc_afp
     file: dv01_spc_afp.parquet
     chart_type: "line"
+    value_kind: "stock"   # DV01 = sensibilidad (nivel), no flujo
+    facts: {exclude: {moneda: ["UF"]}}   # el chart excluye UF; el texto tambien
     name: "DV01 proyectado en swap por moneda (US$ Mill.)"
     description: >
       Serie de dv01 proyectado en swap por moneda (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por moneda (CLP, UF, US$). Incluye las métricas dv01. Cubre el período entre 2020-01-31 y 2026-06-01. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -83,6 +88,7 @@ datasets:
   - id: mtm_afp
     file: mtm_afp.parquet
     chart_type: "line"
+    value_kind: "stock"   # MtM = valuacion (nivel), no flujo; la variacion es nivel fin-inicio
     name: "MtM swaps por tipo de fondo (US$ Mill.)"
     description: >
       Serie de mtm swaps por tipo de fondo (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por fondo (A, B, C, D, E). Incluye las métricas mtm. Cubre el período entre 2020-01-31 y 2026-06-01. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -127,6 +133,7 @@ datasets:
   - id: stock_bucket_afp
     file: stock_bucket_afp.parquet
     chart_type: "stacked_area"
+    value_kind: "stock"   # stock DCV por tramo (nivel)
     name: "Stock DCV AFP por tramo de plazo (US$ Mill.)"
     description: >
       Serie de stock dcv afp por tramo de plazo (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 1 y 2Y, Entre 2 y 5Y, Entre 5 y 10Y, Mayor a 10Y, Menor a 1Y). Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -141,6 +148,7 @@ datasets:
   - id: stock_fondo_afp
     file: stock_fondo_afp.parquet
     chart_type: "stacked_area"
+    value_kind: "stock"   # stock de fondos por tipo (nivel)
     name: "Stock Fondos (US$ Mill.)"
     description: >
       Serie de stock fondos (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por fondo (A, B, C, D, E). Incluye las métricas mmus. Cubre el período entre 2010-01-29 y 2026-04-30. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -155,6 +163,7 @@ datasets:
   - id: stock_nivel_afp
     file: stock_nivel_afp.parquet
     chart_type: "stacked_area"
+    value_kind: "stock"   # stock DCV por instrumento (nivel)
     name: "Stock DCV AFP por instrumento (US$ Mill.)"
     description: >
       Serie de stock dcv afp por instrumento (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo. Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -169,6 +178,7 @@ datasets:
   - id: variacion_stock_afp
     file: variacion_stock_afp.parquet
     chart_type: "grouped_bar"
+    value_kind: "stock"   # NIVELES de stock DCV (el chart calcula la delta  T-7 / T-30); NO sumar
     name: "Variación Stock DCV AFP (US$ Mill.)"
     description: >
       Serie de variación stock dcv afp (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 1 y 2Y, Entre 2 y 5Y, Entre 5 y 10Y, Mayor a 10Y, Menor a 1Y), Tipo, Moneda (CLP, UF). Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -753,7 +763,7 @@ datasets:
   - id: flujos_acum_ffmm
     file: flujos_acum_ffmm.parquet
     chart_type: "ffmm_cum_interactive"
-    value_kind: "flow"   # Incremento_USD = flujo por período (el chart le hace cumsum); la ventana se SUMA
+    value_kind: "flow"   # Incremento_USD = flujo por periodo (el chart le hace cumsum); la ventana se SUMA
     name: "Flujos acumulados por fondo (US$ Mill.)"
     description: >
       Serie de flujos acumulados por fondo (us$ mill.) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por tipo_fondo. Incluye las métricas Incremento_USD. Cubre el período entre 2019-01-01 y 2026-05-31. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -768,7 +778,7 @@ datasets:
   - id: flujos_ffmm
     file: flujos_ffmm.parquet
     chart_type: "grouped_bar"
-    value_kind: "flow"   # valor = flujo del período (entrada/salida); la ventana se SUMA
+    value_kind: "flow"   # valor = flujo del periodo (entrada/salida); la ventana se SUMA
     name: "Flujos semanales por fondo (US$ Mill.)"
     description: >
       Serie de flujos semanales por fondo (us$ mill.) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por tipo_fondo. Incluye las métricas flujos_usd. Cubre el período entre 2019-01-06 y 2026-05-31. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -783,7 +793,7 @@ datasets:
   - id: flujos_spot_ffmm
     file: flujos_spot_ffmm.parquet
     chart_type: "line_cum_interactive"
-    value_kind: "flow"   # flujo spot por período (el chart le hace cumsum); la ventana se SUMA
+    value_kind: "flow"   # flujo spot por periodo (el chart le hace cumsum); la ventana se SUMA
     name: "Flujo spot acumulados (US$ Mill.)"
     description: >
       Serie de flujo spot acumulados (us$ mill.) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Spot. Cubre el período entre 2022-01-03 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -862,7 +872,7 @@ datasets:
   - id: retornos_fondo_ffmm
     file: retornos_fondo_ffmm.parquet
     chart_type: "grouped_bar"
-    value_kind: "return"   # retornos diarios (no flujo): la dirección es el signo de la variación
+    value_kind: "return"   # retornos diarios (no flujo): la direccion es el signo de la variacion
     name: "Retornos diarios por tipo de fondo (%)"
     description: >
       Serie de retornos diarios por tipo de fondo para el seguimiento del segmento de fondos mutuos. Se desagrega por Tipo (Tipo 1..Tipo 8) e incluye la métrica Retorno. Útil para la rentabilidad por ventana (7d, 30d, YtD) y la rentabilidad mensual por tipo de fondo.
@@ -1719,7 +1729,7 @@ datasets:
   - id: flujo_spot_nr
     file: flujo_spot_nr.parquet
     chart_type: "bar_neto_cum_interactive"
-    value_kind: "flow"   # flujos spot por período (el chart les hace cumsum); la ventana se SUMA
+    value_kind: "flow"   # flujos spot por periodo (el chart les hace cumsum); la ventana se SUMA
     name: "Flujos Spot acumulados (US$ Mill.)"
     description: >
       Serie de flujos spot acumulados (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas No Afecto, Afecto. Cubre el período entre 2022-01-03 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -1734,7 +1744,8 @@ datasets:
   - id: flujos_acumulados_derivados
     file: flujos_acumulados_derivados.parquet
     chart_type: "nr_deriv_cumulative_interactive"
-    value_kind: "stock"   # OJO: el parquet YA viene acumulado (nivel); NO sumar (override del falso positivo "flujo")
+    value_kind: "flow"   # Net = flujo neto diario por instrumento (oscila ~+/-2.000, ratio delta /nivel~1.3, NO acumulado); la ventana se SUMA y el chart le hace cumsum
+    facts: {filter: {Institucion: "Total"}, category: "Instrumento"}   # texto = mismo corte que el chart (Total, por instrumento)
     name: "Flujos acumulados en derivados (US$ Mill.)"
     description: >
       Serie de flujos acumulados en derivados (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion, Instrumento (CALL, CSS, FWD, FWD_obs, FXS, PUT), Modalidad_pago (Compensación, Entrega física). Incluye las métricas Net. Cubre el período entre 2025-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -1751,6 +1762,7 @@ datasets:
   - id: posicion_nr_derivados
     file: posicion_nr_derivados.parquet
     chart_type: "stacked_area_line"
+    value_kind: "stock"   # posicion (nivel) por tramo; la variacion es nivel fin-inicio, NO suma
     name: "Posición cambiaria histórica (US$ Mill.)"
     description: >
       Serie de posición cambiaria histórica (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Plazo (1 a 90 dias, 91 a 360 dias, Mayor a 360 dias). Incluye las métricas Valor, Neto. Cubre el período entre 2014-01-02 y 2026-05-28. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -1766,6 +1778,9 @@ datasets:
   - id: posicion_nr_spc
     file: posicion_nr_spc.parquet
     chart_type: "stacked_bar"
+    value_kind: "stock"   # posicion (nivel) por tramo; puede ser negativa (pagan/reciben fija)
+    value_scale: 1000.0   # parquet en US$ mil millones -> x1000 = US$ Mill. (chart Y texto)
+    facts: {exclude: {Plazos_D: ["1 a 90 dias"]}}   # el chart omite el tramo corto (~-34.000); el texto tambien
     name: "Posición en SPC nominal (US$ Mill.)"
     description: >
       Serie de posición en spc nominal (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Plazos_D (1 a 90 dias, 91 a 360 dias, Entre 1 y 2Y, Mayor a 2Y). Incluye las métricas Monto_USD. Cubre el período entre 2022-01-03 y 2026-05-27. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -1780,6 +1795,7 @@ datasets:
   - id: posicion_rfl_nr
     file: posicion_rfl_nr.parquet
     chart_type: "stacked_area"
+    value_kind: "stock"   # posicion (nivel) en BTP por bucket de plazo; variacion = nivel, NO suma
     name: "Posición en BTP (US$ Mill.)"
     description: >
       Serie de posición en btp (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 3 y 5Y, Entre 6 y 9Y, Mayor a 10Y, Menor a 2Y). Incluye las métricas mmusd. Cubre el período entre 2024-12-30 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -1809,7 +1825,8 @@ datasets:
   - id: spot_acumulado_agente
     file: spot_acumulado_agente.parquet
     chart_type: "nr_spot_cumulative_interactive"
-    value_kind: "flow"   # Net = flujo spot por período (el chart le hace cumsum); la ventana se SUMA
+    value_kind: "flow"   # Net = flujo spot por periodo (el chart le hace cumsum); la ventana se SUMA
+    facts: {filter: {Institucion: "Total"}, category: "Afecto_derivado"}   # texto = mismo corte que el chart (Total, afecto/no afecto)
     name: "Flujos Spot acumulados por agente (US$ Mill.)"
     description: >
       Serie de flujos spot acumulados por agente (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion, Afecto_derivado (No, Sí). Incluye las métricas Net. Cubre el período entre 2026-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -1825,7 +1842,7 @@ datasets:
   - id: spot_agente_afecto_derivado
     file: spot_agente_afecto_derivado.parquet
     chart_type: "bar"
-    value_kind: "flow"   # Monto_neto spot por agente (flujo del período); la ventana se SUMA
+    value_kind: "flow"   # Monto_neto spot por agente (flujo del periodo); la ventana se SUMA
     name: "Spot por agente (US$ Mill.)"
     description: >
       Serie de spot por agente (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion, Afecto_derivado (No, Sí), Tipo (Spot). Incluye las métricas Monto_neto. Cubre el período entre 2026-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -1842,7 +1859,8 @@ datasets:
   - id: spot_susc_vcto_agente
     file: spot_susc_vcto_agente.parquet
     chart_type: "stacked_bar"
-    value_kind: "flow"   # suscripción/vencimiento/spot = flujos del período; la ventana se SUMA
+    value_kind: "flow"   # suscripcion/vencimiento/spot = flujos del periodo; la ventana se SUMA
+    facts: {category: "Institucion", exclude: {Tipo: ["Spot"]}, sign: {col: "Tipo", pos: "Suscripción", neg: "Vencimiento"}}   # neto = susc - vcto, sin Spot, por agente (= chart)
     name: "Spot y derivados por Agente (US$ Mill.)"
     description: >
       Serie de spot y derivados por agente (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion, Tipo (Spot, Suscripción, Vencimiento). Incluye las métricas Monto. Cubre el período entre 2025-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -1858,7 +1876,8 @@ datasets:
   - id: susc_vcto_agente_instrumento
     file: susc_vcto_agente_instrumento.parquet
     chart_type: "stacked_bar"
-    value_kind: "flow"   # suscripción/vencimiento = flujos del período; la ventana se SUMA
+    value_kind: "flow"   # suscripcion/vencimiento = flujos del periodo; la ventana se SUMA
+    facts: {category: "Instrumento", sign: {col: "Tipo", pos: "Suscripción", neg: "Vencimiento"}}   # neto = susc - vcto por instrumento (= chart)
     name: "Suscripciones y Vencimientos por Agente (US$ Mill.)"
     description: >
       Serie de suscripciones y vencimientos por agente (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion, Instrumento (CALL, CSS, FWD, FWD_obs, FXS, PUT), Modalidad_pago (Compensación, Entrega física). Incluye las métricas Monto. Cubre el período entre 2025-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -1876,7 +1895,7 @@ datasets:
   - id: variacion_rfl_dcv_nr
     file: variacion_rfl_dcv_nr.parquet
     chart_type: "line"
-    value_kind: "stock"   # OJO: el parquet YA viene acumulado YtD (nivel ~489→3.750); NO sumar
+    value_kind: "stock"   # OJO: el parquet YA viene acumulado YtD (nivel ~489->3.750); NO sumar
     name: "Variación Stock BTP en DCV (US$ Mill.)"
     description: >
       Serie de variación stock btp en dcv (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas mmusd. Cubre el período entre 2026-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
@@ -1890,7 +1909,8 @@ datasets:
   - id: var_pos_derivados
     file: var_pos_derivados.parquet
     chart_type: "grouped_bar"
-    value_kind: "flow"   # suscripción/vencimiento de derivados = flujos del período; la ventana se SUMA
+    value_kind: "flow"   # suscripcion/vencimiento de derivados = flujos del periodo; la ventana se SUMA
+    facts: {net_cols: {pos: "Suscripcion", neg: "Vencimiento"}}   # neto por tramo = susc - vcto (= chart); si no, el texto solo veria Suscripcion
     name: "Cambio posición derivados cambiarios por plazo (US$ Mill.)"
     description: >
       Suscripciones y vencimientos de derivados cambiarios de no residentes desagregados por tramo de plazo (1 a 90 días, 91 a 360 días, Mayor a 360 días). Permite leer el cambio de la posición compradora/vendedora de la última semana por tramo y su neto. La unidad principal de análisis es US$ Mill..
@@ -1906,7 +1926,8 @@ datasets:
   - id: nr_var_posicion_spc
     file: nr_var_posicion_spc.parquet
     chart_type: "stacked_area"
-    value_kind: "stock"   # el parquet trae NIVELES de posición (rebase YtD / diff diario en el chart); NO sumar
+    value_kind: "stock"   # el parquet trae NIVELES de posicion (rebase YtD / diff diario en el chart); NO sumar
+    value_scale: 1000.0   # parquet en US$ mil millones -> x1000 = US$ Mill. (chart Y texto)
     name: "Variación posición NR en SPC nominal por plazo (US$ Mill.)"
     description: >
       Variación de la posición de no residentes en SPC nominal desagregada por tramo de plazo (91 a 360 días, Entre 1 y 2Y, Mayor a 2Y) con su neto. Permite seguir el sesgo direccional (pagan/reciben fija) por plazo en el tiempo. La unidad principal de análisis es US$ Mill..
@@ -1923,7 +1944,7 @@ datasets:
   - id: nr_var_posicion_derivados
     file: nr_var_posicion_derivados.parquet
     chart_type: "stacked_bar"
-    value_kind: "flow"   # flujo neto diario (suscripción − vencimiento) por plazo; la ventana se SUMA
+    value_kind: "flow"   # flujo neto diario (suscripcion - vencimiento) por plazo; la ventana se SUMA
     name: "Variación posición derivados NR por plazo (US$ Mill.)"
     description: >
       Variación (flujo neto suscripción − vencimiento) de la posición de no residentes en derivados cambiarios, desagregada por tramo de plazo (1 a 90 días, 91 a 360 días, Mayor a 360 días) con su neto. Flujos diarios que se agregan por mes para leer la variación mensual de la posición. La unidad principal de análisis es US$ Mill..

@@ -123,7 +123,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
         source_id="cambiario_afp", transform="snapshot_grouped",
         params={"group": "Sector_contraparte", "values": ["Spot", "Forward", "Neto"],
-                "overlay": ["Neto"],
+                "overlay": ["Neto"], "title_col": "_title_override",
                 "order": ["Habitat", "Provida", "Uno", "Cuprum", "Capital", "Modelo", "Planvital"]},
         note="*última semana; Neto = Spot + Forward como punto",
     ),
@@ -155,7 +155,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     ReportBlock(
         section=_S_ATTR, title="Atribución de retorno por clase de activos (por fondo)",
         unit="%", chart="stacked_bar", status=STATUS_MVP,
-        source_id="attribution", transform="snapshot_stacked", scale=100.0,
+        source_id="attribution", transform="snapshot_stacked",  # scale 100 ahora en el catálogo
         params={"x": "fondo", "series": "Clase", "value": "Valor",
                 "x_order": ["A", "B", "C", "D", "E"], "total_overlay": True},
         note="*contribución al retorno por clase de activo; Total como punto",
@@ -166,4 +166,8 @@ AFP_SPEC = FamilyReportSpec(
     family="afp",
     title="Informe AFP",
     blocks=_BLOCKS,
+    # Los parquets de AFP cierran en fechas distintas (p.ej. movimientos al 09-06,
+    # DCV al 10-06). Sin corte común cada gráfico se ancla al máximo de SU parquet,
+    # evitando arrastrar todo a la fecha del parquet con menor fecha.
+    share_weekly_cutoff=False,
 )

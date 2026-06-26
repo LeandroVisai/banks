@@ -80,6 +80,11 @@ class FamilyReportSpec:
     # secciones se ancla al máximo de su propio parquet. Vacío = todas las de alta
     # frecuencia comparten corte (comportamiento por defecto para otras familias).
     weekly_anchor_sections: tuple[str, ...] = ()
+    # ``False`` → NO hay corte semanal común en este informe: cada gráfico/tabla se
+    # ancla al máximo de SU propio parquet (no se arrastra todo a la fecha máxima del
+    # parquet con menor fecha). Útil cuando los datasets de la familia tienen cortes
+    # heterogéneos y forzar un corte común muestra datos viejos (caso afp).
+    share_weekly_cutoff: bool = True
 
     def sections(self) -> list[str]:
         """Secciones en orden de aparición (sin repetir)."""
