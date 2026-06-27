@@ -266,3 +266,94 @@ banks/
 ├── pyproject.toml       # única fuente de deps y entry points
 └── Makefile
 ```
+
+
+
+
+
+
+
+# Tarea: añadir edición in-place + exportar versión final a un informe HTML
+
+Quiero agregar a un HTML autocontenido (informe generado) una **barra flotante de edición**
+con 3 botones, de modo que se pueda corregir el texto en el navegador y exportar una copia limpia.
+
+## Requisitos de los 3 botones
+1. **Editar texto** — toggle: activa/desactiva `contentEditable` en los elementos de texto
+   (`p, h3, h4, h5, li, td, th, figcaption, .lead`), resaltándolos con un borde punteado.
+   NO debe tocar gráficos/charts (excluir lo que esté dentro de su contenedor).
+2. **Guardar borrador** — guarda el archivo CON el editor incluido (para seguir editando luego).
+3. **Guardar versión final** — pide carpeta/nombre y guarda una copia **limpia**: sin la barra
+   y sin el script del editor, de modo que al abrir esa copia NO aparezcan botones. Conserva
+   el resto (índice/scrollspy, gráficos, tablas, contenido con las ediciones).
+
+## Puntos técnicos CRÍTICOS (sin esto no funciona o queda sucio)
+- **La barra se crea por JS** (`document.createElement`), nunca en el markup. Antes de serializar
+  haz `bar.remove()`, serializa `document.documentElement.outerHTML`, y vuelve a `appendChild`.
+  Así la barra nunca queda en el archivo guardado.
+- **Separa los scripts**: el scrollspy/otros van en un `<script>` normal (se conservan); el editor
+  va en su PROPIO `<script id="__editor__">`. La "versión final" elimina solo ese script por id
+  con un `String.replace` sobre el HTML serializado:
+  `html.replace(/[ \t]*<script id="__editor__">[\s\S]*?<\/script>\s*/, '\n')`.
+- **Gotcha del cierre de script**: dentro del código del editor, cualquier `</script>` literal
+  (incluido el de la propia regex de arriba) debe escribirse como `<\/script>` (con backslash),
+  o el navegador cierra el `<script>` antes de tiempo y la regex de strip matchea el lugar
+  equivocado.
+- **Guardado**: usa la File System Access API (`window.showSaveFilePicker` → `createWritable`)
+  cuando exista (Chrome/Edge/Opera → escribe directo sobre el archivo elegido). Si no existe
+  (Safari/Firefox), **fallback a descarga** vía `Blob` + `<a download>`. Maneja `AbortError`
+  (usuario canceló el picker) sin romper.
+- "Guardar borrador" reusa un handle guardado (no vuelve a preguntar). "Guardar versión final"
+  pide ubicación nueva cada vez (handle=null) para que se elija la carpeta.
+- Oculta la barra al imprimir: `@media print{#__editbar{display:none!important}}`.
+
+## Código de referencia (el bloque del editor, adaptable)
+```html
+<script id="__editor__">
+(function(){
+  var SEL='p,h3,h4,h5,li,td,th,figcaption,.lead', draftHandle=null, editing=false;
+  var bar=document.createElement('div'); bar.id='__editbar';
+  bar.style.cssText='position:fixed;right:18px;bottom:18px;z-index:99999;display:flex;gap:7px;'+
+    'background:#0f2942;border-radius:11px;padding:9px 11px;font:13px system-ui';
+  function mk(t,bg){var b=document.createElement('button');b.textContent=t;
+    b.style.cssText='border:0;border-radius:8px;padding:9px 12px;color:#fff;cursor:pointer;background:'+bg;return b;}
+  var bEdit=mk('Editar texto','#0e7c86'), bDraft=mk('Guardar borrador','#3a6079'),
+      bFinal=mk('Guardar versión final','#b8860b');
+  [bEdit,bDraft,bFinal].forEach(function(e){bar.appendChild(e);});
+  document.body.appendChild(bar);
+
+  function setEditable(on){document.querySelectorAll('main '+SEL).forEach(function(el){
+    if(el.closest('.chart, .fullbleed')) return;           // excluir gráficos
+    el.contentEditable=on; el.style.outline=on?'1px dashed #b8860b':''; el.style.outlineOffset='3px';});}
+  bEdit.onclick=function(){editing=!editing; setEditable(editing);
+    bEdit.textContent=editing?'Terminar edición':'Editar texto';};
+
+  function serialize(final){
+    editing=false; setEditable(false); bar.remove();
+    var html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+    document.body.appendChild(bar);
+    if(final) html=html.replace(/[ \t]*<script id="__editor__">[\s\S]*?<\/script>\s*/,'\n');
+    return html;
+  }
+  function download(html,name){var a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([html],{type:'text/html'})); a.download=name; a.click();}
+  async function write(html,handle,name){
+    if(window.showSaveFilePicker){ try{
+      var h=handle||await showSaveFilePicker({suggestedName:name,
+        types:[{accept:{'text/html':['.html']}}]});
+      var w=await h.createWritable(); await w.write(html); await w.close(); return h;
+    }catch(e){ if(e.name==='AbortError') return 'abort'; download(html,name); } }
+    else download(html,name);
+  }
+  bDraft.onclick=async function(){var r=await write(serialize(false),draftHandle,'informe.html');
+    if(r&&r!=='abort') draftHandle=r;};
+  bFinal.onclick=function(){write(serialize(true),null,'informe_VERSION_FINAL.html');};
+})();
+</script>
+```
+
+## Importante sobre el flujo
+Si el HTML lo genera un script (Python u otro), agrega este bloque al final del `<body>` en el
+GENERADOR (no editando el HTML a mano), para que sobreviva a las regeneraciones. Avisa que las
+ediciones hechas en el navegador viven solo en el HTML: si se regenera desde el generador, se pisan.
+ 
