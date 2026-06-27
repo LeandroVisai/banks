@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -166,6 +167,61 @@ class TestOverlayAndDiverging:
         svg = render_plot_svg(plot, chart="stacked_area")
         ET.fromstring(svg)
         assert "<polygon" in svg and "<polyline" not in svg  # sin línea Neto
+
+
+@pytest.mark.unit
+class TestRestackData:
+    """``data-stack``: datos crudos + geometría que el JS usa para re-apilar las
+    series VISIBLES al ocultar una en la leyenda (área/barra apilada)."""
+
+    @staticmethod
+    def _stack_of(svg: str) -> dict:
+        root = ET.fromstring(svg)
+        raw = root.get("data-stack")
+        assert raw, "el SVG apilado debe exponer data-stack"
+        return json.loads(raw)
+
+    def test_stacked_area_embeds_raw_series(self):
+        plot = _ts(series=[
+            PlotSeries("BB", [("2026-01-31", 100.0), ("2026-02-28", 120.0)]),
+            PlotSeries("PDBC", [("2026-01-31", 50.0), ("2026-02-28", 40.0)]),
+        ])
+        st = self._stack_of(render_plot_svg(plot, chart="stacked_area"))
+        assert st["k"] == "area"
+        assert len(st["x"]) == 2                       # dos fechas
+        assert [s["i"] for s in st["s"]] == [0, 1]     # índices = data-si de los polígonos
+        assert st["s"][0]["v"] == [100.0, 120.0]       # valores crudos SIN acumular
+        assert st["s"][1]["v"] == [50.0, 40.0]
+        assert st["ymax"] > st["ymin"]                 # geometría del eje fija presente
+
+    def test_stacked_area_excludes_overlay_from_stack(self):
+        # El "Neto" es overlay (línea), NO se re-apila → no va en data-stack.
+        plot = PlotData("spc", "stacked_area", "timeseries", "x", [
+            PlotSeries("A", [("2026-01-01", 5.0), ("2026-02-01", 6.0)]),
+            PlotSeries("Neto", [("2026-01-01", 5.0), ("2026-02-01", 6.0)]),
+        ], overlay=("Neto",))
+        st = self._stack_of(render_plot_svg(plot, chart="stacked_area"))
+        assert len(st["s"]) == 1 and st["s"][0]["i"] == 0  # solo la banda apilable
+
+    def test_stacked_bar_embeds_data_ci(self):
+        st = self._stack_of(render_plot_svg(_grouped(), chart="stacked_bar"))
+        assert st["k"] == "bar"
+        # cada serie trae un valor por categoría (mismo largo para todas)
+        ncat = len(st["s"][0]["v"])
+        assert all(len(s["v"]) == ncat for s in st["s"])
+        # las rects apiladas se mapean por data-ci (robusto a barras ~0 no dibujadas)
+        svg = render_plot_svg(_grouped(), chart="stacked_bar")
+        assert 'data-ci="0"' in svg
+
+    def test_line_chart_has_no_stack_data(self):
+        # Series temporal (línea): ocultar es el comportamiento estándar, sin re-apilar.
+        root = ET.fromstring(render_plot_svg(_ts()))
+        assert root.get("data-stack") is None
+
+    def test_grouped_bar_has_no_stack_data(self):
+        # Barras AGRUPADAS (no apiladas): tampoco se re-apilan.
+        root = ET.fromstring(render_plot_svg(_grouped(), chart="grouped_bar"))
+        assert root.get("data-stack") is None
 
 
 @pytest.mark.unit

@@ -75,6 +75,16 @@ class ParquetDataset:
     # de palabras clave (``_FLOW_KEYWORDS``). Robustece la detección de flujos en
     # datasets cuyo nombre no contiene una palabra-clave (afp/nr).
     value_kind: str = ""
+    # Pistas para que el TEXTO descriptivo (``compute_facts``) describa el MISMO
+    # corte que dibuja el gráfico curado del dataset (el chart filtra/excluye/neta;
+    # los facts, por defecto, leen el eje natural del parquet → pueden divergir).
+    # Claves soportadas (todas opcionales):
+    #   filter:   {col: valor}        → quedarse solo con esas filas (p.ej. Institucion=Total)
+    #   category: "col"               → categórica primaria a describir (override del rol natural)
+    #   exclude:  {col: [valores]}    → descartar filas (p.ej. Plazos_D ≠ "1 a 90 dias")
+    #   sign:     {col, pos, neg}     → neto = Σ(filas pos) - Σ(filas neg); el resto se ignora
+    # Solo afecta al texto; el gráfico ya hace su propio corte vía el spec.
+    facts_hints: dict[str, Any] = field(default_factory=dict)
 
     def parquet_path(self, parquet_dir: Path) -> Path:
         return parquet_dir / self.file
@@ -236,4 +246,5 @@ def _parse_dataset(raw: dict) -> ParquetDataset:
         chart_type=raw.get("chart_type") or "line",
         value_scale=float(raw.get("value_scale", 1.0) or 1.0),
         value_kind=str(raw.get("value_kind", "") or "").strip().lower(),
+        facts_hints=dict(raw.get("facts") or {}),
     )

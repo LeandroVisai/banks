@@ -173,7 +173,7 @@ class TestWindowsAndClean:
 class TestDescribeDataset:
     @pytest.mark.asyncio
     async def test_ok_single_llm_call_no_tools(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(pr, "compute_facts", lambda ds, pdir, w: dict(_FACTS_OK))
+        monkeypatch.setattr(pr, "compute_facts", lambda ds, pdir, w, weekly_asof=None: dict(_FACTS_OK))
         llm = _MockLLM(responses=[GenerationResult(text="La serie subió a 2,0 al 2026-04-30.", n_tokens=10)])
         section = await pr._describe_dataset(
             _ds("flujos_ffmm"), llm=llm, window_specs=[("última semana", 7)], parquet_dir=tmp_path,
@@ -188,7 +188,7 @@ class TestDescribeDataset:
 
     @pytest.mark.asyncio
     async def test_no_data_when_facts_none(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(pr, "compute_facts", lambda ds, pdir, w: None)
+        monkeypatch.setattr(pr, "compute_facts", lambda ds, pdir, w, weekly_asof=None: None)
         llm = _MockLLM()
         section = await pr._describe_dataset(
             _ds("sin_parquet"), llm=llm, window_specs=[("última semana", 7)], parquet_dir=tmp_path,
@@ -199,7 +199,7 @@ class TestDescribeDataset:
 
     @pytest.mark.asyncio
     async def test_no_data_when_facts_empty(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(pr, "compute_facts", lambda ds, pdir, w: {"shape": "snapshot", "composition": None})
+        monkeypatch.setattr(pr, "compute_facts", lambda ds, pdir, w, weekly_asof=None: {"shape": "snapshot", "composition": None})
         llm = _MockLLM()
         section = await pr._describe_dataset(
             _ds("x"), llm=llm, window_specs=[("última semana", 7)], parquet_dir=tmp_path,
@@ -209,7 +209,7 @@ class TestDescribeDataset:
 
     @pytest.mark.asyncio
     async def test_llm_failure_becomes_error(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(pr, "compute_facts", lambda ds, pdir, w: dict(_FACTS_OK))
+        monkeypatch.setattr(pr, "compute_facts", lambda ds, pdir, w, weekly_asof=None: dict(_FACTS_OK))
 
         class _BoomLLM:
             async def generate(self, *a, **k):
@@ -262,7 +262,7 @@ class TestReduceAndReport:
     async def test_generate_end_to_end(self, tmp_path, monkeypatch):
         entries = [_ds("flujos_ffmm", name="Flujos"), _ds("dv01_ffmm", name="DV01")]
 
-        def fake_facts(ds, pdir, w):
+        def fake_facts(ds, pdir, w, weekly_asof=None):
             return None if ds.id == "dv01_ffmm" else dict(_FACTS_OK)
 
         monkeypatch.setattr(pr, "compute_facts", fake_facts)
@@ -294,3 +294,50 @@ class TestReduceAndReport:
             sections=[_section("a")], missing_ids=("no_existe",),
         )
         assert "No hallados en el catálogo: no_existe" in report.to_markdown()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Orden semanal→mensual + mensual UNA vez por sección
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestWeeklyMonthlyOrdering:
+    def test_user_prompt_two_paragraphs_weekly_first(self):
+        prompt = pr._build_user_prompt(_ds("x"), dict(_FACTS_OK), think=False, include_monthly=True)
+        assert "DOS párrafos" in prompt
+        # El semanal se pide primero, el mensual segundo.
+        assert prompt.index("SEMANAL") < prompt.index("MENSUAL")
+
+    def test_user_prompt_weekly_only_when_not_section_opener(self):
+        prompt = pr._build_user_prompt(_ds("x"), dict(_FACTS_OK), think=False, include_monthly=False)
+        assert "UN SOLO párrafo" in prompt
+        assert "NO escribas párrafo mensual" in prompt
+
+    def test_monthly_once_per_section_in_ffmm_spec(self):
+        from banks_rag.application.reporting.curated_report import (
+            _resolve_text_slots,
+            monthly_section_source_ids,
+        )
+        from banks_rag.application.reporting.specs.ffmm_spec import FFMM_SPEC
+
+        openers = monthly_section_source_ids(FFMM_SPEC)
+        # Un opener (primer bloque con texto) por sección que tiene comentario propio.
+        assert "flujos_acum_ffmm" in openers      # abre "Flujos"
+        assert "stock_nivel_ffmm" in openers      # abre "Portafolio DCV"
+        # Dedup real: hay MENOS datasets con mensual que datasets con slot de texto.
+        slotted = {b.source_id for b in _resolve_text_slots(FFMM_SPEC) if b.text_slot}
+        assert openers < slotted
+        # var_cartera_mensual_ffmm abre "Allocation" pero NO reaparece como opener de
+        # "Variación allocation" (su slot ya se asignó): aparece una sola vez.
+        assert "var_cartera_mensual_ffmm" in openers
+
+    @pytest.mark.asyncio
+    async def test_describe_dataset_records_include_monthly(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(pr, "compute_facts", lambda ds, pdir, w, weekly_asof=None: dict(_FACTS_OK))
+        llm = _MockLLM(responses=[GenerationResult(text="Semana plana.", n_tokens=5)])
+        section = await pr._describe_dataset(
+            _ds("x"), llm=llm, window_specs=[("última semana", 7)], parquet_dir=tmp_path,
+            include_monthly=False,
+        )
+        assert section.include_monthly is False

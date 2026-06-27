@@ -152,16 +152,33 @@ def _scale_rows(rows: list[dict], value_cols: list[str], scale: float) -> None:
                 row[col] = float(v) * scale
 
 
-def _windows(last_date: str, windows: list[tuple[str, int]]) -> list[dict]:
-    """``[(label, days)]`` → ``[{label, start, end}]`` anclados a ``last_date``."""
-    anchor = date.fromisoformat(last_date)
+# Gap mediano (días) máximo para considerar un dataset de ALTA FRECUENCIA
+# (diario/semanal). Por encima (mensual, p.ej. carteras a fin de mes) NO entra al
+# cálculo del corte común.
+_HIGH_FREQ_MAX_GAP_DAYS = 10
+# Una ventana es "semanal" si cubre <= estos días.
+_WEEKLY_MAX_DAYS = 7
+
+
+def _windows(
+    last_date: str, windows: list[tuple[str, int]], *, weekly_asof: str | None = None,
+) -> list[dict]:
+    """``[(label, days)]`` → ``[{label, start, end, days, is_weekly, anchored}]``.
+
+    ``weekly_asof`` es la fecha de corte / ``T`` COMÚN del informe (solo lo reciben los
+    datasets de las secciones de anclaje: Flujos + Portafolio DCV). Cuando se pasa,
+    ``anchored=True`` y TODAS las ventanas (semanal Y mensual) se anclan al mismo
+    ``end`` → esos datasets comparten ``T``, ``T-7`` y ``T-30`` (los mismos días). Sin
+    corte (``weekly_asof=None``), cada ventana se ancla al ``last_date`` del propio
+    parquet. ``is_weekly`` / ``anchored`` le indican a ``_window_value`` qué resolución
+    usar (ver ahí)."""
+    anchored = weekly_asof is not None
+    anchor = weekly_asof or last_date
     out = []
     for label, days in windows:
-        out.append({
-            "label": label,
-            "start": (anchor - timedelta(days=days)).isoformat(),
-            "end": last_date,
-        })
+        start = (date.fromisoformat(anchor[:10]) - timedelta(days=days)).isoformat()
+        out.append({"label": label, "start": start, "end": anchor, "days": days,
+                    "is_weekly": days <= _WEEKLY_MAX_DAYS, "anchored": anchored})
     return out
 
 
@@ -199,9 +216,100 @@ def _flow_window(series_slice: list[sa.Point]) -> dict | None:
     }
 
 
+def _value_asof(series: list[sa.Point], d: str) -> sa.Point | None:
+    """Último ``(fecha, valor)`` con ``fecha <= d`` (serie ordenada ASC); ``None``
+    si no hay ningún punto en o antes de ``d``."""
+    out: sa.Point | None = None
+    for p in series:
+        if p[0] <= d:
+            out = p
+        else:
+            break
+    return out
+
+
+def weekly_delta(
+    series: list[sa.Point], asof: str, *, days: int = 7, is_flow: bool = False,
+) -> dict | None:
+    """Variación semanal CANÓNICA anclada a ``asof`` — la MISMA que dibuja el
+    gráfico, para que el texto y la tabla/barra coincidan siempre.
+
+    - flujos: suma de las observaciones en ``[asof - days, asof]`` (idéntico a
+      ``_flow_window`` sobre ese slice).
+    - niveles: ``valor_asof(asof) - valor_asof(asof - days)`` con resolución
+      *at-or-before* en ambos extremos (igual que ``series_transforms.stacked_by_bucket``);
+      si no hay punto en o antes del inicio, cae al primer punto de la serie.
+
+    El dict resultante es shape-compatible con ``sa.variation`` / ``_flow_window``
+    (lo consumen ``_variation_line`` y los renderers). ``None`` si la serie está
+    vacía o no hay punto en o antes de ``asof``."""
+    if not series:
+        return None
+    start = (date.fromisoformat(asof[:10]) - timedelta(days=days)).isoformat()
+    window = _slice(series, start, asof)
+    if is_flow:
+        return _flow_window(window)
+    fin = _value_asof(series, asof)
+    if fin is None:
+        return None
+    ini = _value_asof(series, start) or series[0]
+    out = sa.variation([(ini[0], ini[1]), (fin[0], fin[1])])
+    # min/max/n informativos sobre la ventana observada (no solo los 2 extremos).
+    if out and window:
+        vals = [v for _, v in window]
+        out["minimo"], out["maximo"] = round(min(vals), 6), round(max(vals), 6)
+        out["n_observaciones"] = len(window)
+    return out
+
+
+def geom_return(points: list[sa.Point], start: str, end: str) -> float | None:
+    """Retorno COMPUESTO entre ``start`` y ``end`` de un ÍNDICE de retorno acumulado
+    (en fracción): ``(1+i_end)/(1+i_start)-1`` con resolución at-or-before en ambos
+    extremos. Para índices de retorno la "variación" de una ventana es el retorno
+    compuesto, NO la resta del índice (que sobreestima al crecer el índice).
+    ``None`` si no hay datos."""
+    if not points:
+        return None
+    i_end = next((v for iso, v in reversed(points) if iso <= end), None)
+    if i_end is None:
+        return None
+    i_start = next((v for iso, v in reversed(points) if iso <= start), points[0][1])
+    denom = 1.0 + i_start
+    if denom == 0:
+        return None
+    return (1.0 + i_end) / denom - 1.0
+
+
+def geom_ytd(points: list[sa.Point], ytd_start: str) -> list[sa.Point]:
+    """Serie de rentabilidad acumulada YTD geométrica: ``(1+i_t)/(1+i_base)-1`` para
+    ``t >= ytd_start``, con ``i_base`` = último índice ANTES de ``ytd_start`` (cierre
+    del año previo; o el primer punto si la serie arranca dentro del año)."""
+    if not points:
+        return []
+    base = next((v for iso, v in reversed(points) if iso < ytd_start), points[0][1])
+    denom = 1.0 + base
+    if denom == 0:
+        return []
+    return [(iso, (1.0 + v) / denom - 1.0) for iso, v in points if iso >= ytd_start]
+
+
 def _window_change(series_slice: list[sa.Point], *, is_flow: bool) -> dict | None:
-    """Hecho de una ventana: suma de flujos (``is_flow``) o variación de nivel."""
+    """Hecho de una ventana clásica: suma de flujos (``is_flow``) o variación de nivel
+    (último menos primer punto DENTRO del slice)."""
     return _flow_window(series_slice) if is_flow else sa.variation(series_slice)
+
+
+def _window_value(series: list[sa.Point], w: dict, *, is_flow: bool) -> dict | None:
+    """Variación de UNA ventana.
+
+    - Ventana SEMANAL (``is_weekly``) → ``weekly_delta`` (resolución canónica
+      at-or-before / suma) SIEMPRE: así la barra/tabla semanal y el texto coinciden.
+    - Ventana MENSUAL → ``weekly_delta`` SOLO si el dataset está ANCLADO (Flujos +
+      Portafolio DCV, que comparten T, T-7 y T-30); el RESTO de parquets conserva la
+      variación de ventana clásica (``_window_change``), sin cambios."""
+    if w.get("is_weekly") or w.get("anchored"):
+        return weekly_delta(series, w["end"], days=w.get("days", 7), is_flow=is_flow)
+    return _window_change(_slice(series, w["start"], w["end"]), is_flow=is_flow)
 
 
 def _window_variations(
@@ -209,8 +317,10 @@ def _window_variations(
 ) -> list[dict]:
     out = []
     for w in windows:
-        v = _window_change(_slice(series, w["start"], w["end"]), is_flow=is_flow)
-        out.append({"label": w["label"], "desde": w["start"], "hasta": w["end"], "variacion": v})
+        out.append({
+            "label": w["label"], "desde": w["start"], "hasta": w["end"],
+            "variacion": _window_value(series, w, is_flow=is_flow),
+        })
     return out
 
 
@@ -271,7 +381,86 @@ _FLOW_KEYWORDS = (
 _NON_FLOW_KINDS = frozenset({"stock", "level", "nivel", "return", "retorno", "rate", "tasa"})
 # ``value_kind`` donde SUMAR las categorías no es una métrica real (retornos/tasas):
 # no se calcula total agregado ni composición, solo el detalle por categoría.
-_NON_AGGREGATABLE_KINDS = frozenset({"return", "retorno", "rate", "tasa"})
+_NON_AGGREGATABLE_KINDS = frozenset({"return", "retorno", "rate", "tasa", "return_index"})
+
+# Etiquetas (categoría o columna) que suelen ser un AGREGADO precomputado en el
+# parquet (= suma de los componentes), no un componente más. Si se cuentan junto a
+# los componentes, el total/composición se DUPLICA. Se excluyen del total agregado
+# y de la composición SOLO si además validan numéricamente como suma del resto
+# (``_validates_as_sum``), así un dataset sin agregado no se ve afectado.
+_AGGREGATE_LABELS = frozenset({"total", "totales", "total general", "neto", "neto general"})
+
+
+def _is_aggregate_label(name: object) -> bool:
+    return str(name).strip().lower() in _AGGREGATE_LABELS
+
+
+def _validates_as_sum(
+    agg: dict[str, float], others: list[dict[str, float]], *, tol: float = 0.05,
+) -> bool:
+    """``True`` si ``agg`` ≈ suma de ``others`` en la mayoría (≥80%) de las fechas
+    comunes (tolerancia relativa ``tol``). Confirma que una serie rotulada "Total"/
+    "Neto" es de verdad el agregado de las demás antes de excluirla."""
+    ok = n = 0
+    for d, av in agg.items():
+        comp = sum(o.get(d, 0.0) for o in others)
+        scale = max(abs(av), abs(comp), 1.0)
+        n += 1
+        if abs(av - comp) <= tol * scale:
+            ok += 1
+    return n > 0 and ok / n >= 0.8
+
+
+def _apply_facts_hints(
+    rows: list[dict], hints: dict, value_cols: list[str],
+) -> list[dict]:
+    """Acota las filas para que el TEXTO describa el mismo corte que el gráfico.
+
+    - ``filter`` ``{col: valor}``: deja solo esas filas (p.ej. ``Institucion=Total``).
+    - ``exclude`` ``{col: [valores]}``: descarta esas filas (p.ej. ``Plazos_D`` ≠ tramo corto).
+    - ``sign`` ``{col, pos, neg}``: deja solo filas ``pos``/``neg`` y NIEGA el valor de
+      las ``neg`` -> el agregado pasa a ser el NETO (= Σpos - Σneg), igual que el chart.
+    """
+    flt = hints.get("filter") or {}
+    exc = hints.get("exclude") or {}
+    sign = hints.get("sign") or {}
+    out = rows
+    if flt:
+        out = [r for r in out if all(str(r.get(c)) == str(v) for c, v in flt.items())]
+    if exc:
+        out = [r for r in out
+               if all(str(r.get(c)) not in {str(x) for x in vals} for c, vals in exc.items())]
+    if sign:
+        col, pos, neg = sign.get("col"), str(sign.get("pos")), str(sign.get("neg"))
+        vcol = value_cols[0] if value_cols else None
+        kept: list[dict] = []
+        for r in out:
+            t = str(r.get(col))
+            if t == pos:
+                kept.append(r)
+            elif t == neg and vcol is not None:
+                r2 = dict(r)
+                with contextlib.suppress(TypeError, ValueError):
+                    r2[vcol] = -float(r2.get(vcol))
+                kept.append(r2)
+            # otros tipos (p.ej. Spot) se descartan: no entran al neto
+        out = kept
+    return out
+
+
+def _aggregate_keys(series_by_key: dict[str, list[sa.Point]]) -> set[str]:
+    """Claves (categorías o columnas) que son un AGREGADO precomputado: su nombre es
+    de total/neto Y su serie valida como suma de las demás. Vacío si no hay ninguna
+    (caso común → sin cambio de comportamiento)."""
+    candidates = [k for k in series_by_key if _is_aggregate_label(k)]
+    if not candidates or len(series_by_key) <= len(candidates):
+        return set()
+    out: set[str] = set()
+    for k in candidates:
+        others = [dict(s) for kk, s in series_by_key.items() if kk not in set(candidates)]
+        if others and _validates_as_sum(dict(series_by_key[k]), others):
+            out.add(k)
+    return out
 
 
 def _is_flow(dataset: ParquetDataset) -> bool:
@@ -292,14 +481,83 @@ def _is_flow(dataset: ParquetDataset) -> bool:
     return any(k in blob for k in _FLOW_KEYWORDS)
 
 
+def _distinct_dates(con: duckdb.DuckDBPyConnection, parquet_path: Path, date_col: str) -> list[str]:
+    """Fechas distintas (ISO, ASC) del parquet — para clasificar la cadencia."""
+    src = f"read_parquet({_quote_str(parquet_path.as_posix())})"
+    rows = con.sql(
+        f"SELECT DISTINCT CAST({_quote_ident(date_col)} AS DATE) AS d "
+        f"FROM {src} WHERE {_quote_ident(date_col)} IS NOT NULL ORDER BY d"
+    ).fetchall()
+    return [str(r[0]) for r in rows if r[0] is not None]
+
+
+def _median_gap_days(dates: list[str], *, tail: int = 12) -> float | None:
+    """Gap mediano (días) entre las últimas ``tail`` fechas distintas; ``None`` si
+    hay menos de 2."""
+    recent = dates[-tail:]
+    if len(recent) < 2:
+        return None
+    gaps = sorted(
+        (date.fromisoformat(recent[i + 1][:10]) - date.fromisoformat(recent[i][:10])).days
+        for i in range(len(recent) - 1)
+    )
+    mid = len(gaps) // 2
+    return float(gaps[mid]) if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2.0
+
+
+def is_high_frequency(dates: list[str]) -> bool:
+    """True si la cadencia reciente de la serie es sub-mensual (gap mediano
+    ≤ ``_HIGH_FREQ_MAX_GAP_DAYS``) → entra al corte semanal común. Series mensuales
+    o con una sola fecha quedan fuera."""
+    gap = _median_gap_days(dates)
+    return gap is not None and gap <= _HIGH_FREQ_MAX_GAP_DAYS
+
+
+def weekly_cutoff(datasets: list[ParquetDataset], parquet_dir: Path) -> str | None:
+    """Fecha de corte semanal COMÚN del informe = ``min`` de las fechas máximas de
+    los datasets de ALTA FRECUENCIA (diarios/semanales).
+
+    Los mensuales NO entran (su máximo a fin de mes arrastraría el corte semanal de
+    todos hacia atrás). Determinista: el mismo conjunto de datasets da el mismo corte
+    en el proceso de gráficos y en el de texto, garantizando cifras semanales
+    referidas a una sola fecha. ``None`` si ningún dataset califica (→ cada parquet
+    se ancla a su propio máximo, comportamiento previo)."""
+    maxes: list[str] = []
+    con = duckdb.connect()
+    try:
+        for ds in datasets:
+            path = ds.parquet_path(parquet_dir)
+            if not path.exists():
+                continue
+            try:
+                roles = detect_roles(path, con)
+                if roles.date_col is None:
+                    continue
+                dates = _distinct_dates(con, path, roles.date_col)
+            except Exception:
+                log.exception("[weekly_cutoff] no se pudieron leer fechas de %s", ds.id)
+                continue
+            if dates and is_high_frequency(dates):
+                maxes.append(dates[-1])
+    finally:
+        con.close()
+    return min(maxes) if maxes else None
+
+
 def compute_facts(
     dataset: ParquetDataset,
     parquet_dir: Path,
     windows: list[tuple[str, int]],
+    *,
+    weekly_asof: str | None = None,
 ) -> dict[str, Any] | None:
     """Calcula los hechos descriptivos relevantes de un dataset.
 
     ``windows`` es ``[(etiqueta, días)]`` (p.ej. ``[("última semana", 7), …]``).
+    ``weekly_asof`` (opcional) es la fecha de corte / ``T`` COMÚN del informe (ver
+    ``weekly_cutoff``): ancla TODAS las ventanas (semanal y mensual) ahí en vez del
+    máximo del propio parquet, para que Flujos y DCV compartan T, T-7 y T-30 (mismos
+    días) y la variación del texto coincida con la del gráfico/tabla.
     Devuelve ``None`` si el parquet no existe (→ el caller marca ``no_data``).
     El dict resultante incluye ``shape`` y un bloque de hechos por forma de dato.
     """
@@ -336,37 +594,92 @@ def compute_facts(
 
         # ── Snapshot transversal (sin columna de fecha) ──────────────────────
         if roles.date_col is None:
+            hints = getattr(dataset, "facts_hints", None) or {}
             if roles.category_cols and roles.value_cols:
-                rows = _read_rows(
-                    con, parquet_path, date_col=None,
-                    columns=[roles.category_cols[0], roles.value_cols[0]],
+                # ``category``/``value`` eligen el eje y la métrica que describe el chart
+                # (p.ej. cambiario: el dato relevante es ``Neto``, no la 1ª col ``Spot``).
+                cat_col = str(hints.get("category") or roles.category_cols[0])
+                val_col = str(hints.get("value") or roles.value_cols[0])
+                read_cols = (
+                    list(dict.fromkeys([*roles.category_cols, *roles.value_cols])) if hints
+                    else [cat_col, val_col]
                 )
+                rows = _read_rows(con, parquet_path, date_col=None, columns=read_cols)
                 _scale_rows(rows, roles.value_cols, scale)
-                comp = _snapshot_composition(rows, roles.category_cols[0], roles.value_cols[0])
-                base.update(shape="snapshot", composition=comp)
+                if hints:
+                    rows = _apply_facts_hints(rows, hints, [val_col])
+                comp = _snapshot_composition(rows, cat_col, val_col)
+                base.update(
+                    shape="snapshot", composition=comp,
+                    category_col=cat_col, value_col=val_col,
+                    facts_cut=({k: hints[k] for k in ("filter", "exclude", "category", "value") if k in hints} or None),
+                )
             else:
                 base.update(shape="snapshot", composition=None)
             return base
 
+        # max(TRY_CAST(... AS DATE)): castea POR FILA antes del max. Necesario porque
+        # algunos parquets traen la fecha como VARCHAR y su estadística de columna en
+        # la metadata viene TRUNCADA (p.ej. "2026-06-"); ``CAST(max(varchar) AS DATE)``
+        # leería esa stat corrupta y lanzaría. TRY_CAST ignora valores no-fecha (NULL).
         last_date = con.sql(
-            f"SELECT CAST(max({_quote_ident(roles.date_col)}) AS DATE) "
+            f"SELECT max(TRY_CAST({_quote_ident(roles.date_col)} AS DATE)) "
             f"FROM read_parquet({_quote_str(parquet_path.as_posix())})"
         ).fetchone()[0]
         if last_date is None:
             base.update(shape="empty")
             return base
         last_date = str(last_date)
-        wins = _windows(last_date, windows)
+        wins = _windows(last_date, windows, weekly_asof=weekly_asof)
         base.update(last_date=last_date, windows=[{"label": w["label"], "desde": w["start"], "hasta": w["end"]} for w in wins])
+
+        # ── Índice de retorno acumulado (return_index) ───────────────────────
+        # La "variación" de una ventana es el retorno COMPUESTO (geom_return), no la
+        # resta del índice. NO se escala en filas: se computa en fracción y se lleva a
+        # % con value_scale dentro de _return_index_facts.
+        if kind == "return_index" and roles.value_cols:
+            rows = _read_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, *roles.value_cols])
+            base.update(
+                shape="return_index",
+                **_return_index_facts(rows, roles.date_col, roles.value_cols, wins, value_scale=scale),
+            )
+            return base
 
         # ── Serie temporal con categoría ─────────────────────────────────────
         if roles.category_cols and roles.value_cols:
-            cat_col, val_col = roles.category_cols[0], roles.value_cols[0]
-            rows = _read_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, cat_col, val_col])
-            _scale_rows(rows, roles.value_cols, scale)
+            hints = getattr(dataset, "facts_hints", None) or {}
+            # Con hints, la categoría primaria puede no ser la natural y filter/
+            # exclude/sign necesitan otras categóricas → se leen TODAS.
+            cat_col = str(hints.get("category") or roles.category_cols[0])
+            net_cols = hints.get("net_cols") or {}
+            if net_cols:
+                # Dataset con DOS columnas de valor (p.ej. Suscripcion / Vencimiento):
+                # el valor descrito es el NETO = pos - neg por fila (el rol natural solo
+                # leería la primera columna y perdería la segunda y el neto).
+                pos, neg = net_cols.get("pos"), net_cols.get("neg")
+                val_col = "Neto"
+                read_cols = [roles.date_col, *roles.category_cols, pos, neg]
+                rows = _read_rows(con, parquet_path, date_col=roles.date_col, columns=read_cols)
+                _scale_rows(rows, [pos, neg], scale)
+                for r in rows:
+                    try:
+                        r[val_col] = float(r.get(pos) or 0.0) - float(r.get(neg) or 0.0)
+                    except (TypeError, ValueError):
+                        r[val_col] = None
+            else:
+                val_col = roles.value_cols[0]
+                read_cols = (
+                    [roles.date_col, *roles.category_cols, val_col] if hints
+                    else [roles.date_col, cat_col, val_col]
+                )
+                rows = _read_rows(con, parquet_path, date_col=roles.date_col, columns=read_cols)
+                _scale_rows(rows, roles.value_cols, scale)
+            if hints:
+                rows = _apply_facts_hints(rows, hints, [val_col])
             base.update(
                 shape="timeseries_categorical",
                 category_col=cat_col, value_col=val_col,
+                facts_cut=({k: hints[k] for k in ("filter", "exclude", "sign", "net_cols", "category") if k in hints} or None),
                 **_categorical_facts(
                     rows, roles.date_col, cat_col, val_col, wins, last_date,
                     is_flow=base["is_flow"], aggregatable=base["aggregatable"],
@@ -376,13 +689,18 @@ def compute_facts(
 
         # ── Serie temporal "ancha" (varias columnas de valor, sin categoría) ──
         if len(roles.value_cols) > 1:
+            hints = getattr(dataset, "facts_hints", None) or {}
             rows = _read_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, *roles.value_cols])
             _scale_rows(rows, roles.value_cols, scale)
+            if hints:
+                rows = _apply_facts_hints(rows, hints, roles.value_cols)
             base.update(
                 shape="timeseries_wide",
+                facts_cut=({k: hints[k] for k in ("filter", "exclude", "composition_exclude") if k in hints} or None),
                 **_wide_facts(
                     rows, roles.date_col, roles.value_cols, wins, last_date,
                     is_flow=base["is_flow"], aggregatable=base["aggregatable"],
+                    composition_exclude=hints.get("composition_exclude"),
                 ),
             )
             return base
@@ -429,6 +747,14 @@ def _snapshot_composition(rows: list[dict], cat_col: str, val_col: str) -> dict 
     return {"total": round(total, 6), "n_categorias": len(breakdown), "breakdown": breakdown}
 
 
+def _asof_data_date(rows: list[dict], date_col: str, ref: str) -> str:
+    """Última fecha CON dato ≤ ``ref`` en ``rows`` (at-or-before); ``ref`` si no hay
+    ninguna. Sirve para tomar la composición 'a corte' del ancla aunque el parquet no
+    tenga dato justo ese día."""
+    avail = {str(r[date_col]) for r in rows if r.get(date_col) is not None}
+    return max((d for d in avail if d <= ref), default=ref)
+
+
 def _categorical_facts(
     rows: list[dict], date_col: str, cat_col: str, val_col: str,
     wins: list[dict], last_date: str, *, is_flow: bool = False, aggregatable: bool = True,
@@ -438,23 +764,6 @@ def _categorical_facts(
     Si ``aggregatable`` es False (retornos/tasas), NO se calcula el total agregado
     ni la composición (sumar retornos de fondos distintos no es una métrica real):
     solo el detalle por categoría."""
-    # Total por fecha (suma de todas las categorías) → variación por ventana.
-    by_date: dict[str, float] = {}
-    for row in rows:
-        f, raw = row.get(date_col), row.get(val_col)
-        if f is None or raw is None:
-            continue
-        try:
-            by_date[str(f)] = by_date.get(str(f), 0.0) + float(raw)
-        except (TypeError, ValueError):
-            continue
-    total_series = sorted(by_date.items(), key=lambda kv: kv[0])
-    # La composición a la fecha de corte solo tiene sentido para STOCKS (cartera a
-    # un día). Para FLUJOS sería el desglose de los flujos de UN día suelto: shares
-    # >100% / negativos (el total del día es chico y una categoría puede excederlo)
-    # que confunden la lectura. La dirección/magnitud del flujo va en las ventanas.
-    composition = None if is_flow else sa.composition(rows, date_col, cat_col, val_col, fecha=last_date)
-
     # Serie por categoría AGREGANDO por fecha: si el dataset tiene más de una
     # columna categórica (p.ej. Tipo_instrumento x Tipo_fondo en allocation),
     # filtrar por una sola deja varias filas por fecha; hay que sumarlas, si no
@@ -473,6 +782,44 @@ def _categorical_facts(
     series_by_cat: dict[str, list[sa.Point]] = {
         cat: sorted(per_date.items(), key=lambda kv: kv[0]) for cat, per_date in agg.items()
     }
+    # Si el parquet trae una categoría AGREGADA ("Total"/"Neto" = suma del resto), se
+    # excluye de los COMPONENTES para no duplicar el total ni la composición; su
+    # variación por ventana se reporta aparte (``neto_agregado``).
+    agg_cats = _aggregate_keys(series_by_cat)
+    comp_cats = {c: s for c, s in series_by_cat.items() if c not in agg_cats}
+    series_by_cat = comp_cats or series_by_cat  # nunca dejar el detalle vacío
+
+    # Total por fecha = suma de los COMPONENTES (no del agregado) → variación por ventana.
+    by_date: dict[str, float] = {}
+    for s in series_by_cat.values():
+        for d, v in s:
+            by_date[d] = by_date.get(d, 0.0) + v
+    total_series = sorted(by_date.items(), key=lambda kv: kv[0])
+    # La composición a la fecha de corte solo tiene sentido para STOCKS (cartera a
+    # un día). Para FLUJOS sería el desglose de los flujos de UN día suelto: shares
+    # >100% / negativos (el total del día es chico y una categoría puede excederlo)
+    # que confunden la lectura. La dirección/magnitud del flujo va en las ventanas.
+    # Se cita "a corte" del ANCLA (``wins[0]['end']`` = corte común si lo hay, o el
+    # máximo propio): el valor se toma at-or-before, pero la fecha mostrada es el corte
+    # → consistente con las ventanas, aunque el parquet no tenga dato justo ese día.
+    comp_ref = wins[0]["end"] if wins else last_date
+    composition = None
+    if not is_flow:
+        rows_comp = [r for r in rows if str(r.get(cat_col)) not in agg_cats] if agg_cats else rows
+        composition = sa.composition(
+            rows_comp, date_col, cat_col, val_col, fecha=_asof_data_date(rows, date_col, comp_ref))
+        if composition:
+            composition["fecha"] = comp_ref
+    # Variación por ventana del agregado precomputado (si lo hay), para que el texto
+    # pueda citar el Neto sin recomputarlo.
+    neto_agregado = None
+    if agg_cats:
+        cat_neto = next(iter(agg_cats))
+        neto_series = sorted(agg[cat_neto].items(), key=lambda kv: kv[0])
+        neto_agregado = {
+            "categoria": cat_neto,
+            "ventanas": _window_variations(neto_series, wins, is_flow=is_flow),
+        }
     cut_vals = {cat: s[-1][1] for cat, s in series_by_cat.items() if s}
     # Para flujos, el "top" de categorías se rankea por el flujo NETO acumulado de
     # toda la serie (|suma|), no por el último valor de un día suelto (ruidoso).
@@ -501,6 +848,7 @@ def _categorical_facts(
             "contribuciones": [],
             "composicion_corte": None,
             "por_categoria": by_category,
+            "neto_agregado": neto_agregado,
         }
     total_ventanas = _window_variations(total_series, wins, is_flow=is_flow)
     return {
@@ -509,6 +857,7 @@ def _categorical_facts(
         "contribuciones": _contributions(series_by_cat, wins, is_flow=is_flow),
         "composicion_corte": composition,
         "por_categoria": by_category,
+        "neto_agregado": neto_agregado,
     }
 
 
@@ -524,7 +873,7 @@ def _contributions(
     for w in wins:
         cambios = []
         for cat, series in series_by_cat.items():
-            v = _window_change(_slice(series, w["start"], w["end"]), is_flow=is_flow)
+            v = _window_value(series, w, is_flow=is_flow)
             if v and v["cambio_absoluto"]:
                 cambios.append({
                     "categoria": cat,
@@ -541,33 +890,91 @@ def _contributions(
 def _wide_facts(
     rows: list[dict], date_col: str, value_cols: list[str],
     wins: list[dict], last_date: str, *, is_flow: bool = False, aggregatable: bool = True,
+    composition_exclude: list[str] | None = None,
 ) -> dict:
     """Variación por columna + composición wide a la fecha de corte (top columnas).
 
     Si ``aggregatable`` es False (retornos/tasas), se omite la composición (sumar
-    columnas de retorno no es una métrica real); solo el detalle por columna."""
+    columnas de retorno no es una métrica real); solo el detalle por columna.
+    ``composition_exclude`` saca columnas de la composición/ranking aunque NO sean
+    agregados (p.ej. ``AUM`` en otra unidad que la allocation %): se siguen
+    reportando por columna pero no entran a las shares."""
     series_by_col = {c: sa.clean_series(rows, date_col, c) for c in value_cols}
+    # Columnas que son un AGREGADO precomputado ("Neto"/"Total" = suma de los tramos,
+    # confirmado numéricamente): se excluyen de la composición y del ranking de
+    # componentes (si no, el total se DUPLICA y el Neto sale como ~50% del corte),
+    # pero se siguen reportando como columna propia (su variación es la del neto).
+    agg_cols = _aggregate_keys(series_by_col)
+    excl = set(agg_cols) | {c for c in (composition_exclude or []) if c in series_by_col}
+    comp_cols = [c for c in value_cols if c not in excl] or list(value_cols)
     last_vals = {c: (s[-1][1] if s else 0.0) for c, s in series_by_col.items()}
     if is_flow:
         rank = {c: abs(sum(v for _, v in s)) for c, s in series_by_col.items()}
     else:
         rank = {c: abs(last_vals[c]) for c in value_cols}
-    top = sorted(value_cols, key=lambda c: rank.get(c, 0.0), reverse=True)[:_TOP_CATEGORIES]
+    top = sorted(comp_cols, key=lambda c: rank.get(c, 0.0), reverse=True)[:_TOP_CATEGORIES]
+    # Las columnas excluidas de la composición (agregado o distinta unidad) igual se
+    # reportan por columna (su variación importa); solo no entran a las shares.
+    report_cols = top + [c for c in value_cols if c in excl and c not in top]
     por_columna = [
         {
             "columna": c,
             "ultimo_valor": round(series_by_col[c][-1][1], 6) if series_by_col[c] else None,
             "ultima_fecha": series_by_col[c][-1][0] if series_by_col[c] else None,
             "ventanas": _window_variations(series_by_col[c], wins, is_flow=is_flow),
+            "es_agregado": c in agg_cols,
         }
-        for c in top
+        for c in report_cols
     ]
+    # Composición "a corte" del ancla (corte común si lo hay, o máx propio): valor
+    # at-or-before, fecha mostrada = el corte (ver _categorical_facts). Solo sobre
+    # los COMPONENTES (sin el agregado, que duplicaría el total).
+    comp_ref = wins[0]["end"] if wins else last_date
+    composicion = None
+    if aggregatable:
+        composicion = sa.composition_wide(
+            rows, date_col, comp_cols, fecha=_asof_data_date(rows, date_col, comp_ref))
+        if composicion:
+            composicion["fecha"] = comp_ref
     return {
         "por_columna": por_columna,
         # Retornos/tasas: no se compone (sumar columnas de retorno no es real).
-        "composicion_corte": None if not aggregatable
-        else sa.composition_wide(rows, date_col, value_cols, fecha=last_date),
+        "composicion_corte": composicion,
     }
+
+
+# Fondos que el informe ffmm reporta SIEMPRE (1/2/3/6).
+_RETURN_INDEX_FUNDS = ("Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6")
+
+
+def _return_index_facts(
+    rows: list[dict], date_col: str, value_cols: list[str], wins: list[dict],
+    *, value_scale: float, funds: tuple[str, ...] = _RETURN_INDEX_FUNDS,
+) -> dict:
+    """Hechos de un ÍNDICE de retorno acumulado (fracción): por fondo, el RETORNO
+    COMPUESTO de cada ventana (``geom_return``, en %), más el índice acumulado al
+    cierre. El retorno se computa en fracción y se lleva a % con ``value_scale``.
+    Foco en los fondos pedidos (default Tipo 1/2/3/6)."""
+    cols = [c for c in funds if c in value_cols] or list(value_cols)
+    por_fondo: list[dict] = []
+    for c in cols:
+        series = sa.clean_series(rows, date_col, c)
+        if not series:
+            continue
+        ventanas = []
+        for w in wins:
+            r = geom_return(series, w["start"], w["end"])
+            ventanas.append({
+                "label": w["label"], "desde": w["start"], "hasta": w["end"],
+                "retorno_pct": None if r is None else round(r * value_scale, 4),
+            })
+        por_fondo.append({
+            "fondo": c,
+            "indice_acum_pct": round(series[-1][1] * value_scale, 4),
+            "ultima_fecha": series[-1][0],
+            "ventanas": ventanas,
+        })
+    return {"por_fondo": por_fondo}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -813,19 +1220,24 @@ def _flow_tag(nivel: float | None, cambio: float | None = None) -> str:
 
 
 def _variation_line(v: dict) -> str:
-    """Una ventana → texto. ``v`` es ``{label, desde, hasta, variacion}``."""
+    """Una ventana → texto. ``v`` es ``{label, desde, hasta, variacion}``.
+
+    Muestra la VENTANA pedida (``desde``→``hasta`` = el corte común si lo hay), no las
+    fechas observadas: así Flujos y DCV citan EXACTAMENTE la misma ventana aunque DCV
+    no tenga dato justo en el corte (el valor se resuelve at-or-before, pero la fecha
+    citada es la del corte)."""
     var = v.get("variacion")
     if not var:
         return f"{v['label']} ({v['desde']}→{v['hasta']}): sin observaciones suficientes en la ventana"
     if var.get("is_flow_sum"):
         return (
-            f"{v['label']} ({var['fecha_inicio_obs']}→{var['fecha_fin_obs']}): "
+            f"{v['label']} ({v['desde']}→{v['hasta']}): "
             f"flujo neto del período {_num(var['flujo_periodo'])}"
             f"{_flow_tag(var['flujo_periodo'])}; "
             f"rango por obs [{_num(var['minimo'])}, {_num(var['maximo'])}], n={var['n_observaciones']}"
         )
     return (
-        f"{v['label']} ({var['fecha_inicio_obs']}→{var['fecha_fin_obs']}): "
+        f"{v['label']} ({v['desde']}→{v['hasta']}): "
         f"de {_num(var['valor_inicio'])} a {_num(var['valor_fin'])}, "
         f"cambio {_num(var['cambio_absoluto'])} ({_pct(var['variacion_pct'])}); "
         f"rango [{_num(var['minimo'])}, {_num(var['maximo'])}], n={var['n_observaciones']}"
@@ -874,6 +1286,32 @@ def _contribution_lines(contribuciones: list[dict] | None, *, is_flow: bool = Fa
     return out
 
 
+def _cut_note(cut: dict | None) -> list[str]:
+    """Describe el CORTE aplicado a los facts (filter/exclude/sign), para que el LLM
+    redacte sobre el mismo recorte que dibuja el gráfico y lo nombre bien."""
+    if not cut:
+        return []
+    parts: list[str] = []
+    for c, v in (cut.get("filter") or {}).items():
+        parts.append(f"filtrado a {c}={v}")
+    for c, vals in (cut.get("exclude") or {}).items():
+        parts.append(f"excluye {c}: {', '.join(map(str, vals))}")
+    sign = cut.get("sign") or {}
+    if sign:
+        parts.append(f"el valor es el NETO = {sign.get('pos')} menos {sign.get('neg')} (col {sign.get('col')})")
+    nets = cut.get("net_cols") or {}
+    if nets:
+        parts.append(f"el valor es el NETO = {nets.get('pos')} menos {nets.get('neg')}")
+    if cut.get("value"):
+        parts.append(f"la métrica descrita es {cut['value']}")
+    ce = cut.get("composition_exclude") or []
+    if ce:
+        parts.append(f"{', '.join(map(str, ce))} va aparte (no entra a la composición)")
+    if not parts:
+        return []
+    return ["CORTE aplicado (describe ESTE recorte, igual que el gráfico): " + "; ".join(parts) + "."]
+
+
 def facts_to_text(facts: dict) -> str:
     """Renderiza el dict de ``compute_facts`` a un bloque de texto para el LLM."""
     unit = facts.get("unit") or ""
@@ -882,6 +1320,7 @@ def facts_to_text(facts: dict) -> str:
     lines: list[str] = [f"Filas: {facts.get('n_rows')}; unidad: {unit or 's/d'}."]
 
     if shape == "snapshot":
+        lines += _cut_note(facts.get("facts_cut"))
         comp = facts.get("composition")
         if comp:
             lines.append("Corte transversal (sin serie temporal).")
@@ -889,6 +1328,7 @@ def facts_to_text(facts: dict) -> str:
         return "\n".join(lines)
 
     lines.append(f"Última fecha con datos: {facts.get('last_date')}.")
+    lines += _cut_note(facts.get("facts_cut"))
     if is_flow:
         lines.append(
             "NOTA — serie de FLUJOS: el SIGNO del flujo indica dirección (positivo = "
@@ -896,6 +1336,27 @@ def facts_to_text(facts: dict) -> str:
             "el flujo aún positivo es MENOR ENTRADA (desaceleración), NO una salida; "
             "solo hay salida cuando el flujo en sí es negativo."
         )
+
+    if shape == "return_index":
+        lines.append(
+            "RENTABILIDAD por tipo de fondo — RETORNO COMPUESTO de cada ventana (NO es "
+            "la resta del índice). El signo indica si el fondo rentó positivo o negativo."
+        )
+        for f in facts.get("por_fondo", []):
+            lines.append(
+                f"  · {f['fondo']} (índice acumulado {_pct(f['indice_acum_pct'])} al "
+                f"{f['ultima_fecha']}):"
+            )
+            for v in f["ventanas"]:
+                rp = v.get("retorno_pct")
+                if rp is None:
+                    lines.append(f"      {v['label']} ({v['desde']}→{v['hasta']}): sin dato suficiente")
+                else:
+                    direccion = "positivo" if rp >= 0 else "negativo"
+                    lines.append(
+                        f"      {v['label']} ({v['desde']}→{v['hasta']}): rentó {direccion} {_pct(rp)}"
+                    )
+        return "\n".join(lines)
 
     if shape == "timeseries_categorical":
         lines.append(f"Categoría: {facts.get('category_col')}; métrica: {facts.get('value_col')}.")

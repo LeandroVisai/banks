@@ -88,9 +88,10 @@ class TestFfmmSpec:
 
     def test_has_all_sections_in_order(self):
         secs = FFMM_SPEC.sections()
-        assert secs[0] == "Flujos"
-        assert "Portafolio DCV" in secs
-        assert secs[-1] == "Mercado cambiario"
+        # Informe semanal: Rentabilidad y Mercado cambiario van justo después de Flujos.
+        assert secs[:3] == ["Flujos", "Rentabilidad", "Mercado cambiario"]
+        assert secs.index("Mercado cambiario") < secs.index("Portafolio DCV")
+        assert secs[-1] == "Variación en allocation carteras mensuales"
         assert "Carteras DCV" not in secs  # sección eliminada (su único gráfico era duplicado)
         assert len(FFMM_SPEC.blocks) == 26
 
@@ -767,3 +768,68 @@ class TestTextAndSynthesis:
     def test_fill_synthesis_empty_is_noop(self):
         html = '<div class="synthesis-body" data-synthesis-body></div>'
         assert fill_synthesis_slot(html, "") == html
+
+
+@pytest.mark.unit
+class TestWeeklyAnchorAndFunds:
+    """Corte semanal acotado a Flujos+DCV y fondos 1/2/3/6 en los bloques ffmm."""
+
+    def test_anchor_source_ids_are_flujos_and_dcv(self):
+        from banks_rag.application.reporting.curated_report import weekly_anchor_source_ids
+
+        anchor = weekly_anchor_source_ids(FFMM_SPEC)
+        # Solo datasets de las secciones Flujos y Portafolio DCV definen el corte.
+        assert "flujos_acum_ffmm" in anchor        # Flujos
+        assert "stock_nivel_ffmm" in anchor        # Portafolio DCV
+        assert "variacion_stock_ffmm" in anchor
+        # Rentabilidad / Mercado cambiario NO anclan (usan su propio máximo).
+        assert "retorno_acum_ffmm" not in anchor
+        assert "retornos_fondo_ffmm" not in anchor
+        assert "flujos_spot_ffmm" not in anchor
+
+    def test_spec_without_anchor_sections_uses_all(self):
+        from banks_rag.application.reporting.curated_report import (
+            _spec_source_ids,
+            weekly_anchor_source_ids,
+        )
+
+        # Un spec que comparte corte y NO declara weekly_anchor_sections → corte
+        # global (todos los source_ids).
+        spec = FamilyReportSpec(
+            family="demo", title="Demo",
+            blocks=(
+                ReportBlock(section="S", title="A", chart="line", status=STATUS_MVP,
+                            source_id="ds_a", transform="straight_series"),
+                ReportBlock(section="S", title="B", chart="line", status=STATUS_MVP,
+                            source_id="ds_b", transform="straight_series"),
+            ),
+        )
+        assert not spec.weekly_anchor_sections
+        assert spec.share_weekly_cutoff  # default
+        assert weekly_anchor_source_ids(spec) == set(_spec_source_ids(spec))
+
+    def test_afp_disables_shared_cutoff(self, tmp_path):
+        # AFP fija share_weekly_cutoff=False: cada parquet se ancla a su propio
+        # máximo (no hay corte común que arrastre todo a la fecha más vieja).
+        from banks_rag.application.reporting.curated_report import (
+            compute_weekly_cutoff,
+            weekly_anchor_source_ids,
+        )
+
+        assert AFP_SPEC.share_weekly_cutoff is False
+        assert weekly_anchor_source_ids(AFP_SPEC) == set()
+        # Con anchor vacío el corte común es None (no toca parquets reales).
+        assert compute_weekly_cutoff(AFP_SPEC, [], tmp_path) is None
+
+    def test_funds_1_2_3_6_in_key_blocks(self):
+        by_id = {(b.source_id, b.transform): b for b in FFMM_SPEC.blocks}
+        wanted = ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6"]
+        # Variación Patrimonio efectivo (flujos) y rentabilidad mensual: fondos 1/2/3/6.
+        assert by_id[("flujos_acum_ffmm", "monthly_sum_by_fund")].params["funds"] == wanted
+        assert by_id[("retornos_fondo_ffmm", "monthly_returns")].params["funds"] == wanted
+        # La rentabilidad ACUMULADA, en cambio, muestra TODOS los fondos disponibles.
+        assert by_id[("retorno_acum_ffmm", "ytd_return_geom")].params["funds"] == "all"
+
+    def test_rentabilidad_acumulada_uses_geometric_transform(self):
+        block = next(b for b in FFMM_SPEC.blocks if b.source_id == "retorno_acum_ffmm")
+        assert block.transform == "ytd_return_geom"  # ya no "accumulated"+rebase

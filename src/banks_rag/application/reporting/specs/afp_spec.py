@@ -44,6 +44,31 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
         source_id="stock_fondo_afp", transform="straight_series",
     ),
+    # Traspaso entre multifondos — VARIACIÓN: barras agrupadas por fondo (A-E) con el
+    # flujo acumulado de la última semana y del último mes, lado a lado. Va ARRIBA del
+    # gráfico diario para leer la variación semanal/mensual de un vistazo.
+    ReportBlock(
+        section=_S_ALLOC, title="Traspaso de fondos entre multifondos (acumulado semanal y mensual)",
+        unit="US$ Mill.", chart="grouped_bar", status=STATUS_MVP,
+        source_id="movimientos_fondos", transform="window_accum_by_cat",
+        params={"category": "fondo", "value": "flujos_usd",
+                "order": ["A", "B", "C", "D", "E"],
+                "windows": [["Δ T-7", 7], ["Δ T-30", 30]]},
+        note="*flujo acumulado por tipo de fondo: última semana vs. último mes",
+    ),
+    # Vista NETA: las dos ventanas (semanal / mensual) como columnas APILADAS por
+    # fondo (mismos colores que el gráfico diario). El alto neto de cada columna es
+    # el flujo neto de la ventana; muestra cómo quedaron los fondos entre sí.
+    ReportBlock(
+        section=_S_ALLOC, title="Traspaso de fondos entre multifondos (neto apilado por fondo)",
+        unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
+        source_id="movimientos_fondos", transform="window_accum_stacked_by_cat",
+        params={"category": "fondo", "value": "flujos_usd",
+                "order": ["A", "B", "C", "D", "E"],
+                "windows": [["Δ T-7", 7], ["Δ T-30", 30]]},
+        note="*composición del flujo neto por fondo: semanal vs. mensual",
+        no_text=True,  # comentario único en el bloque de variación de arriba
+    ),
     # Traspaso entre multifondos: barra apilada DIVERGENTE por día (flujos diarios
     # por fondo A-E), réplica de "Traspaso de fondos de FP" del tablero.
     ReportBlock(
@@ -53,6 +78,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         params={"category": "fondo", "value": "flujos_usd",
                 "order": ["A", "B", "C", "D", "E"], "last_n": 14},
         note="*flujos diarios por tipo de fondo, últimas ~2 semanas",
+        no_text=True,  # comentario único en el bloque de variación de arriba
     ),
     # ── Renta Fija (DCV) ─────────────────────────────────────────────────────
     ReportBlock(
@@ -97,7 +123,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
         source_id="cambiario_afp", transform="snapshot_grouped",
         params={"group": "Sector_contraparte", "values": ["Spot", "Forward", "Neto"],
-                "overlay": ["Neto"],
+                "overlay": ["Neto"], "title_col": "_title_override",
                 "order": ["Habitat", "Provida", "Uno", "Cuprum", "Capital", "Modelo", "Planvital"]},
         note="*última semana; Neto = Spot + Forward como punto",
     ),
@@ -115,18 +141,21 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     ReportBlock(
         section=_S_TASAS, title="MtM de swaps por tipo de fondo",
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
-        source_id="mtm_afp", transform="straight_series",
+        source_id="mtm_afp", transform="category_series",
+        params={"category": "fondo", "value": "mtm",
+                "order": ["A", "B", "C", "D", "E"], "net": "auto"},  # + línea Neto = suma de fondos
     ),
     ReportBlock(
         section=_S_TASAS, title="DV01 proyectado en swap por moneda",
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
-        source_id="dv01_spc_afp", transform="straight_series",
+        source_id="dv01_spc_afp", transform="filter_fund",
+        params={"funds": ["CLP", "US$"]},  # se excluye UF a pedido
     ),
     # ── Atribución de retorno ────────────────────────────────────────────────
     ReportBlock(
         section=_S_ATTR, title="Atribución de retorno por clase de activos (por fondo)",
         unit="%", chart="stacked_bar", status=STATUS_MVP,
-        source_id="attribution", transform="snapshot_stacked", scale=100.0,
+        source_id="attribution", transform="snapshot_stacked",  # scale 100 ahora en el catálogo
         params={"x": "fondo", "series": "Clase", "value": "Valor",
                 "x_order": ["A", "B", "C", "D", "E"], "total_overlay": True},
         note="*contribución al retorno por clase de activo; Total como punto",
@@ -137,4 +166,8 @@ AFP_SPEC = FamilyReportSpec(
     family="afp",
     title="Informe AFP",
     blocks=_BLOCKS,
+    # Los parquets de AFP cierran en fechas distintas (p.ej. movimientos al 09-06,
+    # DCV al 10-06). Sin corte común cada gráfico se ancla al máximo de SU parquet,
+    # evitando arrastrar todo a la fecha del parquet con menor fecha.
+    share_weekly_cutoff=False,
 )

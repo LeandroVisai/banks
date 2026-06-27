@@ -37,7 +37,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         # serie semanal flujos_ffmm. monthly_sum_by_fund los agrega por mes (suma de
         # los flujos diarios del mes) por tipo de fondo.
         source_id="flujos_acum_ffmm", transform="monthly_sum_by_fund",
-        params={"funds": ["Tipo 1", "Tipo 3", "Tipo 6"], "months": 6},
+        params={"funds": ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6"], "months": 6},
     ),
     ReportBlock(  # acumulado (cumsum por fondo)
         # no_text: mantiene el GRÁFICO pero sin comentario propio. El texto de flujos
@@ -47,7 +47,44 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         # este la suma corrida; se grafican ambas vistas, se comenta una.
         section=_S_FLUJOS, title="Flujos acumulados por fondo",
         unit="US$ Mill.", chart="line", status=STATUS_MVP, no_text=True,
-        source_id="flujos_acum_ffmm", transform="accumulated", params={"window": "y2", "accumulate": "cumsum"},
+        source_id="flujos_acum_ffmm", transform="accumulated", params={"window": "ytd", "accumulate": "cumsum"},
+    ),
+    # ── Rentabilidad (imágenes 6-7) ──────────────────────────────────────────
+    ReportBlock(
+        section=_S_RENT, title="Rentabilidad por tipo de fondo (Δ7d / Δ30d / ΔYtD)",
+        unit="%", chart="grouped_bar", status=STATUS_EXP,
+        source_id="retornos_fondo_ffmm", transform="window_returns",
+        params={"windows": ["7d", "30d", "ytd"]},
+        note="*Datos hasta el 8/6",
+    ),
+    ReportBlock(
+        section=_S_RENT, title="Rentabilidad mensual por tipo de fondo",
+        unit="%", chart="grouped_bar", status=STATUS_EXP,
+        source_id="retornos_fondo_ffmm", transform="monthly_returns",
+        params={"funds": ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6"], "months": 8},
+    ),
+    ReportBlock(  # ── MVP · retorno_acum (return_index): YTD GEOMÉTRICO ──
+        # retorno_acum_ffmm es un índice de retorno acumulado GEOMÉTRICO desde 2019
+        # (en fracción). ytd_return_geom despeja el retorno diario
+        # (1+i_t)/(1+i_{t-1})-1 y lo recompone desde el 1-ene del año en curso →
+        # rentabilidad acumulada YTD CORRECTA (no la resta del índice, que sobreestima).
+        section=_S_RENT, title="Rentabilidad acumulada por tipo de fondo",
+        unit="%", chart="line", status=STATUS_MVP,
+        source_id="retorno_acum_ffmm", transform="ytd_return_geom",
+        params={"funds": "all"},  # este gráfico muestra TODOS los fondos disponibles
+        note="*acumulada (geométrica) desde inicios de 2026",
+    ),
+    # ── Mercado cambiario (imagen 10) ────────────────────────────────────────
+    ReportBlock(  # ── MVP · acumulado (cumsum) ──
+        section=_S_FX, title="Flujos spot acumulados",
+        unit="US$ Mill.", chart="line", status=STATUS_MVP,
+        source_id="flujos_spot_ffmm", transform="accumulated", params={"window": "ytd", "accumulate": "cumsum"},
+        note="*Datos hasta el 08-jun",
+    ),
+    ReportBlock(
+        section=_S_FX, title="Flujos spot mensuales",
+        unit="US$ Mill.", chart="bar_time", status=STATUS_EXP,
+        source_id="flujos_spot_ffmm", transform="monthly_diff",
     ),
     # ── Portafolio DCV (imágenes 4-5) ────────────────────────────────────────
     # (La rentabilidad Δ7d/Δ30d y la "Variación Acumulada YtD — BTP/BTU/BB/Otros"
@@ -89,26 +126,6 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         section=_S_PORTAFOLIO, title="Composición Portafolio DCV",
         unit="%", chart="pie", status=STATUS_MVP,
         source_id="dcv_composicion_ffmm", transform="snapshot_composition",
-    ),
-    # ── Rentabilidad (imágenes 6-7) ──────────────────────────────────────────
-    ReportBlock(
-        section=_S_RENT, title="Rentabilidad por tipo de fondo (Δ7d / Δ30d / ΔYtD)",
-        unit="%", chart="grouped_bar", status=STATUS_EXP,
-        source_id="retornos_fondo_ffmm", transform="window_returns",
-        params={"windows": ["7d", "30d", "ytd"]},
-        note="*Datos hasta el 8/6",
-    ),
-    ReportBlock(
-        section=_S_RENT, title="Rentabilidad mensual por tipo de fondo",
-        unit="%", chart="grouped_bar", status=STATUS_EXP,
-        source_id="retornos_fondo_ffmm", transform="monthly_returns",
-        params={"funds": ["Tipo 1", "Tipo 2", "Tipo 3"], "months": 8},
-    ),
-    ReportBlock(  # ── MVP · retorno_acum: value_scale 100 (fracción→%) en el catálogo ──
-        section=_S_RENT, title="Rentabilidad acumulada por tipo de fondo",
-        unit="%", chart="line", status=STATUS_MVP,
-        source_id="retorno_acum_ffmm", transform="straight_series",
-        note="*acumulada desde 2019 (el parquet no resetea por año)",
     ),
     # ── Allocation Carteras mensuales (imágenes 7-8) ─────────────────────────
     *[
@@ -157,22 +174,14 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         )
         for fund in ("Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6")
     ],
-    # ── Mercado cambiario (imagen 10) ────────────────────────────────────────
-    ReportBlock(  # ── MVP · acumulado (cumsum) ──
-        section=_S_FX, title="Flujos spot acumulados",
-        unit="US$ Mill.", chart="line", status=STATUS_MVP,
-        source_id="flujos_spot_ffmm", transform="accumulated", params={"window": "y2", "accumulate": "cumsum"},
-        note="*Datos hasta el 08-jun",
-    ),
-    ReportBlock(
-        section=_S_FX, title="Flujos spot mensuales",
-        unit="US$ Mill.", chart="bar_time", status=STATUS_EXP,
-        source_id="flujos_spot_ffmm", transform="monthly_diff",
-    ),
 )
 
 FFMM_SPEC = FamilyReportSpec(
     family="ffmm",
     title="Informe Fondos Mutuos",
     blocks=_BLOCKS,
+    # La variación semanal de Flujos y Portafolio DCV comparte la MISMA fecha de
+    # corte = mín de las fechas máximas de ambos (si flujos llega al 21-jun y DCV al
+    # 22-jun, ambos usan el 21). El resto de secciones usa el máximo de su parquet.
+    weekly_anchor_sections=(_S_FLUJOS, _S_PORTAFOLIO),
 )

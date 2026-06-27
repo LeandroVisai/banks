@@ -37,6 +37,8 @@ from .parquet_facts import (
     _read_series_rows,
     compute_series,
     detect_roles,
+    geom_ytd,
+    weekly_delta,
 )
 
 log = logging.getLogger(__name__)
@@ -237,6 +239,59 @@ def window_returns(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> 
                     date_note="  ·  ".join(note_parts))
 
 
+# ── Rentabilidad acumulada GEOMÉTRICA (índice de retorno) ─────────────────────
+#
+# retorno_acum_ffmm es un índice de retorno acumulado GEOMÉTRICO en fracción desde
+# 2019 (1+i_t = ∏(1+r_s)). El retorno diario se despeja con la fórmula inversa
+# r_t = (1+i_t)/(1+i_{t-1})-1 y el acumulado de una ventana es el COMPUESTO
+# (1+i_t)/(1+i_base)-1 — NO la resta del índice (que sobreestima: para YTD da
+# ~2,5% vs ~1,8% real). Estas funciones lo computan en FRACCIÓN; curated aplica
+# value_scale 100 → %.
+
+_DEFAULT_FUNDS = ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6"]
+
+
+def ytd_return_geom(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Rentabilidad acumulada YTD por fondo, GEOMÉTRICA, desde el índice de retorno
+    acumulado ancho (col por fondo). Despeja el diario y lo recompone desde el 1-ene
+    del último año con datos. ``params['funds']`` filtra (default Tipo 1/2/3/6);
+    ``"all"`` incluye TODOS los fondos disponibles del parquet (sin tope)."""
+    from banks_rag.infrastructure.sql import series_analytics as sa
+
+    parquet_path = dataset.parquet_path(parquet_dir)
+    if not parquet_path.exists():
+        return None
+    funds = params.get("funds")
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(parquet_path, con)
+        if roles.date_col is None or not roles.value_cols:
+            return None
+        if funds == "all":
+            cols = list(roles.value_cols)  # TODOS los fondos disponibles (sin tope)
+        else:
+            wanted = funds or _DEFAULT_FUNDS
+            cols = [c for c in wanted if c in roles.value_cols] or roles.value_cols[:_MAX_PLOT_SERIES]
+        rows = _read_series_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, *cols])
+    finally:
+        con.close()
+
+    last = max((r[roles.date_col] for r in rows if r.get(roles.date_col)), default="")
+    if not last:
+        return None
+    ytd_start = f"{last[:4]}-01-01"
+    series: list[PlotSeries] = []
+    for c in cols:
+        ytd = geom_ytd(sa.clean_series(rows, roles.date_col, c), ytd_start)
+        if ytd:
+            series.append(PlotSeries(label=c, points=_downsample(ytd)))
+    if not series:
+        return None
+    note = f"Rentabilidad acumulada (geométrica) desde {_fmt_date(ytd_start)} → {_fmt_date(last)}"
+    return PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries",
+                    dataset.unit, series, date_note=note)
+
+
 def _month_end_values(points: list[tuple[str, float]]) -> dict[str, float]:
     """``{month_key: último valor del mes}`` (índice a fin de mes; puntos ordenados)."""
     me: dict[str, float] = {}
@@ -378,15 +433,20 @@ def stacked_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) 
     if not bt:
         return None
     days = {"7d": 7, "30d": 30}.get(str(params.get("window", "7d")), 7)
-    start = (date.fromisoformat(last[:10]) - timedelta(days=days)).isoformat()
+    # Corte semanal común del informe (si lo hay) en vez del máximo de este parquet:
+    # así la variación de la barra coincide con la del texto. weekly_delta replica
+    # exactamente la base at-or-before de antes cuando asof == last.
+    asof = str(params.get("weekly_asof") or last)
+    start = (date.fromisoformat(asof[:10]) - timedelta(days=days)).isoformat()
     buckets = _order_buckets(bt)
     sd: dict[str, dict[str, float]] = {}
     for b in buckets:
         for t, s in bt[b].items():
             if not s:
                 continue
-            base = next((v for iso, v in reversed(s) if iso <= start), s[0][1])
-            sd.setdefault(t, {})[b] = s[-1][1] - base
+            wd = weekly_delta(s, asof, days=days, is_flow=False)
+            if wd is not None:
+                sd.setdefault(t, {})[b] = wd["cambio_absoluto"]
     tipos = _top_tipos(sd)
     out = {t: sd[t] for t in tipos}
     series_order = list(tipos)
@@ -395,7 +455,7 @@ def stacked_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) 
         out["Neto"] = {b: sum(sd[t].get(b, 0.0) for t in tipos) for b in buckets}
         series_order.append("Neto")
         overlay = ("Neto",)
-    note = f"Variación {_fmt_date(start)} → {_fmt_date(last)}"
+    note = f"Variación {_fmt_date(start)} → {_fmt_date(asof)}"
     return _grouped(dataset.id, dataset.unit, out, buckets, series_order, overlay=overlay,
                     date_note=note)
 
@@ -650,7 +710,17 @@ def wide_lines(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Plot
         if net_pts:
             series.append(PlotSeries(label="Neto", points=_downsample(net_pts)))
             overlay = ("Neto",)
-    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit, series, overlay=overlay)
+    # Ventana del acumulado (eje X temporal): hace explícitas las fechas que considera.
+    note = ""
+    if mode and series:
+        all_isos = [iso for s in series for iso, _ in s.points]
+        if all_isos:
+            last_iso = max(all_isos)
+            start_iso = (window and _window_start(last_iso, window)) or min(all_isos)
+            label = "Acumulado (suma corrida)" if mode == "cumsum" else "Acumulado"
+            note = f"{label} {_fmt_date(start_iso)} → {_fmt_date(last_iso)}"
+    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit,
+                    series, overlay=overlay, date_note=note)
     return None if plot.is_empty() else plot
 
 
@@ -827,6 +897,95 @@ def window_stacked_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: di
                     date_note=note)
 
 
+def _accum_windows(
+    dataset: ParquetDataset, parquet_dir: Path, params: dict,
+) -> tuple[list[str], dict[str, dict[str, float]], list[tuple[str, str, str]]] | None:
+    """Núcleo compartido del flujo ACUMULADO por categoría en ventanas.
+
+    Lee un parquet LARGO (fecha + categoría + valor) y suma el flujo de cada
+    ventana por categoría. Devuelve ``(cats, accum, spans)`` donde
+    ``accum = {ventana_label: {cat: suma}}`` y ``spans = [(label, start, last)]``;
+    ``None`` si el parquet no tiene la forma esperada.
+
+    params: ``category`` / ``value`` (si faltan, ``detect_roles``), ``order``
+    (orden de categorías), ``windows`` (lista de ``[label, días]``; default
+    ``[["Variación semanal", 7], ["Variación mensual", 30]]``).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        cat = params.get("category") or (roles.category_cols[0] if roles.category_cols else None)
+        val = params.get("value") or (roles.value_cols[0] if roles.value_cols else None)
+        if roles.date_col is None or not cat or not val:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, cat, val])
+    finally:
+        con.close()
+    by_cat = _aggregate_by_category(rows, roles.date_col, cat, val)  # {cat: [(iso, v)]}
+    cats = [c for c in (params.get("order") or sorted(by_cat)) if c in by_cat]
+    if not cats:
+        return None
+    last = max(iso for s in by_cat.values() for iso, _ in s)
+    windows = params.get("windows") or [["Variación semanal", 7], ["Variación mensual", 30]]
+    accum: dict[str, dict[str, float]] = {}
+    spans: list[tuple[str, str, str]] = []
+    for label, days in windows:
+        start = (date.fromisoformat(last[:10]) - timedelta(days=int(days))).isoformat()
+        accum[label] = {c: sum(v for iso, v in by_cat.get(c, []) if iso >= start) for c in cats}
+        spans.append((label, start, last))
+    return cats, accum, spans
+
+
+def window_accum_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Flujo ACUMULADO por categoría (fondo) en ventanas → barras AGRUPADAS:
+    eje X = categoría (A-E), una serie por ventana = SUMA de los flujos de la
+    ventana. Vista de variación semanal / mensual del mismo dato que el gráfico
+    diario (``window_stacked_by_cat``): para cada fondo, el traspaso neto acumulado
+    de la última semana y del último mes, lado a lado.
+
+    params: ver ``_accum_windows``.
+    """
+    res = _accum_windows(dataset, parquet_dir, params)
+    if res is None:
+        return None
+    cats, accum, spans = res
+    series_order = [label for label, _, _ in spans]
+    note_parts = [
+        f"{label}: {_fmt_date(start)} → {_fmt_date(last)}"
+        for label, start, last in spans
+    ]
+    return _grouped(dataset.id, dataset.unit, accum, cats, series_order,
+                    date_note="  ·  ".join(note_parts))
+
+
+def window_accum_stacked_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Flujo ACUMULADO APILADO POR FONDO en ventanas → barras APILADAS DIVERGENTES:
+    eje X = ventana (semanal / mensual), una serie por FONDO (A-E, mismos colores
+    que el gráfico diario). El alto neto de cada columna ES el flujo neto de la
+    ventana y la composición muestra cómo aportó cada fondo. Vista "neta" que cierra
+    el bloque de traspasos: cómo quedaron los fondos entre sí en la semana vs. el mes.
+
+    params: ver ``_accum_windows`` (las categorías del parquet pasan a SER las
+    series apiladas; las ventanas pasan a ser el eje X).
+    """
+    res = _accum_windows(dataset, parquet_dir, params)
+    if res is None:
+        return None
+    cats, accum, spans = res  # cats = fondos; accum = {ventana: {fondo: suma}}
+    win_labels = [label for label, _, _ in spans]
+    # Transpone: una serie por fondo, su valor en cada ventana (eje X).
+    series_dict = {f: {w: accum[w].get(f, 0.0) for w in win_labels} for f in cats}
+    note_parts = [
+        f"{label}: {_fmt_date(start)} → {_fmt_date(last)}"
+        for label, start, last in spans
+    ]
+    return _grouped(dataset.id, dataset.unit, series_dict, win_labels, list(cats),
+                    date_note="  ·  ".join(note_parts))
+
+
 def window_grouped_long(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Barras apiladas DIVERGENTES por categoría de un parquet LARGO con columna de
     TIPO (Suscripción/Vencimiento): suma de la última ventana por ``group``,
@@ -940,7 +1099,9 @@ def snapshot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
 
     Para "Flujo cambiario por AFP" (Spot/Forward apilados + Neto por AFP).
     params: ``group`` (col del eje X), ``values`` (cols de valor), ``order``,
-    ``overlay`` (cols que van como punto superpuesto, p.ej. ``["Neto"]``).
+    ``overlay`` (cols que van como punto superpuesto, p.ej. ``["Neto"]``),
+    ``title_col`` (col cuyo texto trae la ventana de fechas tras un "·",
+    p.ej. ``_title_override`` = "… · 03-06 al 10-06-2026" → date_note).
     """
     path = dataset.parquet_path(parquet_dir)
     if not path.exists():
@@ -949,9 +1110,11 @@ def snapshot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
     values = list(params.get("values") or [])
     if not group or not values:
         return None
+    title_col = params.get("title_col")
+    read_cols = [group, *values] + ([title_col] if title_col else [])
     con = duckdb.connect()
     try:
-        rows = _read_rows(con, path, date_col=None, columns=[group, *values])
+        rows = _read_rows(con, path, date_col=None, columns=read_cols)
     finally:
         con.close()
     agg: dict[str, dict[str, float]] = {}
@@ -970,7 +1133,15 @@ def snapshot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
     cats = [c for c in (params.get("order") or sorted(agg)) if c in agg]
     sd = {v: {c: agg[c].get(v, 0.0) for c in cats} for v in values}
     overlay = tuple(c for c in (params.get("overlay") or []) if c in values)
-    return _grouped(dataset.id, dataset.unit, sd, cats, values, overlay=overlay)
+    # Ventana de fechas: el parquet no tiene columna fecha, pero la trae embebida en
+    # una columna de título (tras un "·"). La mostramos como date_note del corte.
+    date_note = ""
+    if title_col:
+        raw = next((r.get(title_col) for r in rows if r.get(title_col)), None)
+        if raw:
+            txt = str(raw)
+            date_note = txt.split("·", 1)[1].strip() if "·" in txt else txt.strip()
+    return _grouped(dataset.id, dataset.unit, sd, cats, values, overlay=overlay, date_note=date_note)
 
 
 def snapshot_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -1083,22 +1254,35 @@ def _distinct_dates_sorted(con: duckdb.DuckDBPyConnection, parquet_path: Path, d
     return [str(r[0]) for r in rows]
 
 
-def _cut_indices(dates: list[str]) -> tuple[str, str, str]:
-    """Fechas de corte por CALENDARIO: ``T`` = última fecha con dato; ``T-7`` =
-    última fecha ≤ (T − 7 días naturales) y ``T-30`` = última fecha ≤ (T − 30 días).
+def _cut_indices(
+    dates: list[str], asof: str | None = None,
+) -> tuple[tuple[str, str, str], tuple[str, str, str]]:
+    """Devuelve ``(display, value)``, cada uno ``(T, T-7, T-30)``.
 
-    La analista toma la variación a 1 semana (7 días) y 1 mes (30 días) de calendario,
-    NO por posición de día hábil (antes era la 5ª/20ª fecha desde el final ≈ 1 sem/1 mes
-    de días hábiles, impreciso ante feriados o huecos en la serie). ``dates`` viene
-    ordenado ASC; se busca la última fecha que no supere el corte."""
+    - ``display``: las fechas que se MUESTRAN en la tabla (encabezados).
+    - ``value``: las fechas CON dato para buscar el stock (ultima fecha <= cada display).
+
+    Sin ``asof``: ``T`` = maximo del parquet y ``T-7``/``T-30`` la ultima fecha con
+    dato <= (T - 7 / - 30 dias naturales) -> ``display == value`` (comportamiento previo;
+    variacion a 1 semana / 1 mes de calendario, no por posicion de dia habil).
+
+    Con ``asof`` (corte COMUN del informe): ``T`` = ``asof`` y ``T-7``/``T-30`` =
+    ``asof`` - 7 / - 30 dias. Asi TODAS las tablas muestran los MISMOS T, T-7, T-30 que
+    el texto y que flujos, aunque el parquet DCV no tenga dato justo en el corte (p.ej.
+    el corte cae en fin de semana): el VALOR se resuelve at-or-before, pero la fecha que
+    se cita es la del corte. ``dates`` viene ordenado ASC."""
+    def _aob(ref: str) -> str:
+        return next((d for d in reversed(dates) if d <= ref), dates[0])
+
+    if asof:
+        t_d = date.fromisoformat(asof[:10])
+        disp = (asof, (t_d - timedelta(days=7)).isoformat(), (t_d - timedelta(days=30)).isoformat())
+        return disp, (_aob(disp[0]), _aob(disp[1]), _aob(disp[2]))
+
     t = dates[-1]
     t_d = date.fromisoformat(t[:10])
-
-    def _at_or_before(days: int) -> str:
-        cutoff = (t_d - timedelta(days=days)).isoformat()
-        return next((d for d in reversed(dates) if d <= cutoff), dates[0])
-
-    return t, _at_or_before(7), _at_or_before(30)
+    data = (t, _aob((t_d - timedelta(days=7)).isoformat()), _aob((t_d - timedelta(days=30)).isoformat()))
+    return data, data
 
 
 def dcv_cut_dates(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
@@ -1120,9 +1304,9 @@ def dcv_cut_dates(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> H
         dates = _distinct_dates_sorted(con, parquet_path, roles.date_col)
         if len(dates) < 3:
             return None
-        t_iso, t7_iso, t30_iso = _cut_indices(dates)
+        (t_disp, t7_disp, t30_disp), (t_d, t7_d, t30_d) = _cut_indices(dates, params.get("weekly_asof"))
 
-        in_clause = ", ".join(f"DATE '{d}'" for d in {t_iso, t7_iso, t30_iso})
+        in_clause = ", ".join(f"DATE '{d}'" for d in {t_d, t7_d, t30_d})
         src = f"read_parquet('{parquet_path.as_posix()}')"
         rows = con.execute(
             f"SELECT TRY_CAST({roles.date_col} AS DATE) AS d, {cat_col}, SUM({val_col}) "
@@ -1145,12 +1329,13 @@ def dcv_cut_dates(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> H
         return None
 
     tipos = sorted(by_tipo)
+    # Valores en las fechas CON dato (at-or-before); encabezado con las fechas del corte.
     data = {
-        t: (by_tipo[t].get(t_iso), by_tipo[t].get(t7_iso), by_tipo[t].get(t30_iso))
+        t: (by_tipo[t].get(t_d), by_tipo[t].get(t7_d), by_tipo[t].get(t30_d))
         for t in tipos
     }
     return HtmlTable(
-        html=render_dcv_cut_table(tipos, (t_iso, t7_iso, t30_iso), data, unit=dataset.unit),
+        html=render_dcv_cut_table(tipos, (t_disp, t7_disp, t30_disp), data, unit=dataset.unit),
         dataset_id=dataset.id,
     )
 
@@ -1177,7 +1362,9 @@ def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Htm
         dates = _distinct_dates_sorted(con, parquet_path, roles.date_col)
         if len(dates) < 3:
             return None
-        t_iso, t7_iso, t30_iso = _cut_indices(dates)
+        # display = (T, T-7, T-30) para rotular el span de cada matriz; value = fechas
+        # CON dato (at-or-before del corte) para calcular los deltas Δ T-7 / Δ T-30.
+        (t_disp, t7_disp, t30_disp), (t_iso, t7_iso, t30_iso) = _cut_indices(dates, params.get("weekly_asof"))
 
         in_clause = ", ".join(f"DATE '{d}'" for d in {t_iso, t7_iso, t30_iso})
         src = f"read_parquet('{parquet_path.as_posix()}')"
@@ -1223,8 +1410,11 @@ def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Htm
         if vt is not None and vt30 is not None:
             delta30[tipo][bucket] = vt - vt30
 
+    label7 = f"Δ T-7 · {_fmt_date(t7_disp)} → {_fmt_date(t_disp)}"
+    label30 = f"Δ T-30 · {_fmt_date(t30_disp)} → {_fmt_date(t_disp)}"
     return HtmlTable(
-        html=render_dcv_heatmap_tables(tipos, buckets, delta7, delta30, unit=dataset.unit),
+        html=render_dcv_heatmap_tables(tipos, buckets, delta7, delta30, unit=dataset.unit,
+                                       label7=label7, label30=label30),
         dataset_id=dataset.id,
     )
 
@@ -1240,6 +1430,7 @@ _REGISTRY: dict[str, Transform | None] = {
     "monthly_var_alloc": monthly_var_alloc,
     "accumulated": accumulated_series,
     "window_returns": window_returns,
+    "ytd_return_geom": ytd_return_geom,
     "monthly_sum_by_fund": monthly_sum_by_fund,
     "monthly_returns": monthly_returns,
     "composition_by_bucket": composition_by_bucket,
@@ -1252,6 +1443,8 @@ _REGISTRY: dict[str, Transform | None] = {
     "wide_window_bars": wide_window_bars,
     "wide_monthly_bars": wide_monthly_bars,
     "window_stacked_by_cat": window_stacked_by_cat,
+    "window_accum_by_cat": window_accum_by_cat,
+    "window_accum_stacked_by_cat": window_accum_stacked_by_cat,
     "window_grouped_long": window_grouped_long,
     "snapshot_grouped": snapshot_grouped,
     "snapshot_stacked": snapshot_stacked,
