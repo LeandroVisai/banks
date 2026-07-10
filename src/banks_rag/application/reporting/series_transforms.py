@@ -1065,6 +1065,62 @@ def window_grouped_long(dataset: ParquetDataset, parquet_dir: Path, params: dict
                     date_note=note)
 
 
+def window_pivot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Barras apiladas por categoría de un parquet LARGO con columna de TIPO: pivota
+    ``type_col`` a una serie por valor y suma la última ventana por ``group``,
+    conservando el signo de cada tipo. La(s) serie(s) en ``overlay`` van como punto.
+
+    Réplica de "Flujo cambiario por AFP" tras pasar a formato largo
+    (Fecha, Sector_contraparte, Tipo∈{Spot,Forward,Neto}, Monto): apila Spot+Forward
+    con Neto (= Spot+Forward, ya provisto como Tipo) como punto. Es la versión larga y
+    no-divergente de ``snapshot_grouped`` (cuando el parquet trae la serie completa en
+    vez de un corte transversal pre-reducido).
+    params: ``group`` (eje X), ``type_col`` (col de tipo), ``values`` (valores de tipo
+    → serie, en orden de apilado), ``value`` (col de monto), ``overlay`` (valores que
+    van como punto, p.ej. ``["Neto"]``), ``order`` (orden del eje X), ``window_days``
+    (default 7), ``weekly_asof`` (corte común opcional).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    group, tcol, val = params.get("group"), params.get("type_col"), params.get("value")
+    values = list(params.get("values") or [])
+    if not group or not tcol or not val or not values:
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, group, tcol, val])
+    finally:
+        con.close()
+    isos = [str(r[roles.date_col]) for r in rows if r.get(roles.date_col)]
+    if not isos:
+        return None
+    last = str(params.get("weekly_asof") or max(isos))
+    start = (date.fromisoformat(last[:10]) - timedelta(days=int(params.get("window_days", 7)))).isoformat()
+    wanted = set(values)
+    agg: dict[str, dict[str, float]] = {}
+    for r in rows:
+        d, g, t = r.get(roles.date_col), r.get(group), r.get(tcol)
+        if d is None or g is None or str(t) not in wanted or not (start <= str(d) <= last):
+            continue
+        try:
+            v = float(r.get(val))
+        except (TypeError, ValueError):
+            continue
+        per = agg.setdefault(str(g), {})
+        per[str(t)] = per.get(str(t), 0.0) + v
+    if not agg:
+        return None
+    cats = [c for c in (params.get("order") or sorted(agg)) if c in agg] or sorted(agg)
+    sd = {v: {c: agg[c].get(v, 0.0) for c in cats} for v in values}
+    overlay = tuple(c for c in (params.get("overlay") or []) if c in values)
+    note = f"Suma {_fmt_date(start)} → {_fmt_date(last)}"
+    return _grouped(dataset.id, dataset.unit, sd, cats, values, overlay=overlay, date_note=note)
+
+
 def wide_monthly_bars(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Barras apiladas por MES (suma del mes) de un parquet ANCHO: eje X = mes, una
     serie por columna de valor; la(s) columna(s) en ``overlay`` van como punto.
@@ -1466,6 +1522,7 @@ _REGISTRY: dict[str, Transform | None] = {
     "window_accum_by_cat": window_accum_by_cat,
     "window_accum_stacked_by_cat": window_accum_stacked_by_cat,
     "window_grouped_long": window_grouped_long,
+    "window_pivot_grouped": window_pivot_grouped,
     "snapshot_grouped": snapshot_grouped,
     "snapshot_stacked": snapshot_stacked,
     "latest_snapshot": latest_snapshot,

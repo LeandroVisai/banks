@@ -121,9 +121,9 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     ReportBlock(
         section=_S_FX, title="Flujo cambiario por AFP (spot + forward)",
         unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
-        source_id="cambiario_afp", transform="snapshot_grouped",
-        params={"group": "Sector_contraparte", "values": ["Spot", "Forward", "Neto"],
-                "overlay": ["Neto"], "title_col": "_title_override",
+        source_id="cambiario_afp", transform="window_pivot_grouped",
+        params={"group": "Sector_contraparte", "type_col": "Tipo", "value": "Monto",
+                "values": ["Spot", "Forward", "Neto"], "overlay": ["Neto"], "window_days": 7,
                 "order": ["Habitat", "Provida", "Uno", "Cuprum", "Capital", "Modelo", "Planvital"]},
         note="*última semana; Neto = Spot + Forward como punto",
     ),

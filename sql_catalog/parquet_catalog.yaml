@@ -40,19 +40,21 @@ datasets:
   - id: cambiario_afp
     file: cambiario_afp.parquet
     chart_type: "bar_scatter_dual"
-    facts: {category: "Sector_contraparte", value: "Neto"}   # el dato relevante es el Neto por AFP (no la 1a col Spot)
+    value_kind: "flow"   # flujo cambiario (entrada/salida); la ventana se SUMA
+    # Formato LARGO: una fila por (Fecha, Sector_contraparte, Tipo). El dato relevante
+    # del texto es el Neto por AFP → se filtra Tipo=Neto sobre la col de valor Monto.
+    facts: {category: "Sector_contraparte", value: "Monto", filter: {Tipo: "Neto"}}
     name: "Flujo cambiario (US$ Mill.)"
     description: >
-      Serie de flujo cambiario (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Sector_contraparte, _title_override (Flujo cambiario AFP (US$ Mill.) · 22-05 al 29-05-2026). Incluye las métricas Spot, Forward, Neto. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+      Serie de flujo cambiario (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Sector_contraparte y Tipo (Spot, Forward, Neto = Spot + Forward). Incluye la métrica Monto. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: afp
     unit: "US$ Mill."
     date_range: []
     columns:
+      - {name: "Fecha", type: VARCHAR}
       - {name: "Sector_contraparte", type: VARCHAR, values: ["Capital", "Cuprum", "Habitat", "Modelo", "Planvital", "Provida", "Uno"]}
-      - {name: "Spot", type: DOUBLE}
-      - {name: "Forward", type: DOUBLE}
-      - {name: "Neto", type: DOUBLE}
-      - {name: "_title_override", type: VARCHAR, values: ["Flujo cambiario AFP (US$ Mill.)  ·  22-05 al 29-05-2026"]}
+      - {name: "Tipo", type: VARCHAR, values: ["Neto", "Spot", "Forward"]}
+      - {name: "Monto", type: DOUBLE}
 
   - id: dv01_spc_afp
     file: dv01_spc_afp.parquet
