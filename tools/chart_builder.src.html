@@ -44,7 +44,7 @@
   label.fld{display:block;margin:0 0 10px;}
   label.fld > span{display:block;font-weight:700;color:var(--blue);font-size:12px;
                    margin-bottom:4px;}
-  select,input[type=text],input[type=number]{width:100%;padding:6px 8px;
+  select,input[type=text],input[type=number],input[type=date]{width:100%;padding:6px 8px;
       border:1px solid var(--line);border-radius:5px;font-size:13px;background:#fff;
       font-family:inherit;color:var(--text);}
   select:focus,input:focus{outline:2px solid var(--blue-2);outline-offset:-1px;}
@@ -131,6 +131,23 @@
             <span>Dataset activo</span>
             <select id="dataset"><option>—</option></select>
           </label>
+          <!-- Filtro por periodo: acota las FILAS del parquet elegido ANTES de
+               construir el gráfico. Todo cálculo posterior parte de estas filas. -->
+          <fieldset id="periodwrap" style="display:none;margin-top:4px;">
+            <legend>Filtrar por periodo</legend>
+            <label class="fld" style="margin-bottom:8px;">
+              <span>Columna de fecha</span>
+              <select id="period-col"></select>
+            </label>
+            <div class="row">
+              <label class="fld"><span>Desde</span><input type="date" id="period-from"></label>
+              <label class="fld"><span>Hasta</span><input type="date" id="period-to"></label>
+            </div>
+            <div style="margin-top:2px;">
+              <button class="btn ghost" id="period-reset" style="padding:5px 10px;font-size:12px;">Todo el periodo</button>
+            </div>
+            <p class="hint" id="period-note"></p>
+          </fieldset>
           <div id="datastatus" class="status info">Sin datos cargados.</div>
         </div>
       </div>
@@ -540,6 +557,8 @@ async function selectDataset(name){
   fillSelect($('sizecol'), nums.map(c=>c.name), '', '— fijo —');
   // Y columnas (modo ancho): checklist de numéricas con selector de eje
   buildYCols(nums, dates[0]?.name);
+  // Filtro por periodo: opciones de fecha + rango real (se resetea a "todo").
+  buildPeriodFilter();
   render();
 }
 function fillSelect(sel, values, selected, placeholder){
@@ -670,9 +689,78 @@ function collapse(rowsIn, xCol, yCol, xtype, mode, sizeCol){
   const collapsed=ents.reduce((c,o)=>c+(o.ys.length>1?1:0),0);
   return {x:ents.map(o=>o.xr), y:ents.map(o=>o.ys.length?AGG[mode](o.ys):null), collapsed};
 }
+// ── Filtro por periodo (card 1): acota las FILAS antes de cualquier cálculo ───
+// Se aplica sobre una columna de fecha; getSeries/getCategoryAgg leen activeRows().
+const pad2 = n => String(n).padStart(2,'0');
+const keyToISO = k => k==null ? '' : `${Math.floor(k/10000)}-${pad2(Math.floor(k/100)%100)}-${pad2(k%100)}`;
+const isoToKey = s => s ? Number(s.replace(/-/g,'')) : null;   // 'YYYY-MM-DD' → YYYYMMDD
+// Clave de día YYYYMMDD (entero comparable) desde Date o texto ISO / DD-MM-YYYY.
+function dayKey(v){
+  if(v==null) return null;
+  if(v instanceof Date){ const t=v.getTime(); return isNaN(t) ? null
+    : v.getUTCFullYear()*10000 + (v.getUTCMonth()+1)*100 + v.getUTCDate(); }
+  const s=String(v).trim();
+  let m=/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(s);  if(m) return (+m[1])*10000+(+m[2])*100+(+m[3]);
+  m=/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/.exec(s);       if(m) return (+m[3])*10000+(+m[2])*100+(+m[1]);
+  return null;
+}
+const periodDateCols = () => state.active ? state.active.columns.filter(c=>c.type==='date') : [];
+function columnDayRange(rows, col){
+  let lo=null, hi=null;
+  for(const r of rows){ const k=dayKey(r[col]); if(k==null) continue;
+    if(lo==null||k<lo) lo=k; if(hi==null||k>hi) hi=k; }
+  return {min:lo, max:hi};
+}
+// {col, fromKey, toKey} o null si el filtro está inactivo (sin columna o sin extremos).
+function readPeriod(){
+  if($('periodwrap').style.display==='none') return null;
+  const col=$('period-col').value; if(!col) return null;
+  const fromKey=isoToKey($('period-from').value), toKey=isoToKey($('period-to').value);
+  if(fromKey==null && toKey==null) return null;
+  return {col, fromKey, toKey};
+}
+// Vista filtrada de las filas del dataset activo — TODO cálculo del gráfico parte de aquí.
+function activeRows(){
+  const rows=state.active.rows, pf=readPeriod();
+  if(!pf) return rows;
+  return rows.filter(r=>{ const k=dayKey(r[pf.col]); if(k==null) return false;
+    if(pf.fromKey!=null && k<pf.fromKey) return false;
+    if(pf.toKey!=null && k>pf.toKey) return false; return true; });
+}
+// Rellena el selector de columna de fecha y muestra/oculta la card (llamado en selectDataset).
+function buildPeriodFilter(){
+  const cols=periodDateCols(), wrap=$('periodwrap');
+  $('period-from').value=''; $('period-to').value='';
+  if(!cols.length){ wrap.style.display='none'; return; }
+  wrap.style.display='block';
+  fillSelect($('period-col'), cols.map(c=>c.name), cols[0].name);
+  refreshPeriodBounds();
+}
+// Fija min/max de los <input date> al rango real del parquet y actualiza el aviso.
+function refreshPeriodBounds(){
+  const col=$('period-col').value; if(!state.active || !col) return;
+  const {min,max}=columnDayRange(state.active.rows, col);
+  const lo=keyToISO(min), hi=keyToISO(max);
+  $('period-from').min=lo; $('period-from').max=hi; $('period-from').placeholder=lo||'desde';
+  $('period-to').min=lo;   $('period-to').max=hi;   $('period-to').placeholder=hi||'hasta';
+  updatePeriodNote();
+}
+// Aviso: cuántas filas quedan tras el filtro y el rango disponible del parquet.
+function updatePeriodNote(){
+  const el=$('period-note'); if(!el) return;
+  if(!state.active || $('periodwrap').style.display==='none'){ el.textContent=''; return; }
+  const {min,max}=columnDayRange(state.active.rows, $('period-col').value);
+  const range=(min!=null&&max!=null)?`${keyToISO(min)} → ${keyToISO(max)}`:'—';
+  const total=state.active.rows.length, shown=activeRows().length;
+  if(shown===0){ el.innerHTML=`<b style="color:#9a4b00;">0 filas en el periodo elegido</b> · disponible ${range}.`; return; }
+  el.innerHTML = shown<total
+    ? `Mostrando <b>${shown.toLocaleString('es')}</b> de ${total.toLocaleString('es')} filas · disponible ${range}.`
+    : `Periodo completo · ${total.toLocaleString('es')} filas · ${range}.`;
+}
+
 // ── Construcción de series (con agregación por X) ────────────────────────────
 function getSeries(cfg){
-  const rows=state.active.rows;
+  const rows=activeRows();
   // dispersión/burbujas: puntos individuales, NO se agregan (no hay línea que zigzaguee)
   const isXY=cfg.ctype==='scatter'||cfg.ctype==='bubble';
   const mode=isXY?'none':cfg.agg;
@@ -703,7 +791,7 @@ function getSeries(cfg){
 }
 // agregación categórica para pie/waterfall
 function getCategoryAgg(cfg){
-  const rows=state.active.rows;
+  const rows=activeRows();
   const agg=new Map();
   if(cfg.groupBy && cfg.valueCol){
     for(const r of rows){
@@ -795,8 +883,11 @@ function buildPlot(cfg){
     font:FONT, title:cfg.title?{text:cfg.title,font:{...FONT,size:16,color:'#0b3766'}}:undefined,
     margin:{l:64,r:hasRight?64:20,t:cfg.title?44:16,b:48},
     paper_bgcolor:'#fff', plot_bgcolor:'#fff',
+    // Apilado 'relative': positivos hacia arriba desde 0, negativos hacia abajo (barra
+    // apilada DIVERGENTE). Con datos de un solo signo es idéntico a 'stack'. Ver
+    // flujos_direccion_vs_variacion: en flujos la dirección la da el signo del nivel.
     barmode: (()=>{ const bt=[k, hasRight?(cfg.ctype2||k):k].filter(isBar);
-      return bt.length ? (bt.every(t=>t.endsWith('group'))?'group':'stack') : undefined; })(),
+      return bt.length ? (bt.every(t=>t.endsWith('group'))?'group':'relative') : undefined; })(),
     hovermode: cfg.unified && !isPie(k) && !isBar(k) ? 'x unified' : 'closest',
     legend:{orientation:'h', y:-0.18, font:{...FONT,size:11}},
     xaxis:{title:{text:cfg.xtitle||undefined,font:FONT}, gridcolor:'#eef1f5',
@@ -1043,11 +1134,13 @@ function setStatus(cls,msg){ const el=$('datastatus'); el.className='status '+cl
 // ── Pestañas: varios gráficos que COMPARTEN los parquets cargados ────────────
 // Cada pestaña guarda un snapshot de todos los controles; los datasets son globales.
 const CONTROL_IDS = ['xcol','xtype','agg','transform','groupby','valuecol','sizecol',
+  'period-col','period-from','period-to',
   'ctype','ctype2','rightback','title','xtitle','ytitle','y2title',
   'yscale','y2scale','yfmt','y2fmt','yauto','ymin','ymax','ydtick',
   'xauto','xmin','xmax','y2auto','y2min','y2max','opt-markers','opt-smooth','opt-unified'];
-// Defaults de un gráfico NUEVO (los de dataset —xcol/groupby/valuecol/sizecol— los fija selectDataset).
+// Defaults de un gráfico NUEVO (los de dataset —xcol/groupby/valuecol/sizecol/period-col— los fija selectDataset).
 const CTRL_DEFAULTS = {xtype:'auto',agg:'sum',transform:'none',ctype:'line',ctype2:'col_stack',
+  'period-from':'','period-to':'',
   rightback:true,title:'',xtitle:'',ytitle:'',y2title:'',yscale:'linear',y2scale:'linear',
   yfmt:'auto',y2fmt:'auto',yauto:true,ymin:'',ymax:'',ydtick:'',xauto:true,xmin:'',xmax:'',
   y2auto:true,y2min:'',y2max:'','opt-markers':false,'opt-smooth':false,'opt-unified':true};
@@ -1079,6 +1172,7 @@ async function applyControls(snap){
     if(snap.ycols) $('ycols').querySelectorAll('select').forEach(s=>{
       if(s.dataset.col in snap.ycols) s.value=snap.ycols[s.dataset.col]; });
     syncRangeVisibility();
+    refreshPeriodBounds();   // ajusta min/max de fecha a la columna restaurada + aviso
   }finally{ suppressRender=false; }
   render();
 }
@@ -1139,6 +1233,10 @@ $('segment-sel').addEventListener('change', e=>{ state.segment=e.target.value; r
  .forEach(id=>{ const el=$(id); el.addEventListener('change',render);
                 if(el.tagName==='INPUT'&&el.type==='text') el.addEventListener('input',render);
                 if(el.type==='number') el.addEventListener('input',render); });
+// Filtro por periodo (card 1): cambiar de columna resetea el rango elegido.
+$('period-col').addEventListener('change',()=>{ $('period-from').value=''; $('period-to').value=''; refreshPeriodBounds(); render(); });
+['period-from','period-to'].forEach(id=>$(id).addEventListener('change',()=>{ updatePeriodNote(); render(); }));
+$('period-reset').addEventListener('click',()=>{ $('period-from').value=''; $('period-to').value=''; updatePeriodNote(); render(); });
 $('yauto').addEventListener('change',()=>{ syncRangeVisibility(); render(); });
 $('xauto').addEventListener('change',()=>{ syncRangeVisibility(); render(); });
 $('y2auto').addEventListener('change',()=>{ syncRangeVisibility(); render(); });

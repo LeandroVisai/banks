@@ -37,6 +37,7 @@ from .parquet_facts import (
     _read_series_rows,
     compute_series,
     detect_roles,
+    geom_return,
     geom_ytd,
     weekly_delta,
 )
@@ -209,17 +210,35 @@ def _win_meta(win: str) -> tuple[str, int | None]:
     return f"Δ{w}", days
 
 
-def _index_change(points: list[tuple[str, float]], start: str) -> float:
-    """Cambio del índice de retorno en la ventana: valor final menos el valor al
-    inicio. ``retornos_fondo`` es un ÍNDICE de retorno acumulado (en puntos %, no
-    retornos diarios) → la rentabilidad de la ventana se RESTA, no se compone."""
-    win = [v for iso, v in points if iso >= start]
-    return win[-1] - win[0] if len(win) >= 2 else 0.0
+def _compound_pct(i_start_pct: float, i_end_pct: float) -> float:
+    """Retorno COMPUESTO (%) entre dos valores de un índice de retorno acumulado
+    expresado en PORCENTAJE (``retornos_fondo_ffmm``: 39,28 ↔ i=0,3928):
+    ``(1+i_end)/(1+i_start)-1``. Diferencia GEOMÉTRICA del retorno, no la resta del
+    índice (que sobreestima al crecer el índice)."""
+    denom = 1.0 + i_start_pct / 100.0
+    return ((1.0 + i_end_pct / 100.0) / denom - 1.0) * 100.0 if denom != 0 else 0.0
+
+
+def _geom_window_pct(points_pct: list[tuple[str, float]], start: str, last: str, *, ytd: bool) -> float:
+    """Retorno COMPUESTO (%) de una ventana sobre un índice de retorno acumulado en
+    PORCENTAJE. Saca el retorno diario por diferencia geométrica y lo compone,
+    reusando las MISMAS primitivas que el gráfico de rentabilidad acumulada
+    (``geom_return``/``geom_ytd``, que operan en fracción) para que ambos coincidan;
+    para YtD la base es el cierre del año previo, idéntico a ``ytd_return_geom``."""
+    if not points_pct:
+        return 0.0
+    frac = [(iso, v / 100.0) for iso, v in points_pct]  # % → fracción para 1+i
+    if ytd:
+        ser = geom_ytd(frac, start)
+        return ser[-1][1] * 100.0 if ser else 0.0
+    r = geom_return(frac, start, last)
+    return r * 100.0 if r is not None else 0.0
 
 
 def window_returns(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Rentabilidad por ventana (Δ7d/Δ30d/ΔYtD) y tipo de fondo → barras agrupadas
-    (eje X = fondo, una serie por ventana). Diferencia del índice de retorno."""
+    (eje X = fondo, una serie por ventana). Retorno COMPUESTO (geométrico) del índice
+    de retorno acumulado, NO la resta del índice."""
     funds = params.get("funds") or ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6"]
     windows = params.get("windows") or ["7d", "30d"]
     by_fund = _read_fund_series(dataset, parquet_dir)
@@ -233,7 +252,7 @@ def window_returns(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> 
         label, days = _win_meta(win)
         labels.append(label)
         start = f"{last[:4]}-01-01" if days is None else (date.fromisoformat(last[:10]) - timedelta(days=days)).isoformat()
-        series_dict[label] = {f: _index_change(by_fund.get(f, []), start) for f in funds}
+        series_dict[label] = {f: _geom_window_pct(by_fund.get(f, []), start, last, ytd=days is None) for f in funds}
         note_parts.append(f"{label}: {_fmt_date(start)} → {_fmt_date(last)}")
     return _grouped(dataset.id, "%", series_dict, funds, labels,
                     date_note="  ·  ".join(note_parts))
@@ -332,8 +351,9 @@ def monthly_sum_by_fund(dataset: ParquetDataset, parquet_dir: Path, params: dict
 def monthly_returns(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Rentabilidad mensual por tipo de fondo → barras agrupadas (X = mes).
 
-    Diferencia del índice de retorno a fin de mes (índice acumulado, no retornos
-    diarios): retorno del mes = índice de fin de mes menos el de fin del mes previo.
+    Retorno COMPUESTO del mes desde el índice de retorno acumulado (geométrico):
+    ``(1+i_finmes)/(1+i_finmes_previo)-1`` — saca el retorno diario por diferencia
+    geométrica y lo compone en el mes, NO la resta del índice acumulado.
     """
     funds = params.get("funds") or ["Tipo 1", "Tipo 2", "Tipo 3"]
     months = params.get("months", 8)
@@ -350,7 +370,7 @@ def monthly_returns(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
             i = all_keys.index(k)
             prev = all_keys[i - 1] if i > 0 else None
             cur, base = me[f].get(k), (me[f].get(prev) if prev else None)
-            col[_month_label(k)] = cur - base if cur is not None and base is not None else 0.0
+            col[_month_label(k)] = _compound_pct(base, cur) if cur is not None and base is not None else 0.0
         sd[f] = col
     last = max((iso for s in by_fund.values() for iso, _ in s), default="")
     note = f"Retorno por mes · datos hasta {_fmt_date(last)}" if last else ""

@@ -262,8 +262,9 @@ class TestTransforms:
 
 @pytest.mark.unit
 class TestGroupedTransforms:
-    def test_window_returns_is_index_change(self, tmp_path):
-        # retornos = ÍNDICE de retorno acumulado (no diario): Δ = final - inicio.
+    def test_window_returns_geometric(self, tmp_path):
+        # retornos_fondo = ÍNDICE de retorno acumulado en % (39,28 ↔ i=0,3928):
+        # la ventana es el retorno COMPUESTO (1+i_end)/(1+i_start)-1, no la resta.
         p = tmp_path / "ret.parquet"
         vals = {"Tipo 1": [50.0, 52.0], "Tipo 2": [30.0, 29.5]}
         rows = []
@@ -275,8 +276,8 @@ class TestGroupedTransforms:
         plot = window_returns(ds, tmp_path, {"windows": ["7d"], "funds": ["Tipo 1", "Tipo 2"]})
         assert plot.kind == "grouped"
         d7 = dict(plot.series[0].points)
-        assert round(d7["Tipo 1"], 2) == 2.0    # 52 - 50
-        assert round(d7["Tipo 2"], 2) == -0.5   # 29.5 - 30
+        assert round(d7["Tipo 1"], 2) == 1.33   # (1.52/1.50-1)*100, no 52-50=2.0
+        assert round(d7["Tipo 2"], 2) == -0.38  # (1.295/1.30-1)*100, no 29.5-30=-0.5
 
     def test_composition_by_bucket_stacked(self, tmp_path):
         # plazo (Bucket) x instrumento (Tipo): composición al corte

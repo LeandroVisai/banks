@@ -28,6 +28,8 @@ estándar ``.eml``, que Outlook abre sin problemas.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import datetime as dt
 import html as _html
 import io
@@ -268,19 +270,94 @@ def plot_to_png(plot, chart: str, *, right_axis=None, right_unit: str = "") -> b
 
 # ── Parseo del texto ya inyectado en el HTML curado ──────────────────────────
 
-_RE_SLOT = re.compile(
-    r'<div class="section-text"[^>]*data-text-slot="([^"]+)"[^>]*>(.*?)</div>', re.S
-)
-_RE_SYNTH = re.compile(
-    r'<div[^>]*class="synthesis-body"[^>]*data-synthesis-body[^>]*>(.*?)</div>', re.S
-)
+_RE_SLOT_OPEN = re.compile(r'<div class="section-text"[^>]*data-text-slot="([^"]+)"[^>]*>')
+_RE_SYNTH_OPEN = re.compile(r'<div[^>]*class="synthesis-body"[^>]*data-synthesis-body[^>]*>')
+_RE_DIV_TAG = re.compile(r'<div\b[^>]*>|</div>')
+
+
+def _balanced_div_content(html: str, open_end: int) -> str:
+    """Contenido de un ``<div>`` cuya etiqueta de apertura termina en ``open_end``,
+    respetando ``<div>`` anidados (a diferencia de una regex no-greedy, que se
+    detiene en el primer ``</div>`` y trunca en silencio texto/fotos pegados por
+    el usuario en el editor — el navegador envuelve el contenido pegado en divs)."""
+    depth = 1
+    for m in _RE_DIV_TAG.finditer(html, open_end):
+        depth += -1 if m.group().startswith("</") else 1
+        if depth == 0:
+            return html[open_end:m.start()]
+    return html[open_end:]  # div sin cerrar (HTML malformado): resto del documento
 
 
 def parse_text(html: str) -> tuple[str, dict[str, str]]:
     """``(síntesis_html, {slot: párrafo_html})`` del HTML curado relleno."""
-    slots = {slot: inner.strip() for slot, inner in _RE_SLOT.findall(html)}
-    m = _RE_SYNTH.search(html)
-    return (m.group(1).strip() if m else ""), slots
+    slots = {
+        m.group(1): _balanced_div_content(html, m.end()).strip()
+        for m in _RE_SLOT_OPEN.finditer(html)
+    }
+    m = _RE_SYNTH_OPEN.search(html)
+    synthesis = _balanced_div_content(html, m.end()).strip() if m else ""
+    return synthesis, slots
+
+
+# ── Imágenes pegadas por el usuario (data: URI) → adjunto cid: ───────────────
+# Outlook (motor Word) no renderiza <img src="data:..."> en el cuerpo del correo;
+# solo imágenes embebidas como adjunto 'related' referenciadas por cid:, igual
+# que los gráficos matplotlib. Sin esto, cualquier foto pegada en el editor
+# (síntesis o un text-slot) se guarda bien en el HTML pero desaparece en el .eml.
+_RE_DATA_IMG = re.compile(
+    r'<img\b[^>]*\ssrc="data:(image/(?:png|jpe?g|gif|webp));base64,([^"]+)"[^>]*>', re.I
+)
+# 2+ fotos pegadas una junto a otra (sin nada entre medio): al pegar dos gráficos
+# recortados en fila, el navegador los deja como <img><img> consecutivos, que
+# fluyen inline uno al lado del otro en el editor. Se detectan como grupo para
+# reproducir ese layout en 2+ columnas en vez de apilarlas a ancho completo.
+_RE_IMG_RUN = re.compile(r"(?:" + _RE_DATA_IMG.pattern + r"\s*){2,}", re.I)
+
+
+def _decode_cid(mime: str, b64: str, images: dict[str, tuple[str, bytes]]) -> str | None:
+    """Decodifica una imagen pegada y la registra en ``images``; devuelve su cid."""
+    subtype = mime.split("/", 1)[1].replace("jpg", "jpeg")
+    try:
+        data = base64.b64decode(b64)
+    except (binascii.Error, ValueError):
+        return None
+    cid = f"pasted{uuid.uuid4().hex[:8]}@banks"
+    images[cid] = (subtype, data)
+    return cid
+
+
+def _cidify_images(html: str, images: dict[str, tuple[str, bytes]]) -> str:
+    """Reemplaza ``<img src="data:...">`` por ``cid:`` y registra los bytes en
+    ``images`` (mutado in-place) para que ``build_eml`` los incruste inline.
+    Las fotos pegadas en fila (2+ seguidas) se arman en columnas lado a lado."""
+
+    def repl_run(m: re.Match[str]) -> str:
+        cids = [_decode_cid(mm.group(1), mm.group(2), images) for mm in _RE_DATA_IMG.finditer(m.group(0))]
+        cids = [c for c in cids if c]
+        if not cids:
+            return ""
+        if len(cids) == 1:
+            return _img_tag(cids[0], width="100%")
+        cell = f"{100 // len(cids)}%"
+        cells = "".join(
+            f'<td width="{cell}" valign="top" style="padding:2px">{_img_tag(c, width="100%")}</td>'
+            for c in cids
+        )
+        return f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>{cells}</tr></table>'
+
+    def repl_single(m: re.Match[str]) -> str:
+        cid = _decode_cid(m.group(1), m.group(2), images)
+        return _img_tag(cid, width="100%") if cid else m.group(0)
+
+    html = _RE_IMG_RUN.sub(repl_run, html)
+    return _RE_DATA_IMG.sub(repl_single, html)
+
+
+def _img_tag(cid: str, *, width: str) -> str:
+    return (
+        f'<img src="cid:{cid}" alt="" '
+        f'style="width:{width};max-width:100%;height:auto;display:block;margin:6px auto">'
+    )
 
 
 # ── Ensamblado del cuerpo email-safe (inline styles + tablas) ────────────────
@@ -302,8 +379,8 @@ def build_email_html(report, synthesis: str, text_by_slot: dict[str, str],
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         'style="background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#1f1f1f">',
         '<tr><td align="center" style="padding:18px 8px">',
-        '<table role="presentation" width="680" cellpadding="0" cellspacing="0" '
-        'style="width:680px;max-width:100%;background:#ffffff">',
+        '<table role="presentation" width="900" cellpadding="0" cellspacing="0" '
+        'style="width:900px;max-width:100%;background:#ffffff">',
         _row(
             f'<div style="background:{_BANNER};color:#fff;text-align:center;font-size:22px;'
             f'font-weight:bold;padding:12px 16px;margin:0 -18px 6px">{_esc(spec.title)}</div>'
@@ -347,8 +424,8 @@ def build_email_html(report, synthesis: str, text_by_slot: dict[str, str],
             parts.append(_row(f'<div style="margin:6px 0">{cb.plot.html}</div>'))
         elif i in cids:
             parts.append(_row(
-                f'<img src="cid:{cids[i]}" width="640" '
-                f'style="width:640px;max-width:100%;display:block;margin:6px 0" alt="{_esc(b.title)}">'
+                f'<img src="cid:{cids[i]}" width="860" '
+                f'style="width:860px;max-width:100%;display:block;margin:6px 0" alt="{_esc(b.title)}">'
             ))
         elif cb.render_kind != "chart":
             parts.append(_row(
@@ -371,7 +448,7 @@ def build_email_html(report, synthesis: str, text_by_slot: dict[str, str],
 # ── Ensamblado del .eml ──────────────────────────────────────────────────────
 
 def build_eml(*, subject: str, sender: str, to: str, html_body: str,
-              images: dict[str, bytes], attach_name: str, attach_bytes: bytes) -> bytes:
+              images: dict[str, tuple[str, bytes]], attach_name: str, attach_bytes: bytes) -> bytes:
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = sender
@@ -383,8 +460,8 @@ def build_eml(*, subject: str, sender: str, to: str, html_body: str,
     # descodifica mal (se comía un carácter cada ~76 y rompía las tags y los cid).
     msg.add_alternative(html_body, subtype="html", cte="base64")
     html_part = msg.get_payload()[-1]  # la alternativa HTML
-    for cid, data in images.items():
-        html_part.add_related(data, maintype="image", subtype="png",
+    for cid, (subtype, data) in images.items():
+        html_part.add_related(data, maintype="image", subtype=subtype,
                               cid=f"<{cid}>", disposition="inline")
     msg.add_attachment(attach_bytes, maintype="text", subtype="html", filename=attach_name)
     # CRLF (RFC 5322): sin esto el .eml sale con LF y Outlook descodifica mal el cuerpo.
@@ -407,7 +484,12 @@ def process_file(path: pathlib.Path, out_dir: pathlib.Path, *, sender: str, to: 
     synthesis, text_by_slot = parse_text(html)
     report = build_curated_report(get_spec(fam))
 
-    images: dict[str, bytes] = {}
+    images: dict[str, tuple[str, bytes]] = {}
+    # Fotos pegadas por el usuario en el editor (síntesis o cualquier text-slot):
+    # data: URI → adjunto cid: (Outlook no renderiza data: URIs en el cuerpo).
+    synthesis = _cidify_images(synthesis, images)
+    text_by_slot = {slot: _cidify_images(text, images) for slot, text in text_by_slot.items()}
+
     cids: dict[int, str] = {}
     for i, cb in enumerate(report.blocks):
         if cb.render_kind != "chart" or cb.plot is None or isinstance(cb.plot, HtmlTable):
@@ -419,7 +501,7 @@ def process_file(path: pathlib.Path, out_dir: pathlib.Path, *, sender: str, to: 
         )
         if png:
             cid = f"chart{i}.{uuid.uuid4().hex[:8]}@banks"
-            images[cid] = png
+            images[cid] = ("png", png)
             cids[i] = cid
 
     body = build_email_html(report, synthesis, text_by_slot, cids)
