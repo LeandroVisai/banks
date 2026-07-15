@@ -11,6 +11,10 @@ Uso:
     python scripts/build_family_report.py            # lista familias disponibles
 
 Salida: data/parquet_reports/curated/<familia>_<fecha>.html
+Además, una versión EDITABLE junto a esa (``<familia>_<fecha>_editable.html``):
+panel flotante 💾 Guardar / 📄 Versión final para escribir el texto A MANO en el
+navegador (sin pasar por parquet_report.py/fill_report_texts.py) y guardar
+(--no-editable para omitirla).
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ if _SRC.is_dir() and str(_SRC) not in sys.path:
 
 from banks_rag.application.reporting import (  # noqa: E402
     build_curated_report,
+    make_editable_html,
     render_curated_html,
 )
 from banks_rag.application.reporting.specs import available_families, get_spec  # noqa: E402
@@ -37,6 +42,10 @@ def main() -> None:
     ap.add_argument("--family", default=None, help="Familia a construir (ej. ffmm). Sin valor: lista las disponibles.")
     ap.add_argument("--out", default="data/parquet_reports/curated", help="Carpeta de salida.")
     ap.add_argument("--verbose", action="store_true", help="Log a nivel INFO.")
+    ap.add_argument(
+        "--no-editable", action="store_true",
+        help="No generar la versión editable (panel 💾/📄 para escribir el texto a mano).",
+    )
     args = ap.parse_args()
 
     logging.basicConfig(
@@ -63,6 +72,13 @@ def main() -> None:
     dst = out / f"{stem}.html"
     dst.write_text(html, encoding="utf-8")
     print(f"OK {spec.title} -> {dst}  ({report.summary()})")
+
+    # Versión editable (misma que "Guardar editable" del chartbuilder): útil ACÁ
+    # sobre todo si se va a escribir el texto a mano, sin pasar por el LLM.
+    if not args.no_editable:
+        ed_dst = out / f"{stem}_editable.html"
+        ed_dst.write_text(make_editable_html(html), encoding="utf-8")
+        print(f"OK editable -> {ed_dst}  (contenteditable + panel 💾 Guardar / 📄 Versión final)")
 
 
 if __name__ == "__main__":

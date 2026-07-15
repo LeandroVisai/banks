@@ -17,6 +17,10 @@ Uso típico (H100, después de correr parquet_report.py):
 El HTML se sobreescribe en-place (usa --out para otra ruta).
 La familia se infiere del primer data-text-slot del HTML; pasa --family para
 forzarla (útil si el HTML tiene slots de varias familias).
+
+Además del HTML final, escribe una versión EDITABLE (``<stem>_editable.html``,
+junto al HTML de salida): panel flotante 💾 Guardar / 📄 Versión final para
+escribir encima en el navegador y guardar a mano (--no-editable para omitirla).
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ _SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 if _SRC.is_dir() and str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+from banks_rag.application.reporting import make_editable_html  # noqa: E402
 from banks_rag.application.reporting.curated_report import (  # noqa: E402
     fill_synthesis_slot,
     fill_text_slots,
@@ -57,6 +62,10 @@ def main() -> None:
                     help="Prefijo de familia (ej. ffmm). Default: inferido del HTML.")
     ap.add_argument("--out", default=None,
                     help="Ruta de salida. Default: sobreescribe --curated.")
+    ap.add_argument(
+        "--no-editable", action="store_true",
+        help="No generar la versión editable (mismo panel 💾/📄 que parquet_report.py).",
+    )
     args = ap.parse_args()
 
     curated_path = pathlib.Path(args.curated)
@@ -88,6 +97,14 @@ def main() -> None:
     out_path.write_text(patched, encoding="utf-8")
     synth_note = " + síntesis" if synthesis.strip() else ""
     print(f"OK {out_path}  ({filled} slots rellenos de {len(paragraphs)} párrafos{synth_note})")
+
+    # Versión editable (misma que "Guardar editable" del chartbuilder): se abre en
+    # el navegador, se escribe encima (gráficos + texto ya puestos) y se guarda a
+    # mano con el panel 💾/📄. Vive junto al HTML final, con sufijo "_editable".
+    if not args.no_editable:
+        ed_path = out_path.with_name(f"{out_path.stem}_editable.html")
+        ed_path.write_text(make_editable_html(patched), encoding="utf-8")
+        print(f"OK editable -> {ed_path}  (contenteditable + panel 💾 Guardar / 📄 Versión final)")
 
 
 if __name__ == "__main__":

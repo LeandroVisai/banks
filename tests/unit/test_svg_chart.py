@@ -9,6 +9,8 @@ import pytest
 
 from banks_rag.application.reporting.parquet_facts import PlotData, PlotSeries
 from banks_rag.application.reporting.svg_chart import (
+    _SCATTER_HIGHLIGHT_COLOR,
+    _SCATTER_POINT_COLOR,
     _fmt_date,
     _fmt_num,
     render_mini_table_html,
@@ -234,3 +236,116 @@ class TestMiniTable:
     def test_timeseries_table_shows_dates(self):
         html = render_mini_table_html(_ts())
         assert "01-03-26" in html  # última fecha formateada es-CL
+
+
+# ── kind="range": caja [Mínimo,Máximo] + Promedio + Hoy (réplica "Rendimiento
+# monedas" GBI) ────────────────────────────────────────────────────────────────
+
+def _range(cats=("A", "B")) -> PlotData:
+    return PlotData("gbi", "bar", "range", "Índice (base 100)", [
+        PlotSeries("Mínimo", [(c, 90.0 + i) for i, c in enumerate(cats)]),
+        PlotSeries("Máximo", [(c, 110.0 + i) for i, c in enumerate(cats)]),
+        PlotSeries("Promedio", [(c, 100.0 + i) for i, c in enumerate(cats)]),
+        PlotSeries("Hoy", [(c, 95.0 + i) for i, c in enumerate(cats)]),
+    ])
+
+
+@pytest.mark.unit
+class TestRenderRangeBand:
+    def test_renders_natively_for_hist_range(self):
+        assert renders_natively("range", "hist_range")
+        assert not renders_natively("range", "line")
+
+    def test_well_formed_svg_with_box_tick_and_dot(self):
+        svg = render_plot_svg(_range(), chart="hist_range")
+        ET.fromstring(svg)
+        assert svg.count("<rect") >= 2 + 1     # fondo + 2 cajas de rango
+        assert svg.count("<circle") == 2       # 2 puntos "Hoy"
+        assert svg.count("<line") >= 2         # ticks de Promedio
+
+    def test_category_order_follows_minimo_series(self):
+        svg = render_plot_svg(_range(cats=("Z", "A", "M")), chart="hist_range")
+        assert svg.index(">Z<") < svg.index(">A<") < svg.index(">M<")
+
+    def test_hoy_value_label_present(self):
+        svg = render_plot_svg(_range(), chart="hist_range")
+        assert "95,0" in svg  # Hoy de "A" (formato es-CL, 1 decimal)
+
+    def test_legend_has_three_entries(self):
+        svg = render_plot_svg(_range(), chart="hist_range")
+        assert "Rango histórico" in svg and "Promedio" in svg and ">Hoy<" in svg
+
+    def test_missing_minimo_or_maximo_falls_back_to_message(self):
+        plot = PlotData("gbi", "bar", "range", "%", [PlotSeries("Hoy", [("A", 1.0)])])
+        svg = render_plot_svg(plot, chart="hist_range")
+        assert "sin serie graficable" in svg
+
+    def test_empty_plot_returns_none(self):
+        assert render_plot_svg(PlotData("gbi", "bar", "range", "", [])) is None
+
+    def test_missing_promedio_or_hoy_still_draws_box(self):
+        plot = PlotData("gbi", "bar", "range", "%", [
+            PlotSeries("Mínimo", [("A", 90.0)]),
+            PlotSeries("Máximo", [("A", 110.0)]),
+        ])
+        svg = render_plot_svg(plot, chart="hist_range")
+        ET.fromstring(svg)
+        assert svg.count("<circle") == 0  # sin "Hoy": sin punto
+
+
+# ── kind="scatter": dispersión x/y etiquetada (réplica "Retorno FX y tasas") ──
+
+def _scatter(overlay=()) -> PlotData:
+    series = [
+        PlotSeries("USD", [("0.5", 1.0)]),
+        PlotSeries("BRL", [("-2.0", 3.0)]),
+        PlotSeries("CLP", [("0.1", 0.2)]),
+    ]
+    return PlotData("fx", "point", "scatter", "%", series, overlay=overlay)
+
+
+@pytest.mark.unit
+class TestRenderScatterLabeled:
+    def test_renders_natively_for_point(self):
+        assert renders_natively("scatter", "point")
+        assert not renders_natively("scatter", "line")
+
+    def test_well_formed_svg_with_one_circle_per_point(self):
+        svg = render_plot_svg(_scatter(), chart="point")
+        ET.fromstring(svg)
+        assert svg.count("<circle") == 3
+        assert "USD" in svg and "BRL" in svg and "CLP" in svg
+
+    def test_zero_crossing_guides_when_domain_spans_zero(self):
+        svg = render_plot_svg(_scatter(), chart="point")
+        assert svg.count('stroke-dasharray="4,3"') == 2  # cruce en x=0 e y=0
+
+    def test_axis_labels_fall_back_to_unit_when_not_given(self):
+        svg = render_plot_svg(_scatter(), chart="point")
+        assert ">%<" in svg  # unit usado como label de ambos ejes
+
+    def test_axis_labels_use_x_label_y_label_when_given(self):
+        svg = render_plot_svg(_scatter(), chart="point", x_label="Retorno FX", y_label="Retorno tasas")
+        assert "Retorno FX" in svg and "Retorno tasas" in svg
+
+    def test_highlighted_point_is_filled_others_are_hollow(self):
+        svg = render_plot_svg(_scatter(overlay=("CLP",)), chart="point")
+        assert f'fill="{_SCATTER_HIGHLIGHT_COLOR}"' in svg
+        assert svg.count(f'fill="white" stroke="{_SCATTER_POINT_COLOR}"') == 2
+        assert "Comparables" in svg and ">Hoy<" in svg  # leyenda solo si hay highlight
+
+    def test_no_highlight_omits_legend(self):
+        svg = render_plot_svg(_scatter(), chart="point")
+        assert "Comparables" not in svg
+
+    def test_point_with_non_numeric_x_is_skipped(self):
+        plot = PlotData("fx", "point", "scatter", "%", [
+            PlotSeries("BAD", [("n/a", 1.0)]),
+            PlotSeries("OK", [("1.0", 2.0)]),
+        ])
+        svg = render_plot_svg(plot, chart="point")
+        ET.fromstring(svg)
+        assert svg.count("<circle") == 1
+
+    def test_empty_plot_returns_none(self):
+        assert render_plot_svg(PlotData("fx", "point", "scatter", "", [])) is None

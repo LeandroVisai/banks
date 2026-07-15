@@ -186,7 +186,11 @@ def render_parquet_report_html(report: ParquetReport, *, subtitle: str | None = 
 
     body.append('<section class="overview">')
     body.append('<h2 class="block-heading">Síntesis</h2>')
+    # ``data-synthesis-body`` marca la Síntesis como editable (mismo selector que el
+    # chartbuilder / make_editable_html); no cambia el aspecto del informe.
+    body.append('<div class="synthesis-body" data-synthesis-body>')
     body.append(_prose_to_html(report.overview_md))
+    body.append("</div>")
     body.append("</section>")
 
     for i, s in enumerate(report.sections, 1):
@@ -204,7 +208,12 @@ def render_parquet_report_html(report: ParquetReport, *, subtitle: str | None = 
         )
         body.append(f'<h2 class="block-heading">{i}. {_inline(s.name)}</h2>')
         body.append(f'<p class="dataset-meta">{" · ".join(meta)}</p>')
-        body.append(f"<p>{_inline(s.paragraph)}</p>")
+        # ``data-text-slot`` (id del dataset) hace editable el párrafo, igual que en el
+        # informe curado; el chartbuilder y make_editable_html lo reconocen.
+        body.append(
+            f'<div class="section-text" data-text-slot="{_attr(s.dataset_id)}">'
+            f"<p>{_inline(s.paragraph)}</p></div>"
+        )
         body.append(
             '<div class="chart-placeholder" aria-hidden="true">'
             f"<!-- fase 2: gráfico {_attr(s.chart_type)} --></div>"

@@ -10,6 +10,10 @@ Render según el ``kind`` de ``PlotData`` y el tipo objetivo (``chart``):
     timeseries → línea (``line``) o área apilada (``area``/``stacked_area``)
     grouped    → barras verticales agrupadas (``grouped_bar``) o apiladas (``stacked_bar``)
     snapshot   → composición horizontal (``composition``) o torta (``pie``)
+    range      → caja de rango [mín,máx] + tick de promedio + punto "hoy" por
+                 categoría (``hist_range``; réplica de "Rendimiento monedas" GBI)
+    scatter    → dispersión x/y etiquetada por punto, con cruce en 0 (``point``;
+                 réplica de "Retorno FX y tasas GBI")
 
 ``render_plot_svg(plot, chart=...)`` dibuja el tipo pedido si la forma del dato lo
 soporta; si no, cae a la marca natural del ``kind`` (línea/composición). El caller
@@ -207,6 +211,9 @@ def _subsample(points: list, max_n: int = _MAX_TIP_PTS) -> list[int]:
 
 # Tipo objetivo → ``kind`` de PlotData que lo dibuja de forma NATIVA. Si el dato
 # llega con otro kind, el render cae a la marca natural (preliminar).
+# "hist_range"/"point" son los ``chart_type`` canónicos del catálogo (ver
+# ``domain/agent/chart_types.py``: hist_range→bar, scatter→point) reusados tal
+# cual como ``block.chart`` del informe curado, sin inventar vocabulario nuevo.
 _CHART_NATIVE_KIND: dict[str, str] = {
     "line": "timeseries",
     "area": "timeseries",
@@ -217,6 +224,8 @@ _CHART_NATIVE_KIND: dict[str, str] = {
     "bar_time": "grouped",
     "composition": "snapshot",
     "pie": "snapshot",
+    "hist_range": "range",
+    "point": "scatter",
 }
 
 
@@ -229,12 +238,15 @@ def renders_natively(plot_kind: str, chart: str | None) -> bool:
 def render_plot_svg(
     plot: PlotData, *, chart: str | None = None, width: int = _W, height: int = _H,
     right_axis: list[str] | None = None, right_unit: str = "",
+    x_label: str = "", y_label: str = "",
 ) -> str | None:
     """``PlotData`` → SVG inline (str) del tipo ``chart`` (o el natural del kind si
     ``chart`` no aplica). ``None`` si ``family == 'table'`` (→ mini-tabla).
 
     ``right_axis`` (labels de series) + ``right_unit`` activan el doble eje Y para
-    ``chart='dual_axis'`` (esas series van contra un eje derecho independiente)."""
+    ``chart='dual_axis'`` (esas series van contra un eje derecho independiente).
+    ``x_label``/``y_label`` rotulan los ejes del scatter (``kind='scatter'``);
+    vacío → usa ``plot.unit`` en ambos ejes."""
     if plot.is_empty() or plot.family == "table":
         return None
     target = (chart or "").strip()
@@ -244,6 +256,10 @@ def render_plot_svg(
         if target == "pie":
             return _render_pie(plot, width, height)
         return _render_snapshot(plot, width, height)
+    if plot.kind == "range":
+        return _render_range_band(plot, width, height)
+    if plot.kind == "scatter":
+        return _render_scatter_labeled(plot, width, height, x_label=x_label, y_label=y_label)
     # timeseries
     if target == "dual_axis":
         return _render_dual_axis(plot, width, height, right_axis, right_unit)
@@ -856,6 +872,181 @@ def _render_pie(plot: PlotData, width: int, height: int) -> str:
         out.append(f'<text x="{lx + 17}" y="{y}" font-size="12" fill="#333">{_esc(cat)}: {_esc(_fmt_num(v))} ({_esc(_fmt_num(pct))}%)</text>')
     if plot.unit:
         out.append(f'<text x="20" y="20" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+_RANGE_BOX_FILL = "#cfe0ef"
+_RANGE_BOX_STROKE = "#7ea3c9"
+_RANGE_MEAN_COLOR = "#8a2b2b"
+_RANGE_HOY_COLOR = "#0b3766"
+
+
+def _render_range_band(plot: PlotData, width: int, height: int) -> str:
+    """Caja de rango [Mínimo,Máximo] por categoría + tick de Promedio + punto "Hoy"
+    con su valor etiquetado (réplica de "Rendimiento monedas" del tablero GBI:
+    índice rebasado a 100, con su rango histórico de la ventana). Requiere series
+    con esas 4 etiquetas EXACTAS (las arma la transform, p.ej. ``gbi_rendimiento_range``);
+    si falta Mínimo/Máximo cae al mensaje "sin serie"."""
+    by_label = {s.label: dict(s.points) for s in plot.series}
+    lo_s, hi_s = by_label.get("Mínimo"), by_label.get("Máximo")
+    if not lo_s or not hi_s:
+        return _no_axis_message(plot, width, height)
+    mean_s = by_label.get("Promedio", {})
+    hoy_s = by_label.get("Hoy", {})
+    # Orden de categorías: el de la propia serie "Mínimo" (la transform ya la deja
+    # en el orden pedido por ``params['order']``, igual que _render_grouped_bars).
+    cats = [c for s in plot.series if s.label == "Mínimo" for c, _v in s.points]
+    if not cats:
+        return _no_axis_message(plot, width, height)
+
+    long_labels = any(len(c) > 9 for c in cats)
+    left, right = 64, 18
+    top = 40  # espacio extra: la etiqueta del valor "Hoy" se dibuja SOBRE el punto
+    bottom = 90 if long_labels else 80
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+
+    allv = [lo_s[c] for c in cats] + [hi_s[c] for c in cats]
+    allv += [mean_s[c] for c in cats if c in mean_s] + [hoy_s[c] for c in cats if c in hoy_s]
+    ticks, ymin, ymax = _nice_ticks(min(allv), max(allv), include_zero=False)
+
+    def py(v: float) -> float:
+        return top + plot_h * (1 - (v - ymin) / (ymax - ymin))
+
+    group_w = plot_w / len(cats)
+    out = _svg_open(width, height, f"{plot.dataset_id} — rango histórico")
+
+    for tick in ticks:
+        y = py(tick)
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="#e6e6e6" stroke-width="1"/>')
+        out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="11" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
+
+    for ci, c in enumerate(cats):
+        gx = left + ci * group_w
+        bw = group_w * 0.55
+        x = gx + (group_w - bw) / 2
+        y_top, y_bot = py(hi_s[c]), py(lo_s[c])
+        attrs = _tip_attrs(_RANGE_BOX_STROKE, s="Rango histórico", k=c,
+                           v=f"{_val_unit(lo_s[c], plot.unit)} - {_val_unit(hi_s[c], plot.unit)}")
+        out.append(
+            f'<rect x="{x:.1f}" y="{y_top:.1f}" width="{bw:.1f}" height="{max(1.0, y_bot - y_top):.1f}" '
+            f'fill="{_RANGE_BOX_FILL}" stroke="{_RANGE_BOX_STROKE}" stroke-width="1" data-si="0"{attrs}/>'
+        )
+        if c in mean_s:
+            ym = py(mean_s[c])
+            attrs = _tip_attrs(_RANGE_MEAN_COLOR, s="Promedio", k=c, v=_val_unit(mean_s[c], plot.unit))
+            out.append(f'<line x1="{x:.1f}" y1="{ym:.1f}" x2="{x + bw:.1f}" y2="{ym:.1f}" stroke="{_RANGE_MEAN_COLOR}" stroke-width="2.4" data-si="1"{attrs}/>')
+        if c in hoy_s:
+            v = hoy_s[c]
+            yh = py(v)
+            cx = gx + group_w / 2
+            attrs = _tip_attrs(_RANGE_HOY_COLOR, s="Hoy", k=c, v=_val_unit(v, plot.unit))
+            out.append(f'<circle cx="{cx:.1f}" cy="{yh:.1f}" r="4.5" fill="{_RANGE_HOY_COLOR}" stroke="#fff" stroke-width="1" data-si="2"{attrs}/>')
+            label_y = yh - 9 if yh - top > 14 else yh + 16
+            out.append(f'<text x="{cx:.1f}" y="{label_y:.1f}" font-size="11" fill="{_RANGE_HOY_COLOR}" font-weight="700" text-anchor="middle">{_esc(_fmt_num(v))}</text>')
+        cx = gx + group_w / 2
+        if long_labels:
+            cy = top + plot_h + 12
+            out.append(
+                f'<text transform="translate({cx:.1f},{cy:.1f}) rotate(-45)" '
+                f'font-size="10" fill="#555" text-anchor="end">{_esc(c)}</text>'
+            )
+        else:
+            out.append(
+                f'<text x="{cx:.1f}" y="{top + plot_h + 16}" '
+                f'font-size="10" fill="#555" text-anchor="middle">{_esc(c)}</text>'
+            )
+
+    out.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
+    legend_y = height - (20 if long_labels else 26)
+    legend = [("Rango histórico", _RANGE_BOX_FILL), ("Promedio", _RANGE_MEAN_COLOR), ("Hoy", _RANGE_HOY_COLOR)]
+    out.append(_legend_row(legend, left, legend_y, plot_w))
+    if plot.unit:
+        out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+_SCATTER_POINT_COLOR = "#1f9bcf"
+_SCATTER_HIGHLIGHT_COLOR = "#0b3766"
+
+
+def _render_scatter_labeled(plot: PlotData, width: int, height: int, *, x_label: str = "", y_label: str = "") -> str:
+    """Dispersión x/y etiquetada por punto, con cruce en 0 (réplica de "Retorno FX
+    y tasas GBI"): cada ``PlotSeries`` es UN punto — ``label`` = etiqueta de texto,
+    ``points[0] = (str(x), y)`` (convención de ``kind='scatter'``, ver
+    ``parquet_facts.PlotSeries``). Las etiquetas en ``plot.overlay`` se dibujan
+    destacadas (relleno), el resto huecas."""
+    pts: list[tuple[str, float, float]] = []
+    for s in plot.series:
+        if not s.points:
+            continue
+        x_raw, y = s.points[0]
+        try:
+            x = float(x_raw)
+        except (TypeError, ValueError):
+            continue
+        pts.append((s.label, x, y))
+    if not pts:
+        return _no_axis_message(plot, width, height)
+
+    left, right = 60, 40
+    top, bottom = 30, 56
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+
+    xticks, xmin, xmax = _nice_ticks(min(p[1] for p in pts), max(p[1] for p in pts), n=6)
+    yticks, ymin, ymax = _nice_ticks(min(p[2] for p in pts), max(p[2] for p in pts), n=5)
+
+    def px(v: float) -> float:
+        return left + plot_w * (v - xmin) / ((xmax - xmin) or 1.0)
+
+    def py(v: float) -> float:
+        return top + plot_h * (1 - (v - ymin) / ((ymax - ymin) or 1.0))
+
+    out = _svg_open(width, height, f"{plot.dataset_id} — dispersión")
+
+    for tick in yticks:
+        y = py(tick)
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="#eee" stroke-width="1"/>')
+        out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="11" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
+    for tick in xticks:
+        x = px(tick)
+        out.append(f'<line x1="{x:.1f}" y1="{top}" x2="{x:.1f}" y2="{top + plot_h}" stroke="#f4f4f4" stroke-width="1"/>')
+        out.append(f'<text x="{x:.1f}" y="{top + plot_h + 16}" font-size="10" fill="#555" text-anchor="middle">{_esc(_fmt_num(tick))}</text>')
+
+    # Cruce en 0 (cuadrantes): guías punteadas si el 0 cae dentro del dominio.
+    if ymin <= 0 <= ymax:
+        y0 = py(0.0)
+        out.append(f'<line x1="{left}" y1="{y0:.1f}" x2="{left + plot_w}" y2="{y0:.1f}" stroke="#999" stroke-width="1" stroke-dasharray="4,3"/>')
+    if xmin <= 0 <= xmax:
+        x0 = px(0.0)
+        out.append(f'<line x1="{x0:.1f}" y1="{top}" x2="{x0:.1f}" y2="{top + plot_h}" stroke="#999" stroke-width="1" stroke-dasharray="4,3"/>')
+    out.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
+    out.append(f'<line x1="{left}" y1="{top + plot_h}" x2="{left + plot_w}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
+
+    highlight = set(plot.overlay or ())
+    for label, x, y in pts:
+        cx, cy = px(x), py(y)
+        is_hi = label in highlight
+        color = _SCATTER_HIGHLIGHT_COLOR if is_hi else _SCATTER_POINT_COLOR
+        fill = color if is_hi else "white"
+        attrs = _tip_attrs(color, s=label, v=f"x={_val_unit(x, plot.unit)}  y={_val_unit(y, plot.unit)}")
+        out.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="4.5" fill="{fill}" stroke="{color}" stroke-width="1.6"{attrs}/>')
+        out.append(f'<text x="{cx + 7:.1f}" y="{cy - 6:.1f}" font-size="10" fill="#333">{_esc(label)}</text>')
+
+    xl = x_label or plot.unit
+    yl = y_label or plot.unit
+    if xl:
+        out.append(f'<text x="{left + plot_w / 2:.1f}" y="{height - 6}" font-size="11" fill="#777" text-anchor="middle">{_esc(xl)}</text>')
+    if yl:
+        out.append(
+            f'<text x="14" y="{top + plot_h / 2:.1f}" font-size="11" fill="#777" text-anchor="middle" '
+            f'transform="rotate(-90,14,{top + plot_h / 2:.1f})">{_esc(yl)}</text>'
+        )
+    if highlight:
+        out.append(_legend_row([("Comparables", _SCATTER_POINT_COLOR), ("Hoy", _SCATTER_HIGHLIGHT_COLOR)], left, height - 8, plot_w))
     out.append("</svg>")
     return "\n".join(out)
 

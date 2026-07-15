@@ -69,6 +69,7 @@ CHART_FAMILY: dict[str, str] = {
     "fx_pos_cumulative_interactive": "stacked_bar",
     # dispersión
     "scatter": "point",
+    "fx_retorno_scatter_interactive": "point",
     # composición
     "pie": "pie",
     # tablas-monitor (color de mercados): no son una serie graficable

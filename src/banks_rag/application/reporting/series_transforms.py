@@ -1495,6 +1495,158 @@ def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Htm
     )
 
 
+# ── Rango histórico + dispersión x/y (NR: comparables GBI) ───────────────────
+#
+# Dos formas de gráfico NUEVAS (sin equivalente previo en el renderer): "range"
+# (caja [mín,máx] + promedio + "hoy" por categoría, réplica de "Rendimiento
+# monedas") y "scatter" (dispersión x/y etiquetada, réplica de "Retorno FX y
+# tasas GBI"). Ver ``svg_chart._render_range_band`` / ``_render_scatter_labeled``.
+
+
+def gbi_rendimiento_range(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Rango histórico (mín/máx), promedio y valor "hoy" por categoría, sobre un
+    índice REBASADO a 100 al inicio de la ventana: ``100 * Valor / Valor_inicio``
+    (réplica de "Rendimiento monedas" del tablero GBI — un parquet LARGO con
+    fecha + categoría [p.ej. "País | Rating"] + nivel).
+
+    A diferencia de ``_accumulate(mode="rebase")`` (que resta el nivel base, para
+    VARIACIONES), acá se DIVIDE por el nivel base: el resultado es un índice
+    (100 = inicio de la ventana), no una variación absoluta.
+
+    params: ``category``/``value`` (si faltan, ``detect_roles``), ``order``
+    (orden/selección de categorías — el tablero las ordena por calidad
+    crediticia, no alfabético; se declara explícito, como el resto de bloques
+    NR), ``window`` (default ``ytd``).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        cat = params.get("category") or (roles.category_cols[0] if roles.category_cols else None)
+        val = params.get("value") or (roles.value_cols[0] if roles.value_cols else None)
+        if roles.date_col is None or not cat or not val:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, cat, val])
+    finally:
+        con.close()
+    by_cat = _aggregate_by_category(rows, roles.date_col, cat, val)
+    if not by_cat:
+        return None
+    last = max(iso for s in by_cat.values() for iso, _ in s)
+    start = _window_start(last, params.get("window", "ytd")) or min(iso for s in by_cat.values() for iso, _ in s)
+
+    order = params.get("order") or sorted(by_cat)
+    mins: dict[str, float] = {}
+    maxs: dict[str, float] = {}
+    means: dict[str, float] = {}
+    hoys: dict[str, float] = {}
+    for c in order:
+        pts = [(iso, v) for iso, v in by_cat.get(c, []) if iso >= start]
+        if not pts or pts[0][1] == 0:
+            continue
+        base = pts[0][1]
+        rebased = [100.0 * v / base for _iso, v in pts]
+        mins[c] = min(rebased)
+        maxs[c] = max(rebased)
+        means[c] = sum(rebased) / len(rebased)
+        hoys[c] = rebased[-1]
+    cats = [c for c in order if c in hoys]
+    if not cats:
+        return None
+    series = [
+        PlotSeries("Mínimo", [(c, mins[c]) for c in cats]),
+        PlotSeries("Máximo", [(c, maxs[c]) for c in cats]),
+        PlotSeries("Promedio", [(c, means[c]) for c in cats]),
+        PlotSeries("Hoy", [(c, hoys[c]) for c in cats]),
+    ]
+    note = f"Índice base 100 = {_fmt_date(start)} · datos hasta {_fmt_date(last)}"
+    plot = PlotData(dataset.id, "bar", "range", dataset.unit or "Índice (base 100)", series, date_note=note)
+    return None if plot.is_empty() else plot
+
+
+def fx_tasas_scatter(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Retorno acumulado FX vs. tasa de mercado por país, snapshot al último dato:
+    dispersión x=retorno FX (%), y=retorno tasas (%), un punto por país (réplica de
+    "Retorno FX y tasas GBI" del tablero).
+
+    Parquet ANCHO con columnas PREFIJADAS ``fx_{PAIS}`` / ``rates_{PAIS}`` (NIVELES,
+    no retornos; país en MAYÚSCULA, p.ej. ``fx_USD``/``rates_USD`` — confirmado
+    contra el catálogo real, ``chart_type="fx_retorno_scatter_interactive"``). El
+    retorno de cada columna es la SUMA de sus variaciones % diarias desde el inicio
+    de la ventana hasta el último dato — aproximación ADITIVA del retorno acumulado
+    (no geométrica), réplica fiel del cálculo del tablero (``pct_change().cumsum()``),
+    no la fórmula compuesta que usan otras transforms de rentabilidad de este módulo.
+
+    params: ``fx_prefix``/``rate_prefix`` (default ``fx_``/``rates_``),
+    ``negate_fx`` (default ``True``: el nivel FX es moneda-local-por-USD, así que
+    negar el retorno da la convención "positivo = apreciación", igual que el
+    tablero), ``window`` (default ``ytd``), ``highlight`` (código de país —
+    cualquier capitalización, sin prefijo — a destacar como "hoy"/doméstico; va a
+    ``plot.overlay``).
+    """
+    from banks_rag.infrastructure.sql import series_analytics as sa
+
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    fx_pre = params.get("fx_prefix", "fx_")
+    rate_pre = params.get("rate_prefix", "rates_")
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None or not roles.value_cols:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, *roles.value_cols])
+    finally:
+        con.close()
+
+    def _cum_return(col: str) -> float | None:
+        pts = sa.clean_series(rows, roles.date_col, col)
+        if len(pts) < 2:
+            return None
+        start = _window_start(pts[-1][0], params.get("window", "ytd")) or pts[0][0]
+        total = 0.0
+        counted = False
+        for i in range(1, len(pts)):
+            iso, v = pts[i]
+            prev = pts[i - 1][1]
+            if iso < start or not prev:
+                continue
+            total += (v - prev) / prev * 100.0
+            counted = True
+        return total if counted else None
+
+    negate_fx = params.get("negate_fx", True)
+    fx_ret: dict[str, float] = {}
+    rate_ret: dict[str, float] = {}
+    last_all = ""
+    for r in rows:
+        d = r.get(roles.date_col)
+        if d is not None:
+            last_all = max(last_all, str(d))
+    for col in roles.value_cols:
+        if col.startswith(fx_pre):
+            r = _cum_return(col)
+            if r is not None:
+                fx_ret[col[len(fx_pre):].lower()] = -r if negate_fx else r
+        elif col.startswith(rate_pre):
+            r = _cum_return(col)
+            if r is not None:
+                rate_ret[col[len(rate_pre):].lower()] = r
+
+    countries = sorted(set(fx_ret) & set(rate_ret))
+    if not countries:
+        return None
+    highlight = str(params.get("highlight") or "").strip().lower()
+    series = [PlotSeries(c.upper(), [(f"{fx_ret[c]:.6f}", rate_ret[c])]) for c in countries]
+    overlay = tuple(c.upper() for c in countries if c == highlight)
+    note = f"Retorno acumulado desde inicio de año · datos hasta {_fmt_date(last_all)}" if last_all else ""
+    plot = PlotData(dataset.id, "point", "scatter", dataset.unit or "%", series, overlay=overlay, date_note=note)
+    return None if plot.is_empty() else plot
+
+
 # ── Registro: nombre → transform (None = declarada, pendiente de 2ª iteración) ─
 
 _REGISTRY: dict[str, Transform | None] = {
@@ -1529,6 +1681,9 @@ _REGISTRY: dict[str, Transform | None] = {
     # Tablas con color condicional (heatmap DCV): implementadas.
     "dcv_cut_dates": dcv_cut_dates,
     "dcv_heatmap": dcv_heatmap,
+    # Rango histórico + dispersión x/y (NR: comparables GBI).
+    "gbi_rendimiento_range": gbi_rendimiento_range,
+    "fx_tasas_scatter": fx_tasas_scatter,
 }
 
 

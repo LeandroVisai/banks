@@ -34,6 +34,8 @@ from banks_rag.application.reporting.series_transforms import (
     dcv_cut_dates,
     dcv_heatmap,
     filter_fund,
+    fx_tasas_scatter,
+    gbi_rendimiento_range,
     get_transform,
     is_known,
     latest_snapshot,
@@ -128,7 +130,7 @@ class TestNrSpec:
     def test_sections_in_order(self):
         secs = NR_SPEC.sections()
         assert secs == ["Mercado de Derivados", "Mercado de Renta Fija",
-                        "Mercado SPC (tasas)", "Flujos Spot"]
+                        "Mercado SPC (tasas)", "Flujos Spot", "Gráficos Extras"]
 
     def test_blocks_reference_known_transforms(self):
         for b in NR_SPEC.blocks:
@@ -565,6 +567,147 @@ class TestGenericTransforms:
         assert "doble eje" in svg
         assert "AUM (eje der.)" in svg  # leyenda marca el eje derecho
         assert "US$ Mill." in svg       # unidad del eje derecho
+
+
+@pytest.mark.unit
+class TestGbiRendimientoRangeTransform:
+    """``gbi_rendimiento_range``: caja [mín,máx] + promedio + "hoy" (kind='range',
+    réplica de "Rendimiento monedas" GBI)."""
+
+    def _write_gbi(self, tmp_path):
+        p = tmp_path / "gbi.parquet"
+        rows = [
+            "(DATE '2026-01-02', 'CLP | A', 100.0)",
+            "(DATE '2026-03-01', 'CLP | A', 103.0)",
+            "(DATE '2026-07-13', 'CLP | A', 102.93)",
+            "(DATE '2026-01-02', 'BRL | BB-', 100.0)",
+            "(DATE '2026-03-01', 'BRL | BB-', 90.0)",
+            "(DATE '2026-07-13', 'BRL | BB-', 93.53)",
+            "(DATE '2025-12-01', 'CLP | A', 999.0)",  # fuera de ventana YTD: no debe pesar
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Tenor, Valor)")
+        return p
+
+    def test_rebases_to_100_and_computes_range_mean_hoy(self, tmp_path):
+        self._write_gbi(tmp_path)
+        ds = _ds("gbi.parquet", id="gbi_index", chart_type="hist_range", unit="Índice (base 100)")
+        plot = gbi_rendimiento_range(ds, tmp_path, {"order": ["BRL | BB-", "CLP | A"], "window": "ytd"})
+        assert plot.kind == "range"
+        assert [c for c, _ in plot.series[0].points] == ["BRL | BB-", "CLP | A"]  # respeta 'order'
+        by_label = {s.label: dict(s.points) for s in plot.series}
+        assert by_label["Hoy"]["CLP | A"] == pytest.approx(102.93)
+        assert by_label["Hoy"]["BRL | BB-"] == pytest.approx(93.53)
+        assert by_label["Mínimo"]["BRL | BB-"] == pytest.approx(90.0)
+        assert by_label["Máximo"]["BRL | BB-"] == pytest.approx(100.0)
+        assert "Índice base 100" in plot.date_note
+
+    def test_default_order_is_alphabetical_when_not_given(self, tmp_path):
+        self._write_gbi(tmp_path)
+        ds = _ds("gbi.parquet", id="gbi_index", chart_type="hist_range")
+        plot = gbi_rendimiento_range(ds, tmp_path, {})
+        cats = [c for c, _ in plot.series[0].points]
+        assert cats == sorted(cats)
+
+    def test_missing_parquet_returns_none(self, tmp_path):
+        ds = _ds("nope.parquet", id="gbi_index", chart_type="hist_range")
+        assert gbi_rendimiento_range(ds, tmp_path, {}) is None
+
+    def test_renders_as_native_hist_range_via_render_plot_svg(self, tmp_path):
+        self._write_gbi(tmp_path)
+        ds = _ds("gbi.parquet", id="gbi_index", chart_type="hist_range")
+        plot = gbi_rendimiento_range(ds, tmp_path, {"order": ["BRL | BB-", "CLP | A"]})
+        svg = render_plot_svg(plot, chart="hist_range")
+        assert svg is not None and "93,5" in svg
+
+
+@pytest.mark.unit
+class TestFxTasasScatterTransform:
+    """``fx_tasas_scatter``: dispersión retorno FX vs. retorno tasas (kind='scatter',
+    réplica de "Retorno FX y tasas GBI"). Esquema real confirmado contra el
+    catálogo (id ``retorno_fx_tasas``, chart_type ``fx_retorno_scatter_interactive``):
+    columnas PREFIJADAS ``fx_{PAIS}``/``rates_{PAIS}``, país en MAYÚSCULA."""
+
+    def _write_fx(self, tmp_path):
+        p = tmp_path / "fx.parquet"
+        rows = [
+            "(DATE '2026-01-02', 800.0, 5.0, 4.20, 3.0)",
+            "(DATE '2026-04-01', 820.0, 5.5, 4.10, 3.2)",
+            "(DATE '2026-07-13', 810.0, 5.8, 4.00, 3.5)",
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") "
+                  "t(Fecha, fx_CLP, rates_CLP, fx_USD, rates_USD)")
+        return p
+
+    def test_computes_additive_cumulative_return_per_country(self, tmp_path):
+        self._write_fx(tmp_path)
+        ds = _ds("fx.parquet", id="retorno_fx_tasas", chart_type="point", unit="Porcentaje")
+        plot = fx_tasas_scatter(ds, tmp_path, {"window": "ytd", "highlight": "clp"})
+        assert plot.kind == "scatter"
+        assert plot.unit == "Porcentaje"  # usa dataset.unit del catálogo, no hardcodeado
+        by_label = {s.label: s.points[0] for s in plot.series}
+        assert set(by_label) == {"CLP", "USD"}
+        # fx_CLP: 800->820->810 desde 2026-01-02; pct diarios +2.5%, -1.2195..% ; suma=1.2805;
+        # negado (convención apreciación) => -1.2805
+        x_clp, y_clp = by_label["CLP"]
+        assert float(x_clp) == pytest.approx(-1.28048780487805, rel=1e-6)
+        assert y_clp == pytest.approx(15.454545454545451, rel=1e-6)  # rates_CLP: +10% +5.4545%
+
+    def test_defaults_to_percent_when_dataset_unit_missing(self, tmp_path):
+        self._write_fx(tmp_path)
+        ds = _ds("fx.parquet", id="retorno_fx_tasas", chart_type="point", unit="")
+        plot = fx_tasas_scatter(ds, tmp_path, {})
+        assert plot.unit == "%"
+
+    def test_highlight_sets_overlay(self, tmp_path):
+        self._write_fx(tmp_path)
+        ds = _ds("fx.parquet", id="retorno_fx_tasas", chart_type="point")
+        plot = fx_tasas_scatter(ds, tmp_path, {"highlight": "clp"})
+        assert plot.overlay == ("CLP",)
+
+    def test_no_highlight_leaves_overlay_empty(self, tmp_path):
+        self._write_fx(tmp_path)
+        ds = _ds("fx.parquet", id="retorno_fx_tasas", chart_type="point")
+        plot = fx_tasas_scatter(ds, tmp_path, {})
+        assert plot.overlay == ()
+
+    def test_negate_fx_false_keeps_raw_sign(self, tmp_path):
+        self._write_fx(tmp_path)
+        ds = _ds("fx.parquet", id="retorno_fx_tasas", chart_type="point")
+        plot = fx_tasas_scatter(ds, tmp_path, {"negate_fx": False})
+        by_label = {s.label: s.points[0] for s in plot.series}
+        x_clp, _ = by_label["CLP"]
+        assert float(x_clp) == pytest.approx(1.28048780487805, rel=1e-6)
+
+    def test_country_missing_one_side_is_excluded(self, tmp_path):
+        # fx_BRL sin su par rates_BRL → BRL no debe aparecer (requiere AMBOS lados)
+        p = tmp_path / "fx2.parquet"
+        _write(p, "SELECT * FROM (VALUES "
+               "(DATE '2026-01-02', 800.0, 5.0, 4.0), "
+               "(DATE '2026-07-13', 810.0, 5.8, 4.2)) "
+               "t(Fecha, fx_CLP, rates_CLP, fx_BRL)")
+        ds = _ds("fx2.parquet", id="retorno_fx_tasas", chart_type="point")
+        plot = fx_tasas_scatter(ds, tmp_path, {})
+        assert {s.label for s in plot.series} == {"CLP"}
+
+    def test_custom_prefixes_override_defaults(self, tmp_path):
+        p = tmp_path / "fx3.parquet"
+        _write(p, "SELECT * FROM (VALUES "
+               "(DATE '2026-01-02', 800.0, 5.0), (DATE '2026-07-13', 810.0, 5.8)) "
+               "t(Fecha, spot_CLP, yield_CLP)")
+        ds = _ds("fx3.parquet", id="retorno_fx_tasas", chart_type="point")
+        plot = fx_tasas_scatter(ds, tmp_path, {"fx_prefix": "spot_", "rate_prefix": "yield_"})
+        assert {s.label for s in plot.series} == {"CLP"}
+
+    def test_missing_parquet_returns_none(self, tmp_path):
+        ds = _ds("nope.parquet", id="retorno_fx_tasas", chart_type="point")
+        assert fx_tasas_scatter(ds, tmp_path, {}) is None
+
+    def test_renders_as_native_scatter_via_render_plot_svg(self, tmp_path):
+        self._write_fx(tmp_path)
+        ds = _ds("fx.parquet", id="retorno_fx_tasas", chart_type="point")
+        plot = fx_tasas_scatter(ds, tmp_path, {"highlight": "clp"})
+        svg = render_plot_svg(plot, chart="point", x_label="Retorno FX", y_label="Retorno tasas")
+        assert svg is not None and "CLP" in svg and "USD" in svg
 
 
 @pytest.mark.unit

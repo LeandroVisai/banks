@@ -38,6 +38,7 @@ if _SRC.is_dir() and str(_SRC) not in sys.path:
 
 from banks_rag.application.reporting import (  # noqa: E402
     generate_parquet_report,
+    make_editable_html,
     render_parquet_report_html,
 )
 from banks_rag.config import get_settings  # noqa: E402
@@ -131,8 +132,14 @@ async def _run(args: argparse.Namespace) -> None:
         f"error={counts.get('error', 0)})"
     )
     if not args.no_html:
-        html_path = _write(out / "html" / f"{stem}.html", render_parquet_report_html(report))
+        html = render_parquet_report_html(report)
+        html_path = _write(out / "html" / f"{stem}.html", html)
         print(f"OK html     -> {html_path}")
+        # Versión editable (misma que "Guardar editable" del chartbuilder): se abre
+        # en el navegador, se escribe dentro y se guarda a mano con el panel 💾/📄.
+        if not args.no_editable:
+            ed_path = _write(out / "editable" / f"{stem}_editable.html", make_editable_html(html))
+            print(f"OK editable -> {ed_path}  (contenteditable + panel 💾 Guardar / 📄 Versión final)")
 
     if args.paragraphs_out:
         # Clave reservada "__sintesis__": la síntesis ejecutiva (puntos del mes y
@@ -167,6 +174,10 @@ def main() -> None:
         help="Tokens máx para la síntesis global (0 = usar BANKS_SYNTHESIS_MAX_TOKENS del .env).",
     )
     ap.add_argument("--no-html", action="store_true", help="No generar el HTML (solo markdown).")
+    ap.add_argument(
+        "--no-editable", action="store_true",
+        help="No generar la versión editable (html/ con panel 💾/📄 para escribir dentro y guardar a mano).",
+    )
     ap.add_argument(
         "--paragraphs-out", default=None, metavar="PATH",
         help="Ruta .json donde guardar {dataset_id: párrafo} para fill_report_texts.py.",

@@ -995,7 +995,13 @@ def _return_index_facts(
 class PlotSeries:
     """Una serie a dibujar: una línea (por categoría/columna) o un grupo de
     barras (composición). ``points`` es ``[(x, y)]`` ya ordenado: ``x`` es fecha
-    ISO en series temporales y nombre de categoría en snapshots."""
+    ISO en series temporales y nombre de categoría en snapshots/rangos.
+
+    ``kind='scatter'`` reusa esta MISMA forma para un caso distinto (cada serie es
+    UN punto, no una curva): ``label`` = etiqueta de texto del punto (p.ej. país) y
+    ``points`` trae un único par ``(str(x), y)`` — el valor X va serializado como
+    string en la posición que normalmente lleva la fecha/categoría, así el scatter
+    no necesita un campo nuevo en el dataclass."""
 
     label: str
     points: list[tuple[str, float]]
@@ -1005,12 +1011,16 @@ class PlotSeries:
 class PlotData:
     """Datos listos para el renderer SVG. ``kind='timeseries'`` → multi-línea
     (eje X temporal); ``kind='snapshot'`` → barras de composición (eje X
-    categórico). ``family`` es la familia renderizable del catálogo
-    (``chart_family``); ``table`` => el caller cae a una mini-tabla HTML."""
+    categórico); ``kind='grouped'`` → barras por categoría; ``kind='range'`` →
+    caja [mín,máx] + promedio + "hoy" por categoría (series con label EXACTO
+    "Mínimo"/"Máximo"/"Promedio"/"Hoy"); ``kind='scatter'`` → dispersión x/y
+    etiquetada (ver convención en ``PlotSeries``; ``overlay`` marca las
+    etiquetas del punto destacado). ``family`` es la familia renderizable del
+    catálogo (``chart_family``); ``table`` => el caller cae a una mini-tabla HTML."""
 
     dataset_id: str
     family: str
-    kind: str  # "timeseries" | "snapshot" | "grouped"
+    kind: str  # "timeseries" | "snapshot" | "grouped" | "range" | "scatter"
     unit: str
     series: list[PlotSeries]
     # Etiquetas de series que se dibujan SUPERPUESTAS (no apiladas): una línea

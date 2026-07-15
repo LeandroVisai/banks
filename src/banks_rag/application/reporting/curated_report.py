@@ -218,6 +218,8 @@ def _process_block(
         plot, chart=block.chart,
         right_axis=block.params.get("right_axis"),
         right_unit=block.params.get("right_unit", ""),
+        x_label=block.params.get("x_label", ""),
+        y_label=block.params.get("y_label", ""),
     )
     if svg is None:
         return CuratedBlock(block, "placeholder", "", "serie no graficable como línea")

@@ -15,6 +15,7 @@ from .curated_report import (
     fill_text_slots,
     render_curated_html,
 )
+from .editable_html import make_editable_html, strip_editable_chrome
 from .html_render import render_parquet_report_html
 from .parquet_facts import PlotData, PlotSeries, compute_series
 from .parquet_report import (
@@ -54,8 +55,10 @@ __all__ = [
     "fill_text_slots",
     "generate_parquet_report",
     "inject_charts_into_html",
+    "make_editable_html",
     "render_curated_html",
     "render_parquet_report_html",
     "select_datasets",
+    "strip_editable_chrome",
     "verify_report",
 ]

@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 # builder solo sabe dibujar las soportadas hoy; el resto caen a placeholder.
 ChartKind = str  # "line" | "area" | "composition" | "grouped_bar" | "stacked_bar"
 #                  | "stacked_area" | "pie" | "dual_line" | "bar_time" | "heatmap_table"
+#                  | "hist_range" (caja mín/máx + promedio + "hoy" por categoría)
+#                  | "point" (dispersión x/y etiquetada, con cruce en 0)
 
 # Estado del bloque respecto del MVP.
 STATUS_MVP = "mvp"    # el renderer actual lo dibuja ahora

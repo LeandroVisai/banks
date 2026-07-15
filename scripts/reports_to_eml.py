@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
-"""Convierte los informes curados (HTML) a correos ``.eml`` autocontenidos.
+"""Convierte un informe HTML a un correo ``.eml`` autocontenido.
 
-Recorre una carpeta de HTML curados (los que produce ``build_family_report.py`` +
-``fill_report_texts.py``) y, por cada uno, genera un ``.eml`` listo para abrir en
-Outlook / Apple Mail / Thunderbird con:
+Dos modos:
 
-  - CUERPO **email-safe**: estilos inline + tablas (sin ``<style>`` ni JS), porque el
-    motor de Word de Outlook ignora el CSS del ``<head>`` y no renderiza SVG.
-  - Cada GRÁFICO re-renderizado a **PNG con matplotlib** (desde los datos reales del
-    parquet, no del SVG) e incrustado inline vía ``cid:`` (multipart/related).
-  - El INFORME interactivo original (el HTML completo, con SVG + tooltips) como
-    **adjunto** (se abre en el navegador con fidelidad total).
+**Pass-through (por defecto)** — el correo lleva TU informe editado tal cual. Se toma
+el HTML (el que editaste a mano / con el chartbuilder), se lo deja "plano" y se arma el
+``.eml`` con ESE cuerpo. NO reconstruye nada: los gráficos que insertaste (PNG del
+chartbuilder) y tu texto pasan al correo. Pasos:
 
-El texto de cada bloque (el que redacta el LLM) se toma TAL CUAL del HTML de entrada;
-los gráficos se reconstruyen del modelo (la familia se infiere del nombre del archivo,
-``<familia>_<fecha>.html``), así el PNG sale limpio y en la misma escala que el texto.
+  - **Quita el chrome de edición** (panel 💾/📄 + ``contenteditable``) y el **Plotly
+    interactivo** (deja solo los PNG) → "HTML plano" que se GUARDA en ``--plain-dir``.
+  - **Inline CSS**: el CSS del ``<head>`` (clases de ``html_render.py``) se vuelca a
+    estilos inline por elemento, porque el motor de Word de Outlook ignora el ``<style>``.
+  - Las imágenes ``data:`` (gráficos PNG y fotos pegadas) pasan a ``cid:``
+    (multipart/related), que es lo único que Outlook incrusta en el cuerpo.
+  - El HTML plano va también como **adjunto** (se abre en el navegador).
+
+**Reconstruir desde spec (``--from-spec``, legado)** — para los informes CURADOS
+(``build_family_report.py``): re-renderiza cada gráfico a PNG con matplotlib desde el
+parquet (la familia se infiere del nombre ``<familia>_<fecha>.html``) y arma un cuerpo
+email-safe con tablas. Cambia el formato de los gráficos respecto del HTML original.
 
 Uso:
-    python scripts/reports_to_eml.py                          # carpeta por defecto
-    python scripts/reports_to_eml.py --src data/parquet_reports/curated --out data/parquet_reports/eml
+    python scripts/reports_to_eml.py --src data/parquet_reports/html          # pass-through (default)
+    python scripts/reports_to_eml.py --src reporte_final.html                 # un solo archivo
+    python scripts/reports_to_eml.py --from-spec --src data/parquet_reports/curated   # legado curado
     python scripts/reports_to_eml.py --to analista@bcch.cl --from informes@bcch.cl
 
 ``.msg`` (formato propietario de Outlook) requiere Outlook COM; este script emite el
@@ -51,7 +57,10 @@ _SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 if _SRC.is_dir() and str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from banks_rag.application.reporting import build_curated_report  # noqa: E402
+from banks_rag.application.reporting import (  # noqa: E402
+    build_curated_report,
+    strip_editable_chrome,
+)
 from banks_rag.application.reporting.parquet_facts import HtmlTable  # noqa: E402
 from banks_rag.application.reporting.specs import available_families, get_spec  # noqa: E402
 
@@ -475,8 +484,8 @@ def _family_from_name(path: pathlib.Path) -> str | None:
     return fam if get_spec(fam) is not None else None
 
 
-def process_file(path: pathlib.Path, out_dir: pathlib.Path, *, sender: str, to: str,
-                 subject_prefix: str) -> str:
+def process_file_from_spec(path: pathlib.Path, out_dir: pathlib.Path, *, sender: str, to: str,
+                           subject_prefix: str) -> str:
     fam = _family_from_name(path)
     if fam is None:
         return f"SKIP {path.name} (familia no reconocida; conocidas: {', '.join(available_families())})"
@@ -515,26 +524,144 @@ def process_file(path: pathlib.Path, out_dir: pathlib.Path, *, sender: str, to: 
     return f"OK   {path.name} -> {out}  ({len(images)} gráficos PNG, adjunto el HTML interactivo)"
 
 
+# ── Modo pass-through: TU HTML editado → correo (sin reconstruir) ─────────────
+
+# Plotly interactivo del reporte (lo inserta el chartbuilder en modo "interactivo").
+# Para el correo se quita: solo entran los gráficos PNG (data: URI → cid:).
+_RE_PLOTLY_LIB = re.compile(r'<script id="cb-plotly-lib"[^>]*>.*?</script>', re.S)
+_RE_CB_FIGURE = re.compile(r'<figure class="report-chart cb-inserted".*?</figure>', re.S)
+_RE_NEWPLOT_SCRIPT = re.compile(r"<script\b(?:(?!</script>)[\s\S])*?Plotly\.newPlot(?:(?!</script>)[\s\S])*?</script>")
+
+
+def strip_interactive_plotly(html: str) -> tuple[str, int]:
+    """Deja el informe "plano": quita la librería Plotly vendorizada, las figuras
+    interactivas (``Plotly.newPlot`` / ``<div id="cbfig…">``) y cualquier script de
+    newPlot suelto. Conserva los gráficos PNG. Devuelve ``(html, n_interactivas)``."""
+    html = _RE_PLOTLY_LIB.sub("", html)
+    removed = 0
+
+    def _drop(m: re.Match[str]) -> str:
+        nonlocal removed
+        block = m.group(0)
+        if "Plotly.newPlot" in block or 'id="cbfig' in block or "id='cbfig" in block:
+            removed += 1
+            return ""
+        return block  # figura con <img> (PNG): se conserva
+
+    html = _RE_CB_FIGURE.sub(_drop, html)
+    html = _RE_NEWPLOT_SCRIPT.sub("", html)
+    return html, removed
+
+
+# Mapa clase/etiqueta → estilo inline (CSS de html_render.py, clases FIJAS). Outlook
+# ignora el <style> del <head>; esto vuelca ese CSS a cada elemento. ACOPLADO a la
+# plantilla de html_render.py: si cambian esas clases/estilos, actualizar aquí.
+_INLINE_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r'<div class="page">'), "max-width:1400px;margin:20px auto 36px"),
+    (re.compile(r'<div class="hero">'), "background:#d9d9d9;padding:18px 20px 12px;text-align:center"),
+    (re.compile(r"<h1>"), "margin:0;color:#0b3766;font-size:30px;line-height:1.2;font-weight:800"),
+    (re.compile(r'<div class="subtitle">'),
+     "margin-top:14px;background:#cfcfcf;padding:8px 14px;font-size:14px;font-weight:700;color:#2a2a2a;text-align:center"),
+    (re.compile(r'<div class="content">'), "margin-top:26px"),
+    (re.compile(r'<section class="dataset-block"[^>]*>'), "margin-bottom:6px"),
+    (re.compile(r'<h2 class="block-heading">'), "color:#0b3766;font-size:22px;font-weight:800;margin:26px 0 8px"),
+    (re.compile(r'<p class="dataset-meta">'), "color:#0a4a86;font-size:13px;font-weight:700;margin:0 0 8px"),
+    (re.compile(r'<div class="synthesis-body"[^>]*>'), "color:#1f1f1f;font-size:15px"),
+    (re.compile(r'<div class="section-text"[^>]*>'), "margin:4px 0 10px;color:#1f1f1f;font-size:15px"),
+    (re.compile(r'<ul class="bullet-list">'), "margin:8px 0 14px;padding-left:24px"),
+    (re.compile(r'<hr class="separator">'), "border:0;border-top:1px solid #c8c8c8;margin:16px 0 18px"),
+    (re.compile(r"<p>"), "margin:8px 0;font-size:16px"),
+    (re.compile(r"<li>"), "margin:6px 0;font-size:16px"),
+    (re.compile(r"<code>"), "font-family:Consolas,monospace;font-size:14px;background:#f2f2f2;padding:1px 4px"),
+    (re.compile(r"<strong>"), "font-weight:800"),
+    (re.compile(r"<em>"), "font-style:italic"),
+]
+
+
+def inline_report_css(html: str) -> str:
+    """Vuelca el CSS del informe descriptivo a estilos inline (Outlook-safe). No toca
+    tags que ya traen ``style=`` (p.ej. las figuras/imgs del chartbuilder)."""
+    def _add(style: str):
+        def repl(m: re.Match[str]) -> str:
+            tag = m.group(0)
+            return tag if " style=" in tag else tag[:-1] + f' style="{style}">'
+        return repl
+
+    for rx, style in _INLINE_RULES:
+        html = rx.sub(_add(style), html)
+    return html
+
+
+_RE_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.S | re.I)
+_RE_H1 = re.compile(r"<h1[^>]*>(.*?)</h1>", re.S | re.I)
+
+
+def _extract_title(html: str) -> str:
+    m = _RE_TITLE.search(html) or _RE_H1.search(html)
+    return re.sub(r"<[^>]+>", "", m.group(1)).strip() if m else ""
+
+
+def process_file_passthrough(path: pathlib.Path, out_dir: pathlib.Path, *, sender: str, to: str,
+                             subject_prefix: str, plain_dir: pathlib.Path) -> str:
+    """Correo con TU HTML editado tal cual: quita chrome + Plotly interactivo, guarda
+    el HTML plano, y arma el .eml (inline CSS + imágenes cid:)."""
+    raw = path.read_text(encoding="utf-8")
+    clean = strip_editable_chrome(raw)          # fuera panel 💾/📄 + contenteditable
+    plain, n_inter = strip_interactive_plotly(clean)  # fuera Plotly interactivo (queda PNG)
+
+    plain_dir.mkdir(parents=True, exist_ok=True)
+    plain_path = plain_dir / f"{path.stem}.plain.html"
+    plain_path.write_text(plain, encoding="utf-8")
+
+    images: dict[str, tuple[str, bytes]] = {}
+    body = _cidify_images(plain, images)        # data: (PNG + fotos pegadas) → cid:
+    body = inline_report_css(body)              # CSS del <head> → inline (Outlook)
+
+    title = _extract_title(plain) or path.stem
+    subject = f"{subject_prefix}{title}".strip()
+    eml = build_eml(
+        subject=subject, sender=sender, to=to, html_body=body, images=images,
+        attach_name=plain_path.name, attach_bytes=plain.encode("utf-8"),
+    )
+    out = out_dir / f"{path.stem}.eml"
+    out.write_bytes(eml)
+    warn = f" · OJO {n_inter} gráfico(s) interactivo(s) omitido(s): reinsértalos en modo PNG" if n_inter else ""
+    return (f"OK   {path.name} -> {out}  ({len(images)} imágenes inline · "
+            f"plano -> {plain_path}){warn}")
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Informes curados (HTML) → correos .eml autocontenidos.")
-    ap.add_argument("--src", default="data/parquet_reports/curated", help="Carpeta con los HTML curados.")
+    ap = argparse.ArgumentParser(description="Informe HTML → correo .eml (pass-through de tu HTML editado).")
+    ap.add_argument("--src", default="data/parquet_reports/html",
+                    help="Archivo HTML o carpeta con los HTML a convertir (default: la salida de parquet_report.py).")
     ap.add_argument("--out", default="data/parquet_reports/eml", help="Carpeta de salida de los .eml.")
+    ap.add_argument("--plain-dir", default="data/parquet_reports/plain",
+                    help="Carpeta donde guardar el HTML PLANO (sin plotly interactivo).")
     ap.add_argument("--to", default="destinatario@ejemplo.cl", help="Destinatario del correo.")
     ap.add_argument("--from", dest="sender", default="informes@ejemplo.cl", help="Remitente.")
     ap.add_argument("--subject-prefix", default="", help="Prefijo del asunto (ej. '[BCCh] ').")
-    ap.add_argument("--glob", default="*.html", help="Patrón de archivos a procesar.")
+    ap.add_argument("--glob", default="*.html", help="Patrón de archivos si --src es carpeta.")
+    ap.add_argument("--from-spec", action="store_true",
+                    help="Modo legado: RECONSTRUYE los gráficos desde el spec de la familia (informes curados), "
+                         "en vez de pasar tu HTML editado tal cual.")
     args = ap.parse_args()
 
     src = pathlib.Path(args.src)
     out_dir = pathlib.Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    files = sorted(src.glob(args.glob))
+    plain_dir = pathlib.Path(args.plain_dir)
+    files = [src] if src.is_file() else sorted(src.glob(args.glob))
     if not files:
         print(f"No hay archivos {args.glob} en {src}")
         return
     for f in files:
         try:
-            print(process_file(f, out_dir, sender=args.sender, to=args.to, subject_prefix=args.subject_prefix))
+            if args.from_spec:
+                print(process_file_from_spec(f, out_dir, sender=args.sender, to=args.to,
+                                             subject_prefix=args.subject_prefix))
+            else:
+                print(process_file_passthrough(f, out_dir, sender=args.sender, to=args.to,
+                                               subject_prefix=args.subject_prefix, plain_dir=plain_dir))
         except Exception as exc:
             print(f"ERR  {f.name}: {exc}")
 
