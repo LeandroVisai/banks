@@ -9,8 +9,13 @@ composición); el resto queda como placeholder marcado con su tipo pendiente.
 Uso:
     python scripts/build_family_report.py --family ffmm
     python scripts/build_family_report.py            # lista familias disponibles
+    python scripts/build_family_report.py --all      # construye todas
 
-Salida: data/parquet_reports/curated/<familia>_<fecha>.html
+Salida: **una carpeta por familia**, ``data/parquet_reports/curated/<familia>/<familia>_<fecha>.html``.
+Cada informe se acumula por fecha, así que sin subcarpeta las cuatro familias
+mezclaban sus corridas en el mismo directorio y había que leer el prefijo del
+archivo para saber cuál era cuál.
+
 Además, una versión EDITABLE junto a esa (``<familia>_<fecha>_editable.html``):
 panel flotante 💾 Guardar / 📄 Versión final para escribir el texto A MANO en el
 navegador (sin pasar por parquet_report.py/fill_report_texts.py) y guardar
@@ -37,10 +42,39 @@ from banks_rag.application.reporting import (  # noqa: E402
 from banks_rag.application.reporting.specs import available_families, get_spec  # noqa: E402
 
 
+def build_one(family: str, out_root: pathlib.Path, *, editable: bool) -> bool:
+    """Construye una familia en ``<out_root>/<familia>/``. ``False`` si no hay spec."""
+    spec = get_spec(family)
+    if spec is None:
+        return False
+
+    report = build_curated_report(spec)
+    html = render_curated_html(report)
+
+    # Una carpeta POR FAMILIA: cada informe se acumula por fecha y sin subcarpeta
+    # las cuatro familias mezclaban sus corridas en el mismo directorio.
+    out = out_root / spec.family
+    out.mkdir(parents=True, exist_ok=True)
+    stem = f"{spec.family}_{datetime.date.today().isoformat()}"
+    dst = out / f"{stem}.html"
+    dst.write_text(html, encoding="utf-8")
+    print(f"OK {spec.title} -> {dst}  ({report.summary()})")
+
+    # Versión editable (misma que "Guardar editable" del chartbuilder): útil ACÁ
+    # sobre todo si se va a escribir el texto a mano, sin pasar por el LLM.
+    if editable:
+        ed_dst = out / f"{stem}_editable.html"
+        ed_dst.write_text(make_editable_html(html), encoding="utf-8")
+        print(f"OK editable -> {ed_dst}  (contenteditable + panel 💾 Guardar / 📄 Versión final)")
+    return True
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Informe curado por familia (gráficos desde parquets, sin LLM).")
     ap.add_argument("--family", default=None, help="Familia a construir (ej. ffmm). Sin valor: lista las disponibles.")
-    ap.add_argument("--out", default="data/parquet_reports/curated", help="Carpeta de salida.")
+    ap.add_argument("--all", action="store_true", help="Construye TODAS las familias disponibles.")
+    ap.add_argument("--out", default="data/parquet_reports/curated",
+                    help="Carpeta RAÍZ de salida; cada familia escribe en su subcarpeta <familia>/.")
     ap.add_argument("--verbose", action="store_true", help="Log a nivel INFO.")
     ap.add_argument(
         "--no-editable", action="store_true",
@@ -54,31 +88,16 @@ def main() -> None:
     )
 
     families = available_families()
-    if not args.family:
+    if not args.family and not args.all:
         print("Familias disponibles:", ", ".join(families) or "(ninguna)")
         return
 
-    spec = get_spec(args.family)
-    if spec is None:
-        print(f"No hay spec curado para {args.family!r}. Disponibles: {', '.join(families)}")
-        raise SystemExit(1)
-
-    report = build_curated_report(spec)
-    html = render_curated_html(report)
-
-    out = pathlib.Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    stem = f"{spec.family}_{datetime.date.today().isoformat()}"
-    dst = out / f"{stem}.html"
-    dst.write_text(html, encoding="utf-8")
-    print(f"OK {spec.title} -> {dst}  ({report.summary()})")
-
-    # Versión editable (misma que "Guardar editable" del chartbuilder): útil ACÁ
-    # sobre todo si se va a escribir el texto a mano, sin pasar por el LLM.
-    if not args.no_editable:
-        ed_dst = out / f"{stem}_editable.html"
-        ed_dst.write_text(make_editable_html(html), encoding="utf-8")
-        print(f"OK editable -> {ed_dst}  (contenteditable + panel 💾 Guardar / 📄 Versión final)")
+    out_root = pathlib.Path(args.out)
+    targets = families if args.all else [args.family]
+    for fam in targets:
+        if not build_one(fam, out_root, editable=not args.no_editable):
+            print(f"No hay spec curado para {fam!r}. Disponibles: {', '.join(families)}")
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

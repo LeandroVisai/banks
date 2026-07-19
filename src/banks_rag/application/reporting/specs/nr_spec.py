@@ -37,12 +37,15 @@ _S_EXTRA = "Gráficos Extras"
 _BLOCKS: tuple[ReportBlock, ...] = (
     # ── Mercado de Derivados ─────────────────────────────────────────────────
     # Posición histórica = stock por tramo de plazo apilado + Neto (suma) en línea.
+    # OJO: el parquet es ANCHO (una columna por tramo + Neto), NO largo. Con
+    # ``category_series`` (category="Plazo") DuckDB no encuentra la columna y el
+    # bloque caía a placeholder en silencio.
     ReportBlock(
         section=_S_DERIV, title="Posición cambiaria histórica de no residentes",
         unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
-        source_id="posicion_nr_derivados", transform="category_series",
-        params={"category": "Plazo", "value": "Valor", "net": "auto",
-                "order": ["1 a 90 dias", "91 a 360 dias", "Mayor a 360 dias"]},
+        source_id="posicion_nr_derivados", transform="wide_lines",
+        params={"include": ["1 a 90 dias", "91 a 360 dias", "Mayor a 360 dias"],
+                "overlay": ["Neto"]},
         note="*posición por tramo de plazo; Neto = suma de tramos",
     ),
     # Cambio de la semana: barra apilada divergente (Suscripción arriba,
@@ -114,19 +117,19 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         source_id="variacion_rfl_dcv_nr", transform="straight_series",
     ),
     # ── Mercado SPC (tasas) ──────────────────────────────────────────────────
-    # Parquet en US$ mil millones → scale 1000 para mostrar en US$ Mill. (como el
-    # informe). Apilado DIVERGENTE: lo que pagan fija va arriba, lo que reciben
-    # fija va abajo; el Neto (suma) cruza el cero como línea.
-    # OJO: el informe enviado OMITE el tramo corto "1 a 90 dias" en este gráfico
-    # (es enorme y negativo, ~-34.000, y descuadra el eje). Sin él, el Neto de los
-    # 3 tramos largos da ~+9.000 como en el correo. Replicamos esa vista.
+    # "posicion_nr_spc" (long: Plazos_D/Monto_USD) se descontinuó en el tablero;
+    # "nr_var_posicion_spc" (wide: un tramo por columna + Neto) es su reemplazo
+    # — mismo dataset que alimenta los dos bloques siguientes. A diferencia del
+    # descontinuado, ningún tramo domina el eje (magnitudes parejas entre
+    # tramos), así que ya no hace falta excluir "1 a 90 dias" para que el
+    # gráfico sea legible: se incluyen los 4 tramos + Neto (overlay), igual que
+    # en los bloques de abajo.
     ReportBlock(
         section=_S_SPC, title="Posición de no residentes en SPC nominal",
         unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
-        source_id="posicion_nr_spc", transform="category_series",  # scale 1000 ahora en el catálogo (chart Y texto)
-        params={"category": "Plazos_D", "value": "Monto_USD", "net": "auto",
-                "order": ["91 a 360 dias", "Entre 1 y 2Y", "Mayor a 2Y"]},
-        note="*tramos ≥90d; pagan fija (+) / reciben fija (-); Neto = suma de tramos",
+        source_id="nr_var_posicion_spc", transform="wide_lines",  # scale 1000 ahora en el catálogo
+        params={"overlay": ["Neto"]},
+        note="*pagan fija (+) / reciben fija (-); Neto = suma de tramos",
     ),
     # Variación acumulada YtD = nivel rebaseado al inicio del año (el parquet trae
     # niveles); apilado divergente + Neto en línea.

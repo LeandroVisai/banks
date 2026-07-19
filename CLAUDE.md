@@ -51,6 +51,23 @@ python scripts/audit_parquets.py            # roles + mismatches catálogo↔par
 python scripts/parquet_report.py --segment ffmm                 # o "fondos mutuos"
 python scripts/parquet_report.py --datasets flujos_ffmm,duracion_ffmm --windows 7d,30d,90d
 
+# Informe CURADO por familia (réplica de un correo real del BCCh; Python puro, sin
+# LLM). Cada familia escribe en SU carpeta: data/parquet_reports/curated/<familia>/
+python scripts/build_family_report.py                           # lista familias
+python scripts/build_family_report.py --family fx               # ffmm | afp | nr | fx | dcv
+python scripts/build_family_report.py --all
+# Para acotar el período de UN gráfico: date_from/date_to (ISO) en su ReportBlock
+# del spec. Recorta el PARQUET antes de la transform, así la "última fecha" del
+# gráfico, sus ventanas 7d/30d y su párrafo de texto respetan el recorte.
+
+# Informe curado → correo .eml. El .eml ADJUNTA tu HTML final tal cual (SVG +
+# tooltips) y pone en el CUERPO una versión plana (SVG→PNG cid:, sin JS, CSS inline)
+# que es lo único que renderiza Outlook. Salidas por familia:
+#   data/parquet_reports/eml/<familia>/<nombre>.eml
+#   data/parquet_reports/plano/<familia>/<nombre>.plano.html  ← el cuerpo, autocontenido
+python scripts/reports_to_eml.py --src data/parquet_reports/curated/fx      # una familia
+python scripts/reports_to_eml.py --src data/parquet_reports/curated         # todas (recursivo)
+
 # Evaluación
 make eval          # golden set completo → eval_report.md
 make eval-ci       # gate CI recall@5

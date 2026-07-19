@@ -9,13 +9,17 @@ from __future__ import annotations
 from banks_rag.application.reporting.report_spec import FamilyReportSpec
 
 from .afp_spec import AFP_SPEC
+from .dcv_spec import DCV_SPEC
 from .ffmm_spec import FFMM_SPEC
+from .fx_spec import FX_SPEC
 from .nr_spec import NR_SPEC
 
 _SPECS: dict[str, FamilyReportSpec] = {
     FFMM_SPEC.family: FFMM_SPEC,
     NR_SPEC.family: NR_SPEC,
     AFP_SPEC.family: AFP_SPEC,
+    FX_SPEC.family: FX_SPEC,
+    DCV_SPEC.family: DCV_SPEC,
 }
 
 # El ``segment`` del catálogo no siempre coincide con el ``family`` del spec
@@ -25,6 +29,7 @@ _SPECS: dict[str, FamilyReportSpec] = {
 # ``segment`` reales del catálogo.
 _SEGMENT_ALIASES: dict[str, str] = {
     "no_residentes": NR_SPEC.family,
+    "fx_diferencial": FX_SPEC.family,
 }
 
 
@@ -38,4 +43,7 @@ def available_families() -> list[str]:
     return sorted(_SPECS)
 
 
-__all__ = ["AFP_SPEC", "FFMM_SPEC", "NR_SPEC", "available_families", "get_spec"]
+__all__ = [
+    "AFP_SPEC", "DCV_SPEC", "FFMM_SPEC", "FX_SPEC", "NR_SPEC",
+    "available_families", "get_spec",
+]

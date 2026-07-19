@@ -13,13 +13,18 @@ del informe quedan completos desde la primera iteración.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import html
 import logging
 import re
+import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+import duckdb
 
 from banks_rag.infrastructure.sql.parquet_catalog_loader import (
     ParquetDataset,
@@ -100,6 +105,87 @@ class CuratedReport:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# ── Recorte de fechas por bloque (``date_from`` / ``date_to`` del spec) ──────
+#
+# El recorte se materializa como una COPIA del parquet en un directorio temporal,
+# y la transform (o ``compute_facts``, del lado del texto) lee esa copia sin
+# enterarse. Es lo que permite fijar el período de UN gráfico desde el spec sin
+# tocar ninguna de las ~40 transforms, y deja coherente todo lo que se deriva de
+# la fecha: última fecha, ventanas 7d/30d, YtD y el corte citado en el pie.
+
+
+@contextlib.contextmanager
+def date_filtered_dir(
+    dataset: ParquetDataset, parquet_dir: Path, date_from: str = "", date_to: str = "",
+) -> Iterator[Path]:
+    """Directorio de parquets donde ``dataset`` está acotado a ``[date_from, date_to]``.
+
+    Sin recorte —o si el parquet no existe, o no tiene columna de fecha— cede el
+    directorio ORIGINAL sin copiar nada: el caso común no paga ningún costo. Con
+    recorte cede un temporal que vive solo mientras dura la lectura.
+
+    Un recorte que deja el parquet VACÍO no se aplica: se cede el original y se
+    avisa por log. Un parquet vacío haría fallar la transform con "sin serie", que
+    es indistinguible de un parquet ausente; es mejor que el bloque se dibuje
+    completo y el rango mal puesto se vea a simple vista.
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not (date_from or date_to) or not path.exists():
+        yield parquet_dir
+        return
+
+    from .parquet_facts import detect_roles
+
+    con = duckdb.connect()
+    try:
+        date_col = detect_roles(path, con).date_col
+        if date_col is None:
+            log.warning("[%s] date_from/date_to ignorados: el parquet no tiene columna de fecha",
+                        dataset.id)
+            yield parquet_dir
+            return
+
+        conds = [f'TRY_CAST("{date_col}" AS DATE) IS NOT NULL']
+        if date_from:
+            conds.append(f"TRY_CAST(\"{date_col}\" AS DATE) >= DATE '{date_from}'")
+        if date_to:
+            conds.append(f"TRY_CAST(\"{date_col}\" AS DATE) <= DATE '{date_to}'")
+        where = " AND ".join(conds)
+        src = f"read_parquet('{path.as_posix()}')"
+
+        if not con.execute(f"SELECT count(*) FROM {src} WHERE {where}").fetchone()[0]:
+            log.warning("[%s] date_from=%r date_to=%r no deja ninguna fila: se ignora el recorte",
+                        dataset.id, date_from, date_to)
+            yield parquet_dir
+            return
+
+        with tempfile.TemporaryDirectory(prefix="banks-report-") as tmp:
+            out = Path(tmp) / path.name
+            con.execute(
+                f"COPY (SELECT * FROM {src} WHERE {where}) "
+                f"TO '{out.as_posix()}' (FORMAT parquet)"
+            )
+            yield Path(tmp)
+    finally:
+        con.close()
+
+
+def spec_date_filters(spec: FamilyReportSpec) -> dict[str, tuple[str, str]]:
+    """``source_id`` → ``(date_from, date_to)`` que debe usar su PÁRRAFO de texto.
+
+    El texto es por dataset y los bloques son por gráfico, así que un mismo
+    ``source_id`` puede alimentar varios bloques con recortes distintos. El
+    párrafo hereda el recorte del bloque que POSEE el slot de texto (el primero
+    que usa ese source_id, ver ``_resolve_text_slots``): es el bloque que el
+    párrafo comenta, así prosa y gráfico hablan del mismo período.
+    """
+    out: dict[str, tuple[str, str]] = {}
+    for b in _resolve_text_slots(spec):
+        if b.source_id and b.text_slot and (b.date_from or b.date_to):
+            out.setdefault(b.source_id, (b.date_from, b.date_to))
+    return out
+
+
 def _spec_source_ids(spec: FamilyReportSpec) -> list[str]:
     """``source_id`` distintos del spec, en orden de aparición."""
     seen: list[str] = []
@@ -173,7 +259,14 @@ def _process_block(
     tumba el resto.
     """
     if block.status == STATUS_SKIP:
-        return CuratedBlock(block, "skip", "", "sin parquet reproducible todavía")
+        # El bloque se queda EN SU POSICIÓN del informe original: la tarjeta dice
+        # que el dato no está, y la ``note`` del spec (que se dibuja arriba) detalla
+        # QUÉ serie falta. Así el informe conserva la estructura del correo y se ve
+        # de un vistazo qué habría que traer del servidor.
+        return CuratedBlock(
+            block, "skip", "",
+            "No se tiene este parquet todavía — el bloque se completa cuando llegue la serie",
+        )
 
     # Tabla cuya transform no está implementada aún: placeholder directo.
     transform = get_transform(block.transform)
@@ -189,12 +282,15 @@ def _process_block(
     # (stacked_by_bucket, dcv_*): leen params["weekly_asof"] y anclan ahí la ventana.
     params = {**block.params, "weekly_asof": weekly_asof} if weekly_asof else block.params
     try:
-        if transform is not None:
-            result = transform(dataset, parquet_dir, params)
-        else:
-            # Vista preliminar: serie natural, filtrada por las categorías pedidas.
-            cf = list(block.params.get("funds") or block.params.get("types") or []) or None
-            result = compute_series(dataset, parquet_dir, category_filter=cf)
+        # ``date_from``/``date_to`` del spec: la transform lee una copia del parquet
+        # ya acotada, así su propia noción de "última fecha" respeta el recorte.
+        with date_filtered_dir(dataset, parquet_dir, block.date_from, block.date_to) as pdir:
+            if transform is not None:
+                result = transform(dataset, pdir, params)
+            else:
+                # Vista preliminar: serie natural, filtrada por las categorías pedidas.
+                cf = list(block.params.get("funds") or block.params.get("types") or []) or None
+                result = compute_series(dataset, pdir, category_filter=cf)
     except Exception:
         log.exception("[%s] el cálculo de la serie falló", block.title)
         return CuratedBlock(block, "placeholder", "", "error al calcular la serie")
@@ -573,7 +669,7 @@ def _block_html(cb: CuratedBlock) -> str:
         parts.append(cb.body_html)
     elif cb.render_kind == "skip":
         parts.append(
-            f'<div class="placeholder-card skip"><span class="kind">Sin datos</span><br>'
+            f'<div class="placeholder-card skip"><span class="kind">Falta el parquet</span><br>'
             f"{_esc(cb.reason)}</div>"
         )
     else:

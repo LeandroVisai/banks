@@ -11,7 +11,7 @@ Uso típico (H100, después de correr parquet_report.py):
         --paragraphs-out data/parquet_reports/paragraphs_ffmm.json
 
     python scripts/fill_report_texts.py \\
-        --curated data/parquet_reports/curated/ffmm_2026-06-15.html \\
+        --curated data/parquet_reports/curated/ffmm/ffmm_2026-06-15.html \\
         --paragraphs data/parquet_reports/paragraphs_ffmm.json
 
 El HTML se sobreescribe en-place (usa --out para otra ruta).

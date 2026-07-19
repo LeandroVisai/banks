@@ -9,12 +9,19 @@ el HTML (el que editaste a mano / con el chartbuilder), se lo deja "plano" y se 
 chartbuilder) y tu texto pasan al correo. Pasos:
 
   - **Quita el chrome de edición** (panel 💾/📄 + ``contenteditable``) y el **Plotly
-    interactivo** (deja solo los PNG) → "HTML plano" que se GUARDA en ``--plain-dir``.
+    interactivo** (deja solo los PNG).
   - **Inline CSS**: el CSS del ``<head>`` (clases de ``html_render.py``) se vuelca a
     estilos inline por elemento, porque el motor de Word de Outlook ignora el ``<style>``.
-  - Las imágenes ``data:`` (gráficos PNG y fotos pegadas) pasan a ``cid:``
-    (multipart/related), que es lo único que Outlook incrusta en el cuerpo.
-  - El HTML plano va también como **adjunto** (se abre en el navegador).
+  - Los **gráficos SVG** se rasterizan a PNG y, junto con las imágenes ``data:``
+    (fotos pegadas), pasan a ``cid:`` (multipart/related) — lo único que Outlook
+    incrusta en el cuerpo.
+  - **Adjunta TU HTML final** tal cual (SVG vectorial + tooltips), con su nombre.
+  - Guarda una **copia PLANA** en ``--plain-dir``: el mismo cuerpo del correo pero
+    autocontenido (``cid:`` → ``data:``), sin interacción, para revisar en el
+    navegador exactamente lo que llega al destinatario.
+  - Las salidas se agrupan **por familia** (``eml/fx/``, ``plano/fx/``…), igual que
+    ``build_family_report.py``. Un HTML que no sea de una familia (el informe
+    descriptivo ``reporte_…``) queda en la raíz.
 
 **Reconstruir desde spec (``--from-spec``, legado)** — para los informes CURADOS
 (``build_family_report.py``): re-renderiza cada gráfico a PNG con matplotlib desde el
@@ -24,7 +31,8 @@ email-safe con tablas. Cambia el formato de los gráficos respecto del HTML orig
 Uso:
     python scripts/reports_to_eml.py --src data/parquet_reports/html          # pass-through (default)
     python scripts/reports_to_eml.py --src reporte_final.html                 # un solo archivo
-    python scripts/reports_to_eml.py --from-spec --src data/parquet_reports/curated   # legado curado
+    python scripts/reports_to_eml.py --src data/parquet_reports/curated/fx            # una familia
+    python scripts/reports_to_eml.py --from-spec --src data/parquet_reports/curated   # legado curado (recursivo)
     python scripts/reports_to_eml.py --to analista@bcch.cl --from informes@bcch.cl
 
 ``.msg`` (formato propietario de Outlook) requiere Outlook COM; este script emite el
@@ -59,6 +67,7 @@ if _SRC.is_dir() and str(_SRC) not in sys.path:
 
 from banks_rag.application.reporting import (  # noqa: E402
     build_curated_report,
+    rasterize_inline_svgs,
     strip_editable_chrome,
 )
 from banks_rag.application.reporting.parquet_facts import HtmlTable  # noqa: E402
@@ -362,11 +371,44 @@ def _cidify_images(html: str, images: dict[str, tuple[str, bytes]]) -> str:
     return _RE_DATA_IMG.sub(repl_single, html)
 
 
+def _uncidify_images(html: str, images: dict[str, tuple[str, bytes]]) -> str:
+    """``cid:`` → ``data:`` URI: vuelve autocontenido el HTML del cuerpo del correo.
+
+    Es el inverso de ``_cidify_images``/``_cidify_charts``. Se aplica al MISMO HTML
+    que viaja en el correo, así el archivo que queda en disco es exactamente lo que
+    ve quien lo recibe —solo que abrible directo en el navegador, sin las partes
+    MIME que resuelven los ``cid:``."""
+    for cid, (subtype, data) in images.items():
+        b64 = base64.b64encode(data).decode("ascii")
+        html = html.replace(f"cid:{cid}", f"data:image/{subtype};base64,{b64}")
+    return html
+
+
 def _img_tag(cid: str, *, width: str) -> str:
     return (
         f'<img src="cid:{cid}" alt="" '
         f'style="width:{width};max-width:100%;height:auto;display:block;margin:6px auto">'
     )
+
+
+# ── Gráficos SVG del informe curado → PNG inline (cid:) ──────────────────────
+# Outlook no renderiza SVG: sin esto los gráficos del informe curado (svg_chart.py,
+# SVG inline) desaparecen del cuerpo del correo. Se rasteriza el SVG TAL CUAL está
+# en el HTML (no se redibuja desde los datos), así el correo lleva exactamente el
+# gráfico revisado en el navegador.
+
+def _cidify_charts(html: str, images: dict[str, tuple[str, bytes]]) -> tuple[str, int]:
+    """``<svg>`` inline → ``<img src="cid:…">`` con el PNG registrado en ``images``."""
+
+    def emit(png: bytes, width: int, _height: int) -> str:
+        cid = f"chart{uuid.uuid4().hex[:8]}@banks"
+        images[cid] = ("png", png)
+        return (
+            f'<img src="cid:{cid}" width="{width}" alt="" '
+            f'style="width:100%;max-width:{width}px;height:auto;display:block;margin:6px auto">'
+        )
+
+    return rasterize_inline_svgs(html, emit)
 
 
 # ── Ensamblado del cuerpo email-safe (inline styles + tablas) ────────────────
@@ -457,22 +499,54 @@ def build_email_html(report, synthesis: str, text_by_slot: dict[str, str],
 # ── Ensamblado del .eml ──────────────────────────────────────────────────────
 
 def build_eml(*, subject: str, sender: str, to: str, html_body: str,
-              images: dict[str, tuple[str, bytes]], attach_name: str, attach_bytes: bytes) -> bytes:
+              images: dict[str, tuple[str, bytes]], attach_name: str, attach_html: str) -> bytes:
+    """Arma el ``.eml`` con la estructura MIME que Outlook incrusta bien:
+
+        multipart/mixed
+          multipart/related          ← los cid: son HERMANOS del cuerpo
+            multipart/alternative
+              text/plain
+              text/html
+            image/png … (inline)
+          text/html (adjunto: el informe navegable)
+
+    El orden importa: si el ``multipart/related`` va DENTRO del ``alternative``
+    (imágenes anidadas bajo la parte HTML), Outlook no las resuelve como parte del
+    cuerpo y las lista como **datos adjuntos** — que es el síntoma que se veía."""
+    alternative = EmailMessage()
+    alternative.set_content("Este informe se ve mejor en un cliente de correo con HTML.")
+    # HTML en base64 (no quoted-printable): evita los soft-breaks '=\n' que Outlook
+    # descodifica mal (se comía un carácter cada ~76 y rompía las tags y los cid).
+    alternative.add_alternative(html_body, subtype="html", cte="base64")
+
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = sender
     msg["To"] = to
     msg["Date"] = formatdate(localtime=True)
     msg["Message-ID"] = make_msgid()
-    msg.set_content("Este informe se ve mejor en un cliente de correo con HTML.")
-    # HTML en base64 (no quoted-printable): evita los soft-breaks '=\n' que Outlook
-    # descodifica mal (se comía un carácter cada ~76 y rompía las tags y los cid).
-    msg.add_alternative(html_body, subtype="html", cte="base64")
-    html_part = msg.get_payload()[-1]  # la alternativa HTML
-    for cid, (subtype, data) in images.items():
-        html_part.add_related(data, maintype="image", subtype=subtype,
-                              cid=f"<{cid}>", disposition="inline")
-    msg.add_attachment(attach_bytes, maintype="text", subtype="html", filename=attach_name)
+    msg.make_mixed()
+
+    if images:
+        related = EmailMessage()
+        related.make_related()
+        related.attach(alternative)
+        for cid, (subtype, data) in images.items():
+            part = EmailMessage()
+            # Sin filename: un adjunto con nombre reaparece en la lista de adjuntos
+            # aunque esté referenciado por cid.
+            part.set_content(data, maintype="image", subtype=subtype,
+                             cid=f"<{cid}>", disposition="inline")
+            related.attach(part)
+        msg.attach(related)
+    else:
+        msg.attach(alternative)
+
+    # El adjunto va como STR, no como bytes: con bytes la librería no declara
+    # charset y una parte text/* sin charset es us-ascii por RFC 2045 — el HTML se
+    # abría con los acentos rotos ("informacián", "—" → basura) aunque los bytes
+    # fueran UTF-8 válidos. Con str, EmailMessage escribe charset="utf-8".
+    msg.add_attachment(attach_html, subtype="html", filename=attach_name)
     # CRLF (RFC 5322): sin esto el .eml sale con LF y Outlook descodifica mal el cuerpo.
     return msg.as_bytes(policy=_SMTP_POLICY)
 
@@ -480,8 +554,22 @@ def build_eml(*, subject: str, sender: str, to: str, html_body: str,
 # ── Orquestación ─────────────────────────────────────────────────────────────
 
 def _family_from_name(path: pathlib.Path) -> str | None:
-    fam = path.stem.split("_", 1)[0].strip().lower()
-    return fam if get_spec(fam) is not None else None
+    """Familia del informe: prefijo del archivo (``fx_2026-07-18.html``) y, si ese
+    no resuelve, la carpeta que lo contiene (``curated/fx/reporte_final.html``, el
+    caso de un HTML renombrado a mano tras editarlo). ``None`` si no es de familia
+    (p.ej. el informe descriptivo ``reporte_ffmm_…``)."""
+    for candidate in (path.stem.split("_", 1)[0], path.parent.name):
+        fam = candidate.strip().lower()
+        if get_spec(fam) is not None:
+            return fam
+    return None
+
+
+def _family_dir(path: pathlib.Path, root: pathlib.Path) -> pathlib.Path:
+    """``<root>/<familia>/`` para los informes curados; ``root`` a secas para los
+    que no son de una familia — así el flujo del informe descriptivo sigue plano."""
+    fam = _family_from_name(path)
+    return root / fam if fam else root
 
 
 def process_file_from_spec(path: pathlib.Path, out_dir: pathlib.Path, *, sender: str, to: str,
@@ -517,9 +605,11 @@ def process_file_from_spec(path: pathlib.Path, out_dir: pathlib.Path, *, sender:
     subject = f"{subject_prefix}{report.spec.title} — {path.stem.split('_', 1)[-1]}".strip()
     eml = build_eml(
         subject=subject, sender=sender, to=to, html_body=body, images=images,
-        attach_name=path.name, attach_bytes=path.read_bytes(),
+        attach_name=path.name, attach_html=path.read_text(encoding="utf-8"),
     )
-    out = out_dir / f"{path.stem}.eml"
+    eml_out = _family_dir(path, out_dir)
+    eml_out.mkdir(parents=True, exist_ok=True)
+    out = eml_out / f"{path.stem}.eml"
     out.write_bytes(eml)
     return f"OK   {path.name} -> {out}  ({len(images)} gráficos PNG, adjunto el HTML interactivo)"
 
@@ -553,10 +643,42 @@ def strip_interactive_plotly(html: str) -> tuple[str, int]:
     return html, removed
 
 
-# Mapa clase/etiqueta → estilo inline (CSS de html_render.py, clases FIJAS). Outlook
-# ignora el <style> del <head>; esto vuelca ese CSS a cada elemento. ACOPLADO a la
-# plantilla de html_render.py: si cambian esas clases/estilos, actualizar aquí.
-_INLINE_RULES: list[tuple[re.Pattern[str], str]] = [
+# Mapa clase/etiqueta → estilo inline. Outlook ignora el <style> del <head>; esto
+# vuelca ese CSS a cada elemento. Hay DOS plantillas con clases distintas (y algunas
+# homónimas con estilos distintos, p.ej. .subtitle), así que las reglas van separadas
+# y se elige el set según el documento. ACOPLADO a esas plantillas: si cambian sus
+# clases/estilos, actualizar aquí.
+
+# curated_report.py — informe CURADO por familia (build_family_report.py).
+_CURATED_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r'<div class="page">'), "max-width:1200px;margin:18px auto 40px"),
+    (re.compile(r'<div class="report-title">'),
+     "background:#4a5a72;color:#fff;text-align:center;font-size:24px;font-weight:800;padding:12px 16px"),
+    (re.compile(r'<div class="subtitle">'), "text-align:center;color:#777;font-size:12px;margin:8px 0 4px"),
+    (re.compile(r'<div class="report-synthesis">'),
+     "border:1px solid #d8dee8;border-left:5px solid #0b3766;background:#f6f8fb;padding:12px 18px;margin:14px 0 8px"),
+    (re.compile(r'<div class="synthesis-title">'), "color:#0b3766;font-size:16px;font-weight:800;margin:0 0 6px"),
+    (re.compile(r'<div class="synthesis-body"[^>]*>'), "color:#1f1f1f;font-size:13px"),
+    (re.compile(r'<div class="section-banner">'),
+     "background:#4a5a72;color:#fff;text-align:center;font-size:18px;font-weight:800;padding:8px 14px;margin:30px 0 6px"),
+    (re.compile(r'<div class="block"[^>]*>'), "margin:14px 0 8px"),
+    (re.compile(r'<div class="block-title">'), "color:#0b3766;font-size:16px;font-weight:700;margin:12px 0 2px"),
+    (re.compile(r'<div class="block-unit">'), "color:#777;font-size:12px;margin:0 0 6px"),
+    (re.compile(r'<div class="block-note">'), "color:#777;font-size:11px;font-style:italic;margin:0 0 6px"),
+    (re.compile(r'<div class="block-dates">'),
+     "color:#0b3766;font-size:11px;font-weight:600;background:#eef3f9;border:1px solid #d8dee8;"
+     "padding:2px 8px;margin:0 0 6px;display:inline-block"),
+    (re.compile(r'<div class="prelim-note">'), "color:#9a4b00;font-size:11px;margin:0 0 2px"),
+    (re.compile(r'<div class="section-text"[^>]*>'), "margin:4px 0 10px;color:#1f1f1f;font-size:14px"),
+    (re.compile(r'<div class="placeholder-card[^"]*">'),
+     "border:1px dashed #bcbcbc;background:#fafafa;color:#777;padding:18px;text-align:center;"
+     "font-size:13px;max-width:760px;margin:6px auto"),
+    (re.compile(r"<p>"), "margin:0 0 6px;font-size:14px"),
+    (re.compile(r"<li>"), "margin:2px 0;font-size:14px"),
+]
+
+# html_render.py — informe DESCRIPTIVO de datasets (parquet_report.py).
+_DESCRIPTIVE_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r'<div class="page">'), "max-width:1400px;margin:20px auto 36px"),
     (re.compile(r'<div class="hero">'), "background:#d9d9d9;padding:18px 20px 12px;text-align:center"),
     (re.compile(r"<h1>"), "margin:0;color:#0b3766;font-size:30px;line-height:1.2;font-weight:800"),
@@ -572,6 +694,10 @@ _INLINE_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r'<hr class="separator">'), "border:0;border-top:1px solid #c8c8c8;margin:16px 0 18px"),
     (re.compile(r"<p>"), "margin:8px 0;font-size:16px"),
     (re.compile(r"<li>"), "margin:6px 0;font-size:16px"),
+]
+
+# Comunes a ambas plantillas (inline markup del texto).
+_COMMON_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"<code>"), "font-family:Consolas,monospace;font-size:14px;background:#f2f2f2;padding:1px 4px"),
     (re.compile(r"<strong>"), "font-weight:800"),
     (re.compile(r"<em>"), "font-style:italic"),
@@ -579,7 +705,8 @@ _INLINE_RULES: list[tuple[re.Pattern[str], str]] = [
 
 
 def inline_report_css(html: str) -> str:
-    """Vuelca el CSS del informe descriptivo a estilos inline (Outlook-safe). No toca
+    """Vuelca el CSS de la plantilla a estilos inline (Outlook-safe). Detecta si el
+    HTML es el informe curado o el descriptivo y aplica su set de reglas. No toca
     tags que ya traen ``style=`` (p.ej. las figuras/imgs del chartbuilder)."""
     def _add(style: str):
         def repl(m: re.Match[str]) -> str:
@@ -587,9 +714,23 @@ def inline_report_css(html: str) -> str:
             return tag if " style=" in tag else tag[:-1] + f' style="{style}">'
         return repl
 
-    for rx, style in _INLINE_RULES:
+    curated = 'class="report-title"' in html or 'class="section-banner"' in html
+    rules = (_CURATED_RULES if curated else _DESCRIPTIVE_RULES) + _COMMON_RULES
+    for rx, style in rules:
         html = rx.sub(_add(style), html)
     return html
+
+
+# Restos de interactividad que no sirven en un correo (todo cliente descarta el JS):
+# el <script> del tooltip del informe curado y su contenedor vacío #chart-tip. Solo
+# se quitan del CUERPO del correo; el HTML plano adjunto los conserva para el navegador.
+_RE_ANY_SCRIPT = re.compile(r"<script\b[^>]*>.*?</script>", re.S | re.I)
+_RE_CHART_TIP = re.compile(r'<div id="chart-tip"[^>]*>\s*</div>', re.S | re.I)
+
+
+def strip_body_scripts(html: str) -> str:
+    """Quita ``<script>`` y el contenedor del tooltip (peso muerto en el correo)."""
+    return _RE_CHART_TIP.sub("", _RE_ANY_SCRIPT.sub("", html))
 
 
 _RE_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.S | re.I)
@@ -603,40 +744,59 @@ def _extract_title(html: str) -> str:
 
 def process_file_passthrough(path: pathlib.Path, out_dir: pathlib.Path, *, sender: str, to: str,
                              subject_prefix: str, plain_dir: pathlib.Path) -> str:
-    """Correo con TU HTML editado tal cual: quita chrome + Plotly interactivo, guarda
-    el HTML plano, y arma el .eml (inline CSS + imágenes cid:)."""
+    """Correo con TU HTML editado tal cual + copia PLANA del informe.
+
+    Tres artefactos, cada uno con su rol:
+
+    - **adjunto del correo**: tu HTML final SIN tocar (SVG vectorial + tooltips), con
+      su nombre de archivo — se abre en el navegador con fidelidad total.
+    - **cuerpo del correo**: el mismo informe pasado a plano (SVG → PNG ``cid:``, sin
+      JS, CSS inline), que es lo único que el motor de Word de Outlook renderiza.
+    - **copia en ``--plain-dir``**: ese MISMO cuerpo pero autocontenido (``cid:`` →
+      ``data:``), así se abre solo y muestra exactamente lo que llega al correo.
+    """
     raw = path.read_text(encoding="utf-8")
     clean = strip_editable_chrome(raw)          # fuera panel 💾/📄 + contenteditable
     plain, n_inter = strip_interactive_plotly(clean)  # fuera Plotly interactivo (queda PNG)
 
-    plain_dir.mkdir(parents=True, exist_ok=True)
-    plain_path = plain_dir / f"{path.stem}.plain.html"
-    plain_path.write_text(plain, encoding="utf-8")
-
     images: dict[str, tuple[str, bytes]] = {}
     body = _cidify_images(plain, images)        # data: (PNG + fotos pegadas) → cid:
+    body, n_svg = _cidify_charts(body, images)  # <svg> del informe curado → PNG cid:
+    body = strip_body_scripts(body)             # JS del tooltip: inútil en un correo
     body = inline_report_css(body)              # CSS del <head> → inline (Outlook)
+
+    # Copia PLANA (sin interacción) agrupada por familia, igual que build_family_report.py.
+    plano_out = _family_dir(path, plain_dir)
+    plano_out.mkdir(parents=True, exist_ok=True)
+    plano_path = plano_out / f"{path.stem}.plano.html"
+    plano_path.write_text(_uncidify_images(body, images), encoding="utf-8")
 
     title = _extract_title(plain) or path.stem
     subject = f"{subject_prefix}{title}".strip()
     eml = build_eml(
         subject=subject, sender=sender, to=to, html_body=body, images=images,
-        attach_name=plain_path.name, attach_bytes=plain.encode("utf-8"),
+        # El adjunto conserva TU nombre de archivo y TU contenido (interactivo): quien
+        # recibe el correo espera abrir el informe que editaste, no la copia plana.
+        attach_name=path.name, attach_html=plain,
     )
-    out = out_dir / f"{path.stem}.eml"
+    eml_out = _family_dir(path, out_dir)
+    eml_out.mkdir(parents=True, exist_ok=True)
+    out = eml_out / f"{path.stem}.eml"
     out.write_bytes(eml)
     warn = f" · OJO {n_inter} gráfico(s) interactivo(s) omitido(s): reinsértalos en modo PNG" if n_inter else ""
-    return (f"OK   {path.name} -> {out}  ({len(images)} imágenes inline · "
-            f"plano -> {plain_path}){warn}")
+    return (f"OK   {path.name} -> {out}  ({len(images)} imágenes inline, "
+            f"{n_svg} desde SVG · plano -> {plano_path}){warn}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Informe HTML → correo .eml (pass-through de tu HTML editado).")
     ap.add_argument("--src", default="data/parquet_reports/html",
                     help="Archivo HTML o carpeta con los HTML a convertir (default: la salida de parquet_report.py).")
-    ap.add_argument("--out", default="data/parquet_reports/eml", help="Carpeta de salida de los .eml.")
-    ap.add_argument("--plain-dir", default="data/parquet_reports/plain",
-                    help="Carpeta donde guardar el HTML PLANO (sin plotly interactivo).")
+    ap.add_argument("--out", default="data/parquet_reports/eml",
+                    help="Carpeta RAÍZ de los .eml; los informes de familia van a <out>/<familia>/.")
+    ap.add_argument("--plain-dir", default="data/parquet_reports/plano",
+                    help="Carpeta RAÍZ del HTML PLANO (sin interacción: gráficos como PNG "
+                         "embebido, sin JS). También se agrupa por familia.")
     ap.add_argument("--to", default="destinatario@ejemplo.cl", help="Destinatario del correo.")
     ap.add_argument("--from", dest="sender", default="informes@ejemplo.cl", help="Remitente.")
     ap.add_argument("--subject-prefix", default="", help="Prefijo del asunto (ej. '[BCCh] ').")
@@ -648,9 +808,10 @@ def main() -> None:
 
     src = pathlib.Path(args.src)
     out_dir = pathlib.Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
     plain_dir = pathlib.Path(args.plain_dir)
-    files = [src] if src.is_file() else sorted(src.glob(args.glob))
+    # rglob: los informes curados viven en una subcarpeta POR FAMILIA
+    # (curated/ffmm/, curated/fx/, …). En una carpeta plana se comporta igual que glob.
+    files = [src] if src.is_file() else sorted(src.rglob(args.glob))
     if not files:
         print(f"No hay archivos {args.glob} en {src}")
         return

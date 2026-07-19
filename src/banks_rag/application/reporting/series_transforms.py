@@ -16,6 +16,7 @@ en placeholder.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from datetime import date, timedelta
 from pathlib import Path
@@ -509,12 +510,17 @@ def monthly_diff(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Pl
 def _window_start(last_iso: str, window: str | None) -> str | None:
     """Fecha de inicio de la ventana de acumulación. ``ytd`` = 1-ene del último
     año con datos; ``y2`` = 1-ene del año anterior (≈18 meses, como el informe);
-    ``None``/otro = sin recorte (acumula toda la serie)."""
+    ``dN`` (p.ej. ``d30``) = últimos N días naturales, para los acumulados de
+    ventana corta del informe de flujos cambiarios (el eje X del correo real cubre
+    ~1 mes); ``None``/otro = sin recorte (acumula toda la serie)."""
     year = int(last_iso[:4])
     if window == "ytd":
         return f"{year}-01-01"
     if window == "y2":
         return f"{year - 1}-01-01"
+    if window and re.fullmatch(r"d\d+", window):
+        last = date.fromisoformat(last_iso[:10])
+        return str(last - timedelta(days=int(window[1:])))
     return None
 
 
@@ -618,9 +624,16 @@ def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
     y hay que fijar cuál agrupa. ``_aggregate_by_category`` castea con ``float``.
 
     params: ``category`` (col del eje de color), ``value`` (col numérica),
+    ``value_neg`` (col que RESTA de ``value``: posición neta = suscripción -
+    vencimiento), ``abs`` (magnitud bruta, sin netear dentro del día),
     ``filter_col``/``filter_val`` (opcional, restringe filas, p.ej. Institucion=Total),
-    ``order`` (orden/selección de categorías), ``net`` (``"auto"`` añade una serie
-    superpuesta "Neto" = suma de las categorías por fecha, para apilados divergentes).
+    ``order`` (orden/selección de categorías; sin él se toman las ``max_series``
+    mayores por |último valor|), ``labels`` (renombra las categorías al nombre del
+    informe), ``net`` (``"auto"`` añade una serie superpuesta "Neto" = suma de las
+    categorías por fecha, para apilados divergentes), ``mean_overlay`` (línea
+    horizontal en el promedio del total diario), ``anchor_zero`` (con
+    ``accumulate="cumsum"``: todas las series arrancan en 0 el primer día de la
+    ventana, como los acumulados del informe).
     """
     path = dataset.parquet_path(parquet_dir)
     if not path.exists():
@@ -629,17 +642,27 @@ def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
     if not cat or not val:
         return None
     fcol, fval = params.get("filter_col"), params.get("filter_val")
+    # ``value_neg``: segunda columna que RESTA (posición neta = suscripción -
+    # vencimiento). Sin esto un "acumulado de posición" solo sumaría una pata y
+    # mostraría una serie que no es la posición.
+    vneg = params.get("value_neg")
     con = duckdb.connect()
     try:
         roles = detect_roles(path, con)
         if roles.date_col is None:
             return None
-        cols = [roles.date_col, cat, val] + ([fcol] if fcol else [])
+        cols = [roles.date_col, cat, val] + ([fcol] if fcol else []) + ([vneg] if vneg else [])
         rows = _read_series_rows(con, path, date_col=roles.date_col, columns=cols)
     finally:
         con.close()
     if fcol and fval is not None:
         rows = [r for r in rows if str(r.get(fcol)) == str(fval)]
+    if vneg:
+        rows = [{**r, val: _num(r.get(val)) - _num(r.get(vneg))} for r in rows]
+    if params.get("abs"):
+        # Flujo BRUTO (el informe grafica "suscripciones brutas"): magnitud operada,
+        # sin netear compras contra ventas dentro del mismo día.
+        rows = [{**r, val: abs(_num(r.get(val)))} for r in rows]
     by_cat = _aggregate_by_category(rows, roles.date_col, cat, val)
     # Ventana + acumulado (cumsum/rebase) ANTES del downsample, como accumulated_series.
     mode, window = params.get("accumulate"), params.get("window")
@@ -651,16 +674,43 @@ def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
             if all_pts:
                 start = _window_start(max(p[0] for p in all_pts), window)
         acc_start = start
-        for c, pts in list(by_cat.items()):
-            if start:
-                pts = [p for p in pts if p[0] >= start]
-            by_cat[c] = _accumulate(pts, mode) if mode else pts
+        # ``anchor_zero``: el primer día de la ventana vale 0 y la acumulación corre
+        # desde el siguiente, que es como el informe dibuja los acumulados (todas las
+        # series nacen del mismo origen y son comparables entre sí).
+        #
+        # El ancla es una fecha COMÚN a todas las series, no el primer punto de cada
+        # una: una categoría que no operó el primer día empieza más tarde, y anclarla
+        # en SU primer punto le descontaría un día que a las demás no — las series
+        # dejarían de ser comparables, que es justo lo que el anclaje busca.
+        anchor = bool(params.get("anchor_zero")) and mode == "cumsum"
+        windowed = {
+            c: ([p for p in pts if p[0] >= start] if start else pts)
+            for c, pts in by_cat.items()
+        }
+        anchor_iso = min(
+            (pts[0][0] for pts in windowed.values() if pts), default=None,
+        ) if anchor else None
+        for c, pts in windowed.items():
+            if mode:
+                pts = _accumulate(pts, mode)
+                if anchor_iso is not None:
+                    # valor acumulado EN la fecha ancla (0 si la serie aún no operaba)
+                    base = next((v for d, v in pts if d == anchor_iso), 0.0)
+                    pts = [(d, v - base) for d, v in pts]
+            by_cat[c] = pts
     order = params.get("order")
     if order:
         cats = [c for c in order if c in by_cat]
     else:
-        cats = sorted(by_cat, key=lambda c: abs(by_cat[c][-1][1]) if by_cat[c] else 0.0, reverse=True)[:_MAX_PLOT_SERIES]
-    series = [PlotSeries(label=c, points=_downsample(by_cat[c])) for c in cats if by_cat[c]]
+        top = int(params.get("max_series") or _MAX_PLOT_SERIES)
+        cats = sorted(by_cat, key=lambda c: abs(by_cat[c][-1][1]) if by_cat[c] else 0.0, reverse=True)[:top]
+    # ``labels``: nombre del parquet → nombre del informe (p.ej. Emp_real → Empresas
+    # reales). Solo cambia la etiqueta visible; el orden y la agregación usan la clave.
+    labels = dict(params.get("labels") or {})
+    series = [
+        PlotSeries(label=labels.get(c, c), points=_downsample(by_cat[c]))
+        for c in cats if by_cat[c]
+    ]
     overlay: tuple[str, ...] = ()
     if str(params.get("net") or "").lower() == "auto" and series:
         net_by_date: dict[str, float] = {}
@@ -671,6 +721,21 @@ def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
         if net_pts:
             series.append(PlotSeries(label="Neto", points=_downsample(net_pts)))
             overlay = ("Neto",)
+    # ``mean_overlay``: línea horizontal en el promedio del total diario (el
+    # "Promedio" que el informe dibuja sobre las suscripciones brutas, para leer
+    # si la jornada estuvo sobre o bajo lo habitual del período).
+    if params.get("mean_overlay") and series:
+        total_by_date: dict[str, float] = {}
+        for c in cats:
+            for d, v in by_cat[c]:
+                total_by_date[d] = total_by_date.get(d, 0.0) + v
+        if total_by_date:
+            avg = sum(total_by_date.values()) / len(total_by_date)
+            label = str(params.get("mean_label") or "Promedio")
+            series.append(PlotSeries(
+                label=label, points=_downsample([(d, avg) for d in sorted(total_by_date)]),
+            ))
+            overlay = (*overlay, label)
     note = ""
     if mode == "cumsum" and acc_start:
         note = f"Acumulado (suma corrida) desde {_fmt_date(acc_start)}"
@@ -685,10 +750,11 @@ def wide_lines(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Plot
     """Multi-línea de un parquet 'ancho' (varias columnas de valor), seleccionando
     o excluyendo columnas y respetando su orden.
 
-    params: ``include`` (lista en orden; default = todas), ``exclude`` (lista),
-    ``accumulate`` (``cumsum``/``rebase`` opcional sobre cada columna),
-    ``overlay`` (lista de columnas que se dibujan superpuestas como línea "Neto"
-    sobre el área apilada divergente, en vez de apilarse).
+    params: ``include`` (lista en orden; default = todas menos ``overlay``),
+    ``exclude`` (lista), ``accumulate`` (``cumsum``/``rebase`` opcional sobre cada
+    columna), ``overlay`` (columnas que se dibujan superpuestas como línea "Neto"
+    sobre el área apilada divergente, en vez de apilarse; se agregan solas, no hace
+    falta repetirlas en ``include``).
     """
     from banks_rag.infrastructure.sql import series_analytics as sa
 
@@ -701,8 +767,14 @@ def wide_lines(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Plot
         if roles.date_col is None or not roles.value_cols:
             return None
         exclude = set(params.get("exclude") or [])
-        wanted = params.get("include") or roles.value_cols
+        # ``overlay`` se resuelve APARTE de ``include``, igual que en
+        # ``wide_monthly_bars``: pedir el Neto como superpuesto no debe obligar a
+        # listarlo también entre las series apiladas (antes, si faltaba en
+        # ``include``, el gráfico perdía la línea del Neto sin avisar).
+        overlay_cols = [c for c in (params.get("overlay") or []) if c in roles.value_cols]
+        wanted = params.get("include") or [c for c in roles.value_cols if c not in overlay_cols]
         cols = [c for c in wanted if c in roles.value_cols and c not in exclude]
+        cols += [c for c in overlay_cols if c not in cols]
         if not cols:
             return None
         rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, *cols])
@@ -796,8 +868,13 @@ def window_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> 
     if not agg:
         return None
     cats = [c for c in (params.get("order") or sorted(agg)) if c in agg]
-    sd: dict[str, dict[str, float]] = {v: {c: agg[c].get(v, 0.0) for c in cats} for v in values}
-    series_order = list(values)
+    # ``labels``: nombre de la columna → nombre del informe (Suscripcion →
+    # Suscripciones). Solo cambia la leyenda; la agregación usa la columna real.
+    labels = dict(params.get("labels") or {})
+    sd: dict[str, dict[str, float]] = {
+        labels.get(v, v): {c: agg[c].get(v, 0.0) for c in cats} for v in values
+    }
+    series_order = [labels.get(v, v) for v in values]
     overlay: tuple[str, ...] = ()
     if params.get("include_net"):
         sd["Neto"] = {c: sum(agg[c].get(v, 0.0) for v in values) for c in cats}
@@ -1495,6 +1572,201 @@ def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Htm
     )
 
 
+# ── Informe DCV: portafolio por agente y distribución por tramo de plazo ─────
+#
+# Las tres transforms de abajo leen el MISMO parquet maestro
+# (``variacion_stock_todos``: Fecha x Bucket x Tipo x Sector x Moneda x Stock_USD)
+# al ÚLTIMO corte disponible. Es el único dataset que abre el stock DCV por
+# agente e instrumento a la vez, así que tabla y gráfico de cada bloque salen de
+# la misma fuente y no pueden descuadrarse.
+
+# Sector del parquet → nombre del agente en el correo DCV.
+_DCV_AGENTS = {
+    "Bancos": "Bancos",
+    "AFP": "FP y AFC",
+    "FFMM": "FFMM",
+    "CS": "CSV",
+    "Otros": "Otros",
+}
+
+# Orden de instrumentos del correo (los que no aparezcan en el parquet se omiten;
+# los que el parquet traiga y no estén acá van al final, alfabéticos).
+_DCV_TIPO_ORDER = ("PDBC", "DAP", "BTP", "BTU", "BCP", "BCU", "BB", "BE", "BCCh", "Letras MdH", "Otros")
+
+# Sufijo de moneda del correo (el original abre DAP/BB/BC por moneda).
+_DCV_CCY_SUFFIX = {"CLP": "$", "UF": "UF", "USD": "USD"}
+
+
+def _dcv_rows(
+    dataset: ParquetDataset, parquet_dir: Path, params: dict,
+) -> tuple[list[dict], str] | tuple[None, None]:
+    """Filas del ÚLTIMO corte del parquet DCV + la fecha de ese corte.
+
+    ``params["sector"]`` filtra a un agente (``None`` = todos). Con
+    ``params["weekly_asof"]`` el corte se ancla a la fecha común del informe
+    (última fecha con dato <= ese corte), igual que el resto de la familia."""
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None, None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None or not roles.value_cols:
+            return None, None
+        dates = _distinct_dates_sorted(con, path, roles.date_col)
+        if not dates:
+            return None, None
+        asof = params.get("weekly_asof")
+        cut = next((d for d in reversed(dates) if d <= asof), dates[0]) if asof else dates[-1]
+
+        cols = [c for c in ("Bucket", "Tipo", "Sector", "Moneda") if c in roles.category_cols]
+        val = roles.value_cols[0]
+        src = f"read_parquet('{path.as_posix()}')"
+        where = f"TRY_CAST({roles.date_col} AS DATE) = DATE '{cut}'"
+        sector = params.get("sector")
+        if sector:
+            if "Sector" not in cols:
+                return None, None
+            where += f" AND Sector = '{sector}'"
+        rows = con.execute(
+            f"SELECT {', '.join(cols)}, SUM({val}) AS v FROM {src} "
+            f"WHERE {where} GROUP BY {', '.join(cols)}"
+        ).df().to_dict("records")
+    finally:
+        con.close()
+    return ([{**r, "v": float(r["v"])} for r in rows if r.get("v") is not None], cut)
+
+
+def _dcv_instrument_label(rows: list[dict]) -> dict[tuple[str, str], str]:
+    """``(Tipo, Moneda) → etiqueta de fila``.
+
+    Un instrumento que existe en MÁS de una moneda se abre en una fila por moneda
+    con sufijo (``DAP $`` / ``DAP UF``), como el correo; el que existe en una sola
+    queda con el nombre pelado (``PDBC``, ``BTP``). Así la tabla no inventa filas
+    vacías ni pierde la apertura por moneda donde sí la hay."""
+    ccy_by_tipo: dict[str, set[str]] = {}
+    for r in rows:
+        if r.get("v"):
+            ccy_by_tipo.setdefault(str(r.get("Tipo")), set()).add(str(r.get("Moneda") or ""))
+    out: dict[tuple[str, str], str] = {}
+    for r in rows:
+        tipo, ccy = str(r.get("Tipo")), str(r.get("Moneda") or "")
+        multi = len(ccy_by_tipo.get(tipo, set())) > 1
+        suffix = _DCV_CCY_SUFFIX.get(ccy, ccy)
+        out[(tipo, ccy)] = f"{tipo} {suffix}".strip() if multi and suffix else tipo
+    return out
+
+
+def _dcv_order_instruments(labels: list[str]) -> list[str]:
+    """Instrumentos en el orden del correo; los desconocidos, al final."""
+    def key(label: str) -> tuple[int, str, str]:
+        tipo = label.split(" ")[0]
+        rank = _DCV_TIPO_ORDER.index(tipo) if tipo in _DCV_TIPO_ORDER else len(_DCV_TIPO_ORDER)
+        return (rank, tipo, label)
+    return sorted(dict.fromkeys(labels), key=key)
+
+
+def dcv_portfolio_table(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
+    """Tabla "Portafolio por agente": monto y % del portafolio por instrumento
+    (filas) y agente (columnas), al último corte."""
+    from .svg_chart import render_dcv_portfolio_table
+
+    rows, cut = _dcv_rows(dataset, parquet_dir, params)
+    if not rows:
+        return None
+    labels = _dcv_instrument_label(rows)
+
+    monto: dict[str, dict[str, float]] = {}
+    for r in rows:
+        agent = _DCV_AGENTS.get(str(r.get("Sector")))
+        if agent is None:
+            continue
+        inst = labels[(str(r.get("Tipo")), str(r.get("Moneda") or ""))]
+        monto.setdefault(agent, {})[inst] = monto.setdefault(agent, {}).get(inst, 0.0) + r["v"]
+    if not monto:
+        return None
+
+    agents = [a for a in _DCV_AGENTS.values() if a in monto]
+    instruments = _dcv_order_instruments([i for per in monto.values() for i in per])
+    return HtmlTable(
+        html=render_dcv_portfolio_table(
+            instruments, agents, monto, unit=dataset.unit, asof=_fmt_date(cut),
+        ),
+        dataset_id=dataset.id,
+    )
+
+
+def dcv_bucket_table(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
+    """Tabla "distribución por tramo de plazo": instrumento (filas) x tramo
+    (columnas) al último corte. ``params["sector"]`` acota a un agente."""
+    from .svg_chart import render_dcv_bucket_table
+
+    rows, cut = _dcv_rows(dataset, parquet_dir, params)
+    if not rows:
+        return None
+    labels = _dcv_instrument_label(rows)
+
+    matrix: dict[str, dict[str, float]] = {}
+    for r in rows:
+        inst = labels[(str(r.get("Tipo")), str(r.get("Moneda") or ""))]
+        bucket = str(r.get("Bucket"))
+        matrix.setdefault(inst, {})[bucket] = matrix.setdefault(inst, {}).get(bucket, 0.0) + r["v"]
+    if not matrix:
+        return None
+
+    buckets = _order_buckets({b for per in matrix.values() for b in per})
+    instruments = _dcv_order_instruments(list(matrix))
+    return HtmlTable(
+        html=render_dcv_bucket_table(
+            instruments, buckets, matrix, unit=dataset.unit, asof=_fmt_date(cut),
+        ),
+        dataset_id=dataset.id,
+    )
+
+
+def dcv_snapshot_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Barras apiladas del stock DCV al último corte.
+
+    ``params``: ``x`` (categórica del eje X: ``"Tipo"`` o ``"Bucket"``),
+    ``series`` (categórica del color: ``"Sector"`` o ``"Tipo"``) y ``sector``
+    (filtra a un agente). Es la contraparte gráfica de las dos tablas de arriba:
+    misma fuente, mismo corte, mismas etiquetas de instrumento."""
+    x_col, s_col = params.get("x") or "Tipo", params.get("series") or "Sector"
+    rows, cut = _dcv_rows(dataset, parquet_dir, params)
+    if not rows:
+        return None
+    labels = _dcv_instrument_label(rows)
+
+    def _label(row: dict, col: str) -> str:
+        if col == "Tipo":
+            return labels[(str(row.get("Tipo")), str(row.get("Moneda") or ""))]
+        return str(row.get(col))
+
+    agg: dict[str, dict[str, float]] = {}
+    xs: list[str] = []
+    for r in rows:
+        xv, sv = _label(r, x_col), _label(r, s_col)
+        if sv == "None" or xv == "None":
+            continue
+        if s_col == "Sector":
+            sv = _DCV_AGENTS.get(sv, sv)
+        agg.setdefault(sv, {})[xv] = agg.setdefault(sv, {}).get(xv, 0.0) + r["v"]
+        if xv not in xs:
+            xs.append(xv)
+    if not agg:
+        return None
+
+    xcats = _order_buckets(xs) if x_col == "Bucket" else _dcv_order_instruments(xs)
+    if s_col == "Sector":
+        series_order = [a for a in _DCV_AGENTS.values() if a in agg]
+    else:
+        series_order = _dcv_order_instruments(list(agg))
+    return _grouped(
+        dataset.id, dataset.unit, agg, xcats, series_order,
+        date_note=f"Corte: {_fmt_date(cut)}",
+    )
+
+
 # ── Rango histórico + dispersión x/y (NR: comparables GBI) ───────────────────
 #
 # Dos formas de gráfico NUEVAS (sin equivalente previo en el renderer): "range"
@@ -1647,6 +1919,410 @@ def fx_tasas_scatter(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
     return None if plot.is_empty() else plot
 
 
+# ── Flujos cambiarios (familia fx) ───────────────────────────────────────────
+#
+# El "Informe Flujos Cambiarios" del BCCh mira el MISMO día de mercado desde
+# varios cortes: por sector, por agente offshore, por plazo del derivado y por
+# banco informante del fixing. Estas transforms son las formas que ese informe
+# usa y que no existían: fila-como-eje-X de un parquet ancho, doble categórica
+# sumada en ventana, y dos tablas (resumen por sector, Δ por agente).
+
+def _sum_window(
+    rows: list[dict], date_col: str, *, days: int, last_iso: str | None = None,
+) -> tuple[list[dict], str, str]:
+    """Filas de los últimos ``days`` días naturales + ``(desde, hasta)`` ISO.
+
+    ``days<=1`` deja SOLO el último día con dato (el informe compara "hoy" contra
+    la acumulación de 5 días)."""
+    isos = [str(r[date_col])[:10] for r in rows if r.get(date_col)]
+    if not isos:
+        return [], "", ""
+    last = last_iso or max(isos)
+    start = str(date.fromisoformat(last) - timedelta(days=max(0, days - 1)))
+    sel = [r for r in rows if r.get(date_col) and start <= str(r[date_col])[:10] <= last]
+    return sel, start, last
+
+
+def _num(value: object) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def wide_row_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Parquet ANCHO y SIN fecha (un corte ya agregado): eje X = los valores de una
+    columna categórica (las FILAS), una serie apilada por cada columna de valor.
+
+    Es la forma de los tableros de fixing (``fixing_banca_sector``: una fila por
+    banco informante, una columna por sector contraparte) y de los cortes por
+    temporalidad (``fixing_por_fecha``). Réplica de los "Gráfico N°7 / N°8" del
+    informe: barra apilada divergente por fila + Neto como punto.
+
+    params: ``row`` (col categórica del eje X; default = la 1ª categórica),
+    ``series`` (cols de valor apiladas; default = todas menos ``overlay``),
+    ``overlay`` (cols que van como punto superpuesto, p.ej. ``["Neto"]``),
+    ``labels`` (renombra las columnas al nombre del informe), ``exclude_rows``
+    (filas a omitir, p.ej. ``["Total"]``), ``row_order``, ``top_n`` (deja las N
+    filas de mayor |total|, conservando el orden original).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        row_col = params.get("row") or (roles.category_cols[0] if roles.category_cols else None)
+        if not row_col or not roles.value_cols:
+            return None
+        overlay_cols = [c for c in (params.get("overlay") or []) if c in roles.value_cols]
+        stacked = [c for c in (params.get("series") or roles.value_cols) if c in roles.value_cols]
+        stacked = [c for c in stacked if c not in overlay_cols]
+        if not stacked:
+            return None
+        rows = _read_rows(con, path, date_col=None, columns=[row_col, *stacked, *overlay_cols])
+    finally:
+        con.close()
+
+    excluded = {str(v) for v in (params.get("exclude_rows") or [])}
+    agg: dict[str, dict[str, float]] = {}
+    order: list[str] = []
+    for r in rows:
+        name = str(r.get(row_col) or "").strip()
+        if not name or name in excluded:
+            continue
+        if name not in agg:
+            agg[name] = {}
+            order.append(name)
+        for c in (*stacked, *overlay_cols):
+            agg[name][c] = agg[name].get(c, 0.0) + _num(r.get(c))
+
+    if params.get("row_order"):
+        order = [c for c in params["row_order"] if c in agg]
+    top_n = params.get("top_n")
+    if top_n:
+        keep = {c for c, _ in sorted(
+            agg.items(), key=lambda kv: abs(sum(kv[1].get(s, 0.0) for s in stacked)), reverse=True,
+        )[:int(top_n)]}
+        order = [c for c in order if c in keep]
+    order = order[:_MAX_PLOT_CATEGORIES]
+    if not order:
+        return None
+
+    labels = dict(params.get("labels") or {})
+    series_dict = {
+        labels.get(c, c): {n: agg[n].get(c, 0.0) for n in order}
+        for c in (*stacked, *overlay_cols)
+    }
+    return _grouped(dataset.id, dataset.unit, series_dict, order,
+                    [labels.get(c, c) for c in (*stacked, *overlay_cols)],
+                    overlay=tuple(labels.get(c, c) for c in overlay_cols))
+
+
+def window_stacked_two_cat(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Parquet LARGO con DOS categóricas: suma de la última ventana con eje X = una
+    categórica (``group``) y una serie APILADA por la otra (``series``).
+
+    Réplica de "Suscripciones / Vencimientos netos derivados" (X = agente offshore,
+    apilado por instrumento CCS/Forward/FX swap/Opciones + Neto como punto). El
+    informe separa suscripciones de vencimientos con ``filter_col``/``filter_val``.
+
+    params: ``group`` (eje X), ``series`` (color), ``value``, ``filter_col`` /
+    ``filter_val`` (opcional), ``window_days`` (default 1 = el último día con dato),
+    ``labels`` (renombra valores de ``series``), ``series_order``, ``group_order``,
+    ``top_n`` (grupos con mayor |neto|), ``net`` (bool, default True → punto Neto),
+    ``total_label`` (agrega una columna con la suma de todos los grupos, como el
+    "Total" del informe).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    group, scol, val = params.get("group"), params.get("series"), params.get("value")
+    if not group or not scol or not val:
+        return None
+    fcol, fval = params.get("filter_col"), params.get("filter_val")
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None:
+            return None
+        cols = [roles.date_col, group, scol, val] + ([fcol] if fcol else [])
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=cols)
+    finally:
+        con.close()
+    if fcol and fval is not None:
+        rows = [r for r in rows if str(r.get(fcol)) == str(fval)]
+    sel, start, last = _sum_window(
+        rows, roles.date_col, days=int(params.get("window_days", 1)),
+        last_iso=params.get("weekly_asof"),
+    )
+    if not sel:
+        return None
+
+    labels = dict(params.get("labels") or {})
+    excluded_groups = {str(v) for v in (params.get("exclude_groups") or [])}
+    agg: dict[str, dict[str, float]] = {}
+    groups: list[str] = []
+    series_seen: list[str] = []
+    for r in sel:
+        g = str(r.get(group) or "").strip()
+        s_raw = str(r.get(scol) or "").strip()
+        if not g or not s_raw or g in excluded_groups:
+            continue
+        s = labels.get(s_raw, s_raw)
+        if g not in agg:
+            agg[g] = {}
+            groups.append(g)
+        if s not in series_seen:
+            series_seen.append(s)
+        agg[g][s] = agg[g].get(s, 0.0) + _num(r.get(val))
+
+    if params.get("group_order"):
+        groups = [g for g in params["group_order"] if g in agg]
+    if params.get("top_n"):
+        keep = {g for g, _ in sorted(
+            agg.items(), key=lambda kv: abs(sum(kv[1].values())), reverse=True,
+        )[:int(params["top_n"])]}
+        groups = [g for g in groups if g in keep]
+    groups = groups[:_MAX_PLOT_CATEGORIES - 1]  # deja lugar a la columna Total
+    if not groups:
+        return None
+    if params.get("series_order"):
+        series_seen = [s for s in params["series_order"] if s in series_seen] + \
+                      [s for s in series_seen if s not in params["series_order"]]
+
+    total_label = params.get("total_label")
+    if total_label:
+        agg[total_label] = {
+            s: sum(agg[g].get(s, 0.0) for g in groups) for s in series_seen
+        }
+        groups = [*groups, total_label]
+
+    series_dict = {s: {g: agg[g].get(s, 0.0) for g in groups} for s in series_seen}
+    overlay: tuple[str, ...] = ()
+    if params.get("net", True):
+        series_dict["Neto"] = {g: sum(agg[g].get(s, 0.0) for s in series_seen) for g in groups}
+        series_seen = [*series_seen, "Neto"]
+        overlay = ("Neto",)
+    span = f"{_fmt_date(start)} → {_fmt_date(last)}" if start != last else _fmt_date(last)
+    return _grouped(dataset.id, dataset.unit, series_dict, groups, series_seen,
+                    overlay=overlay, date_note=span)
+
+
+def daily_wide_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Parquet ANCHO con fecha: últimos N días en el eje X, una serie apilada por
+    columna de valor y Neto como punto.
+
+    Réplica del "Gráfico N°9: Posición derivados" (por día: suscripciones arriba,
+    vencimientos abajo, posición neta como punto). Las columnas de ``negate`` se
+    invierten de signo antes de apilar, de modo que el ALTO NETO de la columna sea
+    la variación de posición del día.
+
+    params: ``include`` (cols en orden; default = todas), ``negate`` (cols que
+    restan), ``last_n`` (días, default 10), ``net_label`` (default "Neto"),
+    ``labels`` (renombra columnas).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None or not roles.value_cols:
+            return None
+        cols = [c for c in (params.get("include") or roles.value_cols) if c in roles.value_cols]
+        if not cols:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, *cols])
+    finally:
+        con.close()
+
+    negate = {str(c) for c in (params.get("negate") or [])}
+    by_date: dict[str, dict[str, float]] = {}
+    for r in rows:
+        d = r.get(roles.date_col)
+        if not d:
+            continue
+        iso = str(d)[:10]
+        slot = by_date.setdefault(iso, {})
+        for c in cols:
+            v = _num(r.get(c))
+            slot[c] = slot.get(c, 0.0) + (-v if c in negate else v)
+
+    n = int(params.get("last_n", 10))
+    # ``from_start``: el parquet mira al FUTURO (perfil de vencimientos), donde lo
+    # relevante son los primeros N días, no los últimos.
+    dates = sorted(by_date)[:n] if params.get("from_start") else sorted(by_date)[-n:]
+    if not dates:
+        return None
+    labels = dict(params.get("labels") or {})
+    x_labels = [_fmt_date(d) for d in dates]
+    series_dict = {
+        labels.get(c, c): {_fmt_date(d): by_date[d].get(c, 0.0) for d in dates} for c in cols
+    }
+    order = [labels.get(c, c) for c in cols]
+    overlay: tuple[str, ...] = ()
+    # El Neto solo tiene sentido cuando hay columnas de signo opuesto (``negate``);
+    # en un apilado de puros positivos duplicaría el alto de la barra.
+    if params.get("net", True):
+        net_label = params.get("net_label", "Neto")
+        series_dict[net_label] = {
+            _fmt_date(d): sum(by_date[d].get(c, 0.0) for c in cols) for d in dates
+        }
+        order.append(net_label)
+        overlay = (net_label,)
+    return _grouped(dataset.id, dataset.unit, series_dict, x_labels, order, overlay=overlay)
+
+
+def fx_sector_flow_table(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
+    """Tabla RESUMEN GENERAL del informe de flujos cambiarios: una fila por sector,
+    columnas = flujo del día y acumulado de 5 días para Spot, Derivados y su suma.
+
+    El informe real abre además Spot en afecto/no-afecto y Derivados en NDF/resto;
+    ``flujo_cambiario`` NO trae esas aperturas (solo ``Spot`` y ``Forward`` por
+    sector), así que la tabla replica la ESTRUCTURA con las columnas disponibles.
+    La apertura fina queda documentada como bloque faltante en el spec.
+
+    params: ``spot`` / ``deriv`` (cols; default Spot/Forward), ``days`` (ventana
+    larga, default 5), ``labels`` (sector del parquet → nombre del informe),
+    ``order`` (orden de filas).
+    """
+    from .svg_chart import render_fx_summary_table
+
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    spot_col = params.get("spot", "Spot")
+    deriv_col = params.get("deriv", "Forward")
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        sector_col = params.get("sector") or (roles.category_cols[0] if roles.category_cols else None)
+        if roles.date_col is None or not sector_col:
+            return None
+        rows = _read_series_rows(
+            con, path, date_col=roles.date_col, columns=[roles.date_col, sector_col, spot_col, deriv_col],
+        )
+    finally:
+        con.close()
+    if not rows:
+        return None
+
+    asof = params.get("weekly_asof")
+    day_rows, _, last = _sum_window(rows, roles.date_col, days=1, last_iso=asof)
+    span_rows, start_n, _ = _sum_window(
+        rows, roles.date_col, days=int(params.get("days", 5)), last_iso=asof,
+    )
+
+    labels = dict(params.get("labels") or {})
+
+    def _tally(subset: list[dict]) -> dict[str, tuple[float, float]]:
+        out: dict[str, tuple[float, float]] = {}
+        for r in subset:
+            raw = str(r.get(sector_col) or "").strip()
+            if not raw:
+                continue
+            name = labels.get(raw, raw)
+            s, d = out.get(name, (0.0, 0.0))
+            out[name] = (s + _num(r.get(spot_col)), d + _num(r.get(deriv_col)))
+        return out
+
+    day, span = _tally(day_rows), _tally(span_rows)
+    names = list(params.get("order") or [])
+    names = [n for n in names if n in day or n in span]
+    names += sorted(n for n in set(day) | set(span) if n not in names)
+    if not names:
+        return None
+
+    data = {
+        n: (*day.get(n, (0.0, 0.0)), *span.get(n, (0.0, 0.0))) for n in names
+    }
+    html = render_fx_summary_table(
+        names, data, unit=dataset.unit,
+        day_label=_fmt_date(last),
+        span_label=f"{_fmt_date(start_n)} → {_fmt_date(last)}",
+    )
+    return HtmlTable(html=html, dataset_id=dataset.id)
+
+
+def fx_agent_delta_table(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
+    """Tabla "Posición derivados por agente" (Δ T-1 / Δ T-5 / Δ T-10 / Δ T-20):
+    filas = agente offshore, columnas = variación NETA acumulada de cada ventana.
+
+    El neto de un día es ``Suscripción - Vencimiento`` (parquet largo con columna de
+    tipo) o la suma de la columna de valor si no hay tipo. Cada Δ T-N suma los N
+    últimos días HÁBILES CON DATO (no días naturales): así el informe compara
+    jornadas de mercado, como el correo real.
+
+    params: ``agent`` (col de agente), ``value``, ``type_col`` / ``pos`` / ``neg``
+    (opcionales), ``windows`` (lista de N, default ``[1, 5, 10, 20]``),
+    ``exclude_agents`` (p.ej. ``["Total"]``), ``total_label``.
+    """
+    from .svg_chart import render_fx_delta_table
+
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    agent = params.get("agent")
+    val = params.get("value")
+    if not agent or not val:
+        return None
+    tcol, pos, neg = params.get("type_col"), params.get("pos"), params.get("neg")
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None:
+            return None
+        cols = [roles.date_col, agent, val] + ([tcol] if tcol else [])
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=cols)
+    finally:
+        con.close()
+    if not rows:
+        return None
+
+    excluded = {str(v) for v in (params.get("exclude_agents") or [])}
+    # {agente: {fecha: neto}} — el signo lo fija type_col cuando existe.
+    per_day: dict[str, dict[str, float]] = {}
+    for r in rows:
+        d = r.get(roles.date_col)
+        name = str(r.get(agent) or "").strip()
+        if not d or not name or name in excluded:
+            continue
+        v = _num(r.get(val))
+        if tcol:
+            t = str(r.get(tcol) or "").strip()
+            if neg and t == neg:
+                v = -v
+            elif pos and t != pos:
+                continue
+        slot = per_day.setdefault(name, {})
+        iso = str(d)[:10]
+        slot[iso] = slot.get(iso, 0.0) + v
+
+    all_dates = sorted({d for s in per_day.values() for d in s})
+    if not all_dates:
+        return None
+    windows = [int(w) for w in (params.get("windows") or [1, 5, 10, 20])]
+    cut = {w: set(all_dates[-w:]) for w in windows}
+
+    agents = sorted(per_day, key=lambda a: abs(sum(per_day[a].values())), reverse=True)
+    agents = agents[:_MAX_PLOT_CATEGORIES]
+    agents.sort()
+    data = {
+        a: tuple(sum(v for d, v in per_day[a].items() if d in cut[w]) for w in windows)
+        for a in agents
+    }
+    total_label = params.get("total_label", "Total")
+    data[total_label] = tuple(
+        sum(data[a][i] for a in agents) for i in range(len(windows))
+    )
+    html = render_fx_delta_table(
+        agents, data, windows, unit=dataset.unit,
+        total_label=total_label, asof=_fmt_date(all_dates[-1]),
+    )
+    return HtmlTable(html=html, dataset_id=dataset.id)
+
+
 # ── Registro: nombre → transform (None = declarada, pendiente de 2ª iteración) ─
 
 _REGISTRY: dict[str, Transform | None] = {
@@ -1678,9 +2354,19 @@ _REGISTRY: dict[str, Transform | None] = {
     "snapshot_grouped": snapshot_grouped,
     "snapshot_stacked": snapshot_stacked,
     "latest_snapshot": latest_snapshot,
+    # Flujos cambiarios (familia fx).
+    "wide_row_stacked": wide_row_stacked,
+    "window_stacked_two_cat": window_stacked_two_cat,
+    "daily_wide_stacked": daily_wide_stacked,
     # Tablas con color condicional (heatmap DCV): implementadas.
     "dcv_cut_dates": dcv_cut_dates,
     "dcv_heatmap": dcv_heatmap,
+    # Informe DCV (familia dcv): tablas por agente / tramo + su gráfico apilado.
+    "dcv_portfolio_table": dcv_portfolio_table,
+    "dcv_bucket_table": dcv_bucket_table,
+    "dcv_snapshot_stacked": dcv_snapshot_stacked,
+    "fx_sector_flow_table": fx_sector_flow_table,
+    "fx_agent_delta_table": fx_agent_delta_table,
     # Rango histórico + dispersión x/y (NR: comparables GBI).
     "gbi_rendimiento_range": gbi_rendimiento_range,
     "fx_tasas_scatter": fx_tasas_scatter,

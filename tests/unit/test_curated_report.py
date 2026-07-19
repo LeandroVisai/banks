@@ -31,9 +31,15 @@ from banks_rag.application.reporting.series_transforms import (
     allocation_by_fund,
     category_series,
     composition_by_bucket,
+    daily_wide_stacked,
+    dcv_bucket_table,
     dcv_cut_dates,
     dcv_heatmap,
+    dcv_portfolio_table,
+    dcv_snapshot_stacked,
     filter_fund,
+    fx_agent_delta_table,
+    fx_sector_flow_table,
     fx_tasas_scatter,
     gbi_rendimiento_range,
     get_transform,
@@ -45,15 +51,19 @@ from banks_rag.application.reporting.series_transforms import (
     stacked_by_bucket,
     wide_lines,
     wide_monthly_bars,
+    wide_row_stacked,
     wide_window_bars,
     window_grouped,
     window_grouped_long,
     window_returns,
     window_stacked_by_cat,
+    window_stacked_two_cat,
 )
 from banks_rag.application.reporting.specs import available_families, get_spec
 from banks_rag.application.reporting.specs.afp_spec import AFP_SPEC
+from banks_rag.application.reporting.specs.dcv_spec import DCV_SPEC
 from banks_rag.application.reporting.specs.ffmm_spec import FFMM_SPEC
+from banks_rag.application.reporting.specs.fx_spec import FX_SPEC
 from banks_rag.application.reporting.specs.nr_spec import NR_SPEC
 from banks_rag.application.reporting.svg_chart import _nice_ticks, render_plot_svg
 from banks_rag.infrastructure.sql.parquet_catalog_loader import ParquetDataset
@@ -965,6 +975,22 @@ class TestWeeklyAnchorAndFunds:
         # Con anchor vacío el corte común es None (no toca parquets reales).
         assert compute_weekly_cutoff(AFP_SPEC, [], tmp_path) is None
 
+    @pytest.mark.parametrize("spec", [AFP_SPEC, NR_SPEC, FX_SPEC, DCV_SPEC])
+    def test_specs_that_want_the_latest_datum_of_each_parquet(self, spec, tmp_path):
+        """afp, nr, fx y dcv muestran el ÚLTIMO dato de CADA parquet.
+
+        El corte común es el mín de los máximos: basta un parquet atrasado para
+        arrastrar todo el informe a su fecha y esconder datos que sí existen en
+        los demás. Estas cuatro familias lo desactivan a propósito."""
+        from banks_rag.application.reporting.curated_report import (
+            compute_weekly_cutoff,
+            weekly_anchor_source_ids,
+        )
+
+        assert spec.share_weekly_cutoff is False, spec.family
+        assert weekly_anchor_source_ids(spec) == set(), spec.family
+        assert compute_weekly_cutoff(spec, [], tmp_path) is None, spec.family
+
     def test_funds_1_2_3_6_in_key_blocks(self):
         by_id = {(b.source_id, b.transform): b for b in FFMM_SPEC.blocks}
         wanted = ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6"]
@@ -977,3 +1003,611 @@ class TestWeeklyAnchorAndFunds:
     def test_rentabilidad_acumulada_uses_geometric_transform(self):
         block = next(b for b in FFMM_SPEC.blocks if b.source_id == "retorno_acum_ffmm")
         assert block.transform == "ytd_return_geom"  # ya no "accumulated"+rebase
+
+
+# ── Familia fx (Informe Flujos Cambiarios) ───────────────────────────────────
+
+@pytest.mark.unit
+class TestFxSpec:
+    def test_registered_and_listed(self):
+        assert get_spec("fx") is FX_SPEC
+        assert "fx" in available_families()
+
+    def test_segment_alias_resolves(self):
+        # el segmento del catálogo (fx_diferencial) debe caer en el spec fx
+        assert get_spec("fx_diferencial") is FX_SPEC
+
+    def test_sections_follow_the_email_order(self):
+        assert FX_SPEC.sections() == [
+            "RESUMEN GENERAL", "Flujos SDR Forward FX USD - CLP", "NO RESIDENTES",
+        ]
+
+    def test_blocks_replicate_the_screenshots_one_to_one(self):
+        """Orden y TÍTULOS literales de las capturas de
+        ``data_pipeline/Tipos de informe/Informe Flujos Cambiario`` (1.jpg … 7.jpg),
+        que fueron tomadas en el orden del correo. Este test es el contrato con ese
+        original: 22 bloques (2 tablas + 20 gráficos) en esta secuencia exacta."""
+        assert [b.title for b in FX_SPEC.blocks] == [
+            # 1.jpg — RESUMEN GENERAL
+            "Resumen de flujos por sector (US$ MM)",
+            # 2.jpg
+            "Gráfico N°1: Spot acumulado por sectores (US$ MM)",
+            "Gráfico N°2: Derivados acumulado por sectores (US$ MM)",
+            "Gráfico N°3: Suscripciones netas derivados (US$ MM)",
+            "Gráfico N°4: Vencimientos netos derivados (US$ MM)",
+            # 3.jpg
+            "Gráfico N°5: Spot por tramo de precio (US$ MM)",
+            "Gráfico N°6: Suscripciones por tramo de precio y vencimientos (US$ MM)",
+            "Gráfico N°7: Próximo fixing por banco - NDF (US$ MM)",
+            "Gráfico N°8: Últimos y próximos fixing de la banca - NDF (US$ MM)",
+            # 4.jpg
+            "Gráfico N°7.1. Próximo fixing según tipo de Instrumento",
+            "Gráfico N°8.1 Fixing NDF según banco",
+            "Monto transado según bucket (usd)",
+            "Monto transado según fecha de vencimiento (usd)",
+            "Precio promedio transacciones",
+            # 5.jpg — NO RESIDENTES
+            "Gráficos N°9: Posición derivados (US$ MM)",
+            "Tabla N°1: Posición derivados (US$ MM)",
+            "Gráfico N°10: Suscripciones brutas derivados (US$ MM)",
+            # 6.jpg
+            "Gráfico N°11: Posición por plazo derivados (US$ MM)",
+            "Gráfico N°12: Posición NR todos los derivados (US$)",
+            "Gráfico N°13: Posición acumulada por plazos derivados (US$ MM)",
+            # 7.jpg
+            "Gráfico N°14: Último fixing de la banca por agente - NDF (US$ MM)",
+            "Gráfico N°15: Próximo fixing de la banca por agente - NDF (US$ MM)",
+        ]
+
+    def test_counts_match_the_original(self):
+        tablas = [b for b in FX_SPEC.blocks if b.chart == "heatmap_table"]
+        assert len(FX_SPEC.blocks) == 22
+        assert len(tablas) == 2                       # RESUMEN GENERAL + Tabla N°1
+        assert len(FX_SPEC.blocks) - len(tablas) == 20  # gráficos N°1..N°15 + 7.1/8.1 + SDR
+
+    def test_unit_lives_in_the_title_not_in_the_unit_field(self):
+        """El original lleva la unidad DENTRO del título ("… (US$ MM)"); dejar
+        también ``unit`` la haría aparecer dos veces en el bloque."""
+        for b in FX_SPEC.blocks:
+            assert not b.unit, b.title
+
+    def test_blocks_with_source_reference_known_transforms(self):
+        for b in FX_SPEC.blocks:
+            if b.status == STATUS_SKIP:
+                continue
+            assert get_transform(b.transform) is not None, b.title
+
+    def test_skip_blocks_say_which_parquet_is_missing(self):
+        # un SKIP sin explicación es indistinguible de un bug: la nota debe decir qué falta
+        skipped = [b for b in FX_SPEC.blocks if b.status == STATUS_SKIP]
+        assert skipped, "el informe fx documenta bloques sin parquet"
+        for b in skipped:
+            assert b.note.startswith("Falta parquet:"), b.title
+            assert b.source_id is None, b.title
+
+    def test_no_duplicate_charts_or_titles(self):
+        import json
+        sigs = [(b.source_id, b.transform, json.dumps(b.params or {}, sort_keys=True))
+                for b in FX_SPEC.blocks if b.source_id]
+        assert len(sigs) == len(set(sigs)), "gráfico repetido"
+        titles = [b.title for b in FX_SPEC.blocks]
+        assert len(titles) == len(set(titles)), "título repetido"
+
+    def test_wide_parquets_do_not_use_category_series(self):
+        """``posicion_nr_derivados`` es ANCHO: con ``category_series`` DuckDB no
+        encuentra la columna "Plazo" y el bloque cae a placeholder en silencio."""
+        for spec in (FX_SPEC, NR_SPEC):
+            for b in spec.blocks:
+                if b.source_id == "posicion_nr_derivados":
+                    assert b.transform == "wide_lines", b.title
+
+    def test_overlay_is_drawn_even_when_not_in_include(self, tmp_path):
+        """``overlay`` se resuelve aparte de ``include`` (misma convención que
+        ``wide_monthly_bars``): pedir el Neto superpuesto no obliga a listarlo entre
+        las series apiladas. Antes se perdía la línea del Neto en silencio."""
+        p = tmp_path / "w.parquet"
+        rows = ["(DATE '2026-07-09', 1.0, 2.0, 3.0)", "(DATE '2026-07-10', 4.0, 5.0, 9.0)"]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, A, B, Neto)")
+        ds = _ds("w.parquet", id="w", chart_type="stacked_area")
+        plot = wide_lines(ds, tmp_path, {"include": ["A", "B"], "overlay": ["Neto"]})
+        assert plot.overlay == ("Neto",)
+        assert "Neto" in {s.label for s in plot.series}
+
+
+@pytest.mark.unit
+class TestWideRowStacked:
+    def _write_fixing(self, tmp_path):
+        p = tmp_path / "fixing.parquet"
+        rows = [
+            "('Santander', 51.0, 27.0, -5.0, 73.0)",
+            "('BCI', 65.0, 25.0, -3.0, 87.0)",
+            "('Total', 116.0, 52.0, -8.0, 160.0)",  # fila agregada: se excluye
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Institucion, AFP, BCCh, NR, Neto)")
+        return p
+
+    def test_rows_become_x_axis_and_columns_become_stack(self, tmp_path):
+        self._write_fixing(tmp_path)
+        ds = _ds("fixing.parquet", id="fixing_banca_sector", chart_type="stacked_bar")
+        plot = wide_row_stacked(ds, tmp_path, {
+            "row": "Institucion", "overlay": ["Neto"], "exclude_rows": ["Total"],
+        })
+        assert plot.kind == "grouped"
+        assert [c for c, _ in plot.series[0].points] == ["Santander", "BCI"]
+        assert plot.overlay == ("Neto",)
+        # el Neto va como serie superpuesta, no apilada
+        neto = next(s for s in plot.series if s.label == "Neto")
+        assert dict(neto.points)["Santander"] == pytest.approx(73.0)
+
+    def test_excluded_row_is_not_plotted(self, tmp_path):
+        self._write_fixing(tmp_path)
+        ds = _ds("fixing.parquet", id="f", chart_type="stacked_bar")
+        plot = wide_row_stacked(ds, tmp_path, {"row": "Institucion", "exclude_rows": ["Total"]})
+        assert "Total" not in [c for c, _ in plot.series[0].points]
+
+
+@pytest.mark.unit
+class TestWindowStackedTwoCat:
+    def _write_susc(self, tmp_path):
+        p = tmp_path / "susc.parquet"
+        rows = [
+            # último día (2026-07-13): lo que debe entrar con window_days=1
+            "(DATE '2026-07-13', 'HSBC', 'FWD', 'Suscripción', -60.0)",
+            "(DATE '2026-07-13', 'HSBC', 'FXS', 'Suscripción', -5.0)",
+            "(DATE '2026-07-13', 'Santander', 'FWD', 'Suscripción', 30.0)",
+            "(DATE '2026-07-13', 'HSBC', 'FWD', 'Vencimiento', 999.0)",  # otro Tipo: fuera
+            # día anterior: fuera de la ventana de 1 día
+            "(DATE '2026-07-10', 'HSBC', 'FWD', 'Suscripción', 500.0)",
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) +
+               ") t(Fecha, Institucion, Instrumento, Tipo, Monto)")
+        return p
+
+    def test_filters_type_and_window_then_stacks(self, tmp_path):
+        self._write_susc(tmp_path)
+        ds = _ds("susc.parquet", id="susc_vcto_agente_instrumento", chart_type="stacked_bar")
+        plot = window_stacked_two_cat(ds, tmp_path, {
+            "group": "Institucion", "series": "Instrumento", "value": "Monto",
+            "filter_col": "Tipo", "filter_val": "Suscripción", "window_days": 1,
+            "labels": {"FWD": "Forward", "FXS": "FX swap"},
+            "total_label": "Total",
+        })
+        by_label = {s.label: dict(s.points) for s in plot.series}
+        assert by_label["Forward"]["HSBC"] == pytest.approx(-60.0)   # sin el 500 del día previo
+        assert by_label["FX swap"]["HSBC"] == pytest.approx(-5.0)
+        assert by_label["Neto"]["HSBC"] == pytest.approx(-65.0)      # suma de instrumentos
+        assert by_label["Forward"]["Total"] == pytest.approx(-30.0)  # -60 + 30
+        assert plot.overlay == ("Neto",)
+
+    def test_labels_rename_the_legend(self, tmp_path):
+        self._write_susc(tmp_path)
+        ds = _ds("susc.parquet", id="s", chart_type="stacked_bar")
+        plot = window_stacked_two_cat(ds, tmp_path, {
+            "group": "Institucion", "series": "Instrumento", "value": "Monto",
+            "filter_col": "Tipo", "filter_val": "Suscripción",
+            "labels": {"FWD": "Forward"},
+        })
+        assert "Forward" in {s.label for s in plot.series}
+        assert "FWD" not in {s.label for s in plot.series}
+
+
+@pytest.mark.unit
+class TestDailyWideStacked:
+    def test_negated_column_subtracts_and_net_is_the_bar_height(self, tmp_path):
+        p = tmp_path / "pos.parquet"
+        rows = [
+            "(DATE '2026-07-09', 153.0, 323.0)",
+            "(DATE '2026-07-10', -124.0, 34.0)",
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Suscripcion, Vencimiento)")
+        ds = _ds("pos.parquet", id="var_pos_derivados", chart_type="stacked_bar")
+        plot = daily_wide_stacked(ds, tmp_path, {
+            "include": ["Suscripcion", "Vencimiento"], "negate": ["Vencimiento"],
+            "last_n": 5, "labels": {"Suscripcion": "Suscripciones", "Vencimiento": "Vencimientos"},
+        })
+        by_label = {s.label: dict(s.points) for s in plot.series}
+        key = next(iter(by_label["Suscripciones"]))  # eje X viene formateado DD-MM-AA
+        assert by_label["Vencimientos"][key] == pytest.approx(-323.0)  # negado
+        assert by_label["Neto"][key] == pytest.approx(153.0 - 323.0)
+        assert plot.overlay == ("Neto",)
+
+
+@pytest.mark.unit
+class TestFxTables:
+    def _write_flujo(self, tmp_path):
+        p = tmp_path / "flujo.parquet"
+        rows = [
+            "(DATE '2026-07-10', 'AFP', -135.1, 82.0)",
+            "(DATE '2026-07-10', 'NR', 64.6, -90.9)",
+            "(DATE '2026-07-09', 'AFP', 10.0, 5.0)",
+            "(DATE '2026-07-09', 'NR', 20.0, 1.0)",
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Sector, Spot, Forward)")
+        return p
+
+    def test_summary_table_splits_day_and_window(self, tmp_path):
+        self._write_flujo(tmp_path)
+        ds = _ds("flujo.parquet", id="flujo_cambiario", unit="US$ Mill.", chart_type="line")
+        out = fx_sector_flow_table(ds, tmp_path, {
+            "sector": "Sector", "spot": "Spot", "deriv": "Forward", "days": 2,
+            "labels": {"AFP": "AFP", "NR": "NO RESIDENTES"}, "order": ["AFP", "NO RESIDENTES"],
+        })
+        assert isinstance(out, HtmlTable)
+        # día: solo 2026-07-10 · acumulado 2 días: suma de ambos días
+        assert "-135,1" in out.html and "82,0" in out.html
+        assert "-125,1" in out.html   # AFP spot acumulado = -135,1 + 10
+        assert "NO RESIDENTES" in out.html and "TOTAL" in out.html
+
+    def test_agent_delta_table_nets_subscription_minus_maturity(self, tmp_path):
+        p = tmp_path / "ag.parquet"
+        rows = [
+            "(DATE '2026-07-13', 'Santander', 'Suscripción', 300.0)",
+            "(DATE '2026-07-13', 'Santander', 'Vencimiento', 62.0)",
+            "(DATE '2026-07-10', 'Santander', 'Suscripción', 100.0)",
+            "(DATE '2026-07-13', 'Total', 'Suscripción', 999.0)",  # excluido
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Institucion, Tipo, Monto)")
+        ds = _ds("ag.parquet", id="susc_vcto_agente_instrumento", unit="US$ Mill.", chart_type="line")
+        out = fx_agent_delta_table(ds, tmp_path, {
+            "agent": "Institucion", "value": "Monto", "type_col": "Tipo",
+            "pos": "Suscripción", "neg": "Vencimiento", "windows": [1, 2],
+            "exclude_agents": ["Total"],
+        })
+        assert isinstance(out, HtmlTable)
+        assert "238" in out.html          # ΔT-1 = 300 - 62
+        assert "338" in out.html          # ΔT-2 = 238 + 100
+        assert ">999<" not in out.html    # la fila agregada no entra
+
+
+@pytest.mark.unit
+class TestCategorySeriesFxParams:
+    """Params que el informe de flujos cambiarios agregó a ``category_series``."""
+
+    def _write(self, tmp_path):
+        p = tmp_path / "pos.parquet"
+        rows = [
+            # A opera los 3 días; B recién el 2º (para probar el ancla común)
+            "(DATE '2026-07-01', 'A', 100.0, 40.0)",
+            "(DATE '2026-07-02', 'A', 50.0, 10.0)",
+            "(DATE '2026-07-03', 'A', -20.0, 5.0)",
+            "(DATE '2026-07-02', 'B', 200.0, 100.0)",
+            "(DATE '2026-07-03', 'B', 10.0, 0.0)",
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows) +
+               ") t(Fecha, Plazo, Suscripcion, Vencimiento)")
+        return p
+
+    def _run(self, tmp_path, **extra):
+        self._write(tmp_path)
+        ds = _ds("pos.parquet", id="posicion_derivados_plazo", chart_type="line")
+        params = {"category": "Plazo", "value": "Suscripcion", "order": ["A", "B"]}
+        params.update(extra)
+        return category_series(ds, tmp_path, params)
+
+    def test_value_neg_subtracts_the_second_column(self, tmp_path):
+        """Sin ``value_neg`` el 'acumulado de posición' solo sumaría suscripciones."""
+        plot = self._run(tmp_path, value_neg="Vencimiento", accumulate="cumsum")
+        a = dict(plot.series[0].points)
+        assert a["2026-07-01"] == pytest.approx(60.0)    # 100 - 40
+        assert a["2026-07-03"] == pytest.approx(75.0)    # 60 + 40 + (-25)
+
+    def test_abs_makes_the_flow_gross(self, tmp_path):
+        plot = self._run(tmp_path, abs=True)
+        a = dict(plot.series[0].points)
+        assert a["2026-07-03"] == pytest.approx(20.0)    # |-20|, no -20
+
+    def test_anchor_zero_uses_a_common_date_not_each_series_first_point(self, tmp_path):
+        """B no operó el 1-jul: si se anclara en SU primer punto perdería el flujo
+        del 2-jul y dejaría de ser comparable con A."""
+        plot = self._run(tmp_path, accumulate="cumsum", anchor_zero=True)
+        a = dict(plot.series[0].points)
+        b = dict(plot.series[1].points)
+        assert a["2026-07-01"] == pytest.approx(0.0)     # ancla común
+        assert a["2026-07-03"] == pytest.approx(30.0)    # 50 + (-20), sin el 1-jul
+        assert b["2026-07-03"] == pytest.approx(210.0)   # 200 + 10 íntegros
+
+    def test_mean_overlay_is_the_average_of_the_daily_total(self, tmp_path):
+        plot = self._run(tmp_path, mean_overlay=True)
+        prom = next(s for s in plot.series if s.label == "Promedio")
+        # totales diarios: 100 · 250 · -10  → promedio 113,33
+        assert prom.points[0][1] == pytest.approx((100 + 250 - 10) / 3)
+        assert "Promedio" in plot.overlay
+        assert len({v for _, v in prom.points}) == 1     # línea horizontal
+
+
+@pytest.mark.unit
+class TestBuildFamilyReportLayout:
+    """``build_family_report.py`` escribe una carpeta POR FAMILIA."""
+
+    def _load_script(self):
+        import importlib.util
+        import pathlib
+        path = pathlib.Path(__file__).resolve().parents[2] / "scripts" / "build_family_report.py"
+        spec = importlib.util.spec_from_file_location("build_family_report_under_test", path)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_each_family_writes_into_its_own_subfolder(self, tmp_path, monkeypatch):
+        mod = self._load_script()
+        captured = {}
+
+        def fake_build(spec):
+            captured["family"] = spec.family
+            return "REPORT"
+
+        monkeypatch.setattr(mod, "build_curated_report", fake_build)
+        monkeypatch.setattr(mod, "render_curated_html", lambda r: "<html>x</html>")
+        monkeypatch.setattr(mod, "make_editable_html", lambda h: h + "<!--ed-->")
+        # summary() se usa en el print del CLI
+        monkeypatch.setattr(mod, "build_curated_report",
+                            lambda spec: type("R", (), {"summary": lambda self: "ok"})())
+
+        assert mod.build_one("fx", tmp_path, editable=True) is True
+        fam_dir = tmp_path / "fx"
+        assert fam_dir.is_dir(), "el informe debe caer en <out>/<familia>/"
+        names = sorted(p.name for p in fam_dir.iterdir())
+        assert len(names) == 2 and all(n.startswith("fx_") for n in names)
+        assert any(n.endswith("_editable.html") for n in names)
+        # nada suelto en la raíz
+        assert [p.name for p in tmp_path.iterdir()] == ["fx"]
+
+    def test_unknown_family_reports_failure(self, tmp_path):
+        mod = self._load_script()
+        assert mod.build_one("no_existe", tmp_path, editable=False) is False
+
+
+# ── Informe DCV (Stocks Depósito Central de Valores) ─────────────────────────
+
+
+def _dcv_parquet(path) -> None:
+    """Parquet maestro del informe DCV, con la forma REAL de
+    ``variacion_stock_todos``: Fecha x Bucket x Tipo x Sector x Moneda x Stock_USD.
+
+    Dos instrumentos con apertura de moneda (DAP en CLP y UF) y uno de una sola
+    moneda (PDBC), para ejercitar la regla de etiquetado de filas."""
+    rows = []
+    for d in ["2026-07-13", "2026-07-14"]:
+        for sector, mult in [("Bancos", 1.0), ("AFP", 2.0)]:
+            for tipo, moneda, bucket, base in [
+                ("PDBC", "CLP", "Menor a 1Y", 100.0),
+                ("DAP", "CLP", "Menor a 1Y", 40.0),
+                ("DAP", "UF", "Entre 2 y 5Y", 10.0),
+                ("BTP", "CLP", "Mayor a 10Y", 25.0),
+            ]:
+                rows.append(f"(DATE '{d}', '{bucket}', '{tipo}', '{sector}', '{moneda}', {base * mult})")
+    _write(path, "SELECT * FROM (VALUES " + ", ".join(rows) +
+           ") t(Fecha, Bucket, Tipo, Sector, Moneda, Stock_USD)")
+
+
+@pytest.mark.unit
+class TestDcvTransforms:
+    @pytest.fixture
+    def ds(self, tmp_path):
+        _dcv_parquet(tmp_path / "dcv.parquet")
+        return _ds("dcv.parquet", id="variacion_stock_todos", unit="US$ Mill.")
+
+    def test_portfolio_table_totals_match_the_parquet(self, ds, tmp_path):
+        html = dcv_portfolio_table(ds, tmp_path, {}).html
+        # Último corte: Bancos = 175, AFP = 350, total = 525.
+        assert "175,0" in html and "350,0" in html and "525,0" in html
+        assert "14-jul-2026" in html  # el corte que se cita es el último con dato
+
+    def test_portfolio_table_splits_only_multi_currency_instruments(self, ds, tmp_path):
+        html = dcv_portfolio_table(ds, tmp_path, {})
+        assert "DAP $" in html.html and "DAP UF" in html.html
+        # PDBC y BTP existen en una sola moneda: van sin sufijo.
+        assert ">PDBC<" in html.html and ">BTP<" in html.html
+
+    def test_portfolio_table_uses_email_agent_names(self, ds, tmp_path):
+        html = dcv_portfolio_table(ds, tmp_path, {}).html
+        assert "FP y AFC" in html and ">AFP<" not in html
+
+    def test_bucket_table_filters_by_sector(self, ds, tmp_path):
+        todos = dcv_bucket_table(ds, tmp_path, {}).html
+        bancos = dcv_bucket_table(ds, tmp_path, {"sector": "Bancos"}).html
+        assert "525,0" in todos      # total de los dos agentes
+        assert "175,0" in bancos and "525,0" not in bancos
+
+    def test_bucket_table_orders_buckets_short_to_long(self, ds, tmp_path):
+        html = dcv_bucket_table(ds, tmp_path, {}).html
+        assert html.index("Menor a 1Y") < html.index("Entre 2 y 5Y") < html.index("Mayor a 10Y")
+
+    def test_snapshot_stacked_by_agent(self, ds, tmp_path):
+        plot = dcv_snapshot_stacked(ds, tmp_path, {"x": "Tipo", "series": "Sector"})
+        assert plot.kind == "grouped"
+        assert [s.label for s in plot.series] == ["Bancos", "FP y AFC"]
+        # Eje X en el orden del correo: PDBC, DAP $, DAP UF, BTP.
+        assert [c for c, _ in plot.series[0].points] == ["PDBC", "DAP $", "DAP UF", "BTP"]
+
+    def test_snapshot_stacked_by_bucket_for_one_agent(self, ds, tmp_path):
+        plot = dcv_snapshot_stacked(
+            ds, tmp_path, {"x": "Bucket", "series": "Tipo", "sector": "Bancos"},
+        )
+        assert [c for c, _ in plot.series[0].points] == [
+            "Menor a 1Y", "Entre 2 y 5Y", "Mayor a 10Y",
+        ]
+        assert sum(v for s in plot.series for _, v in s.points) == pytest.approx(175.0)
+
+    def test_missing_parquet_returns_none(self, tmp_path):
+        ds = _ds("no_existe.parquet", id="variacion_stock_todos")
+        assert dcv_portfolio_table(ds, tmp_path, {}) is None
+        assert dcv_bucket_table(ds, tmp_path, {}) is None
+        assert dcv_snapshot_stacked(ds, tmp_path, {}) is None
+
+
+@pytest.mark.unit
+class TestDcvSpec:
+    def test_registered_and_listed(self):
+        assert get_spec("dcv") is DCV_SPEC
+        assert "dcv" in available_families()
+
+    def test_sections_follow_the_screenshot_order(self):
+        """Banners del correo en el orden de las capturas de
+        ``data_pipeline/Tipos de informe/Informe DCV`` (1.jpg … 6.jpg)."""
+        assert DCV_SPEC.sections() == [
+            "Portafolio por agente",
+            "Próximos Vencimientos",
+            "Todos los instrumentos",
+            "Bancos",
+            "Fondos de Pensiones y AFC",
+            "Fondos Mutuos",
+            "Compañías de Seguros",
+            "Mandantes y Depósitos de Valores",
+            "Corredores de Bolsa y Bolsa de Valores",
+            "Otros",
+        ]
+
+    def test_every_agent_section_has_table_then_chart(self):
+        """Cada agente sale como el original: primero la tabla instrumento x tramo,
+        después su apilado por tramo."""
+        for section in DCV_SPEC.sections()[2:]:
+            blocks = [b for b in DCV_SPEC.blocks if b.section == section]
+            assert [b.chart for b in blocks] == ["heatmap_table", "stacked_bar"], section
+
+    def test_blocks_with_source_reference_known_transforms(self):
+        for b in DCV_SPEC.blocks:
+            if b.status == STATUS_SKIP:
+                continue
+            assert get_transform(b.transform) is not None, b.title
+
+    def test_skip_blocks_say_which_parquet_is_missing(self):
+        # un SKIP sin explicación es indistinguible de un bug: la nota debe decir qué falta
+        skipped = [b for b in DCV_SPEC.blocks if b.status == STATUS_SKIP]
+        # 2 duraciones + tabla de vencimientos por agente + 2 agentes x 2 bloques.
+        assert len(skipped) == 7
+        for b in skipped:
+            assert b.note.startswith("Falta parquet:"), b.title
+
+    def test_no_common_weekly_cutoff(self):
+        """El informe es un CORTE de stocks, no ventanas semanales: forzar corte
+        común arrastraría las tablas a la fecha del perfil de vencimientos, que
+        vive en el futuro."""
+        assert DCV_SPEC.share_weekly_cutoff is False
+
+    def test_charts_do_not_duplicate_the_text(self):
+        """Un párrafo por agente: el apilado acompaña a la tabla y no la comenta,
+        porque ambos son el MISMO corte visto de dos formas.
+
+        "Vencimientos Totales" es la excepción y sí comenta: la tabla de su
+        sección no tiene parquet (SKIP), así que es el único bloque con dato ahí."""
+        charts = [
+            b for b in DCV_SPEC.blocks
+            if b.chart == "stacked_bar" and b.source_id and b.title != "Vencimientos Totales"
+        ]
+        assert charts and all(b.no_text for b in charts)
+
+
+# ── Recorte de fechas por bloque (date_from / date_to del spec) ──────────────
+
+
+@pytest.mark.unit
+class TestBlockDateFilter:
+    """``date_from``/``date_to`` acotan el PARQUET antes de que la transform lo lea,
+    así la "última fecha" del gráfico y todo lo que se deriva de ella (ventanas,
+    acumulados, corte citado) respetan el recorte."""
+
+    @pytest.fixture
+    def ds(self, tmp_path):
+        rows = ", ".join(
+            f"(DATE '2026-0{m}-15', 'A', {m * 10.0})" for m in range(1, 7)
+        )
+        _write(tmp_path / "s.parquet", f"SELECT * FROM (VALUES {rows}) t(Fecha, Tipo, Valor)")
+        return _ds("s.parquet", id="serie", unit="US$")
+
+    def _dates(self, ds, tmp_path, date_from="", date_to=""):
+        from banks_rag.application.reporting.curated_report import date_filtered_dir
+        from banks_rag.application.reporting.parquet_facts import compute_series
+
+        with date_filtered_dir(ds, tmp_path, date_from, date_to) as pdir:
+            plot = compute_series(ds, pdir)
+        return [iso for s in plot.series for iso, _ in s.points]
+
+    def test_without_filter_yields_the_original_dir(self, ds, tmp_path):
+        from banks_rag.application.reporting.curated_report import date_filtered_dir
+
+        with date_filtered_dir(ds, tmp_path) as pdir:
+            assert pdir is tmp_path  # sin recorte no se copia nada
+        assert len(self._dates(ds, tmp_path)) == 6
+
+    def test_date_from_trims_the_start(self, ds, tmp_path):
+        assert self._dates(ds, tmp_path, date_from="2026-04-01") == [
+            "2026-04-15", "2026-05-15", "2026-06-15",
+        ]
+
+    def test_date_to_trims_the_end(self, ds, tmp_path):
+        assert self._dates(ds, tmp_path, date_to="2026-03-31") == [
+            "2026-01-15", "2026-02-15", "2026-03-15",
+        ]
+
+    def test_both_bounds_are_inclusive(self, ds, tmp_path):
+        assert self._dates(ds, tmp_path, date_from="2026-02-15", date_to="2026-04-15") == [
+            "2026-02-15", "2026-03-15", "2026-04-15",
+        ]
+
+    def test_last_date_of_the_chart_follows_the_cut(self, ds, tmp_path):
+        """El punto que importa: recortando, el gráfico cambia cuál es su ÚLTIMA
+        fecha. Si el recorte se aplicara después de calcular, el "último dato"
+        seguiría siendo junio y las ventanas se medirían contra días invisibles."""
+        assert self._dates(ds, tmp_path, date_to="2026-03-31")[-1] == "2026-03-15"
+
+    def test_empty_result_keeps_the_original_data(self, ds, tmp_path):
+        # Un rango sin filas dejaría el bloque como "sin serie", indistinguible de
+        # un parquet ausente: se ignora el recorte y se avisa por log.
+        assert len(self._dates(ds, tmp_path, date_from="2030-01-01")) == 6
+
+    def test_parquet_without_date_column_is_left_alone(self, tmp_path):
+        from banks_rag.application.reporting.curated_report import date_filtered_dir
+
+        _write(tmp_path / "flat.parquet", "SELECT * FROM (VALUES ('A', 1.0)) t(Tipo, Valor)")
+        ds = _ds("flat.parquet", id="flat")
+        with date_filtered_dir(ds, tmp_path, "2026-01-01", "2026-02-01") as pdir:
+            assert pdir is tmp_path
+
+    def test_missing_parquet_is_left_alone(self, tmp_path):
+        from banks_rag.application.reporting.curated_report import date_filtered_dir
+
+        ds = _ds("no_existe.parquet", id="x")
+        with date_filtered_dir(ds, tmp_path, "2026-01-01", "") as pdir:
+            assert pdir is tmp_path
+
+    def test_block_filter_reaches_the_transform(self, ds, tmp_path):
+        """El recorte declarado en el bloque llega al gráfico dibujado."""
+        from banks_rag.application.reporting.curated_report import _process_block
+        from banks_rag.application.reporting.report_spec import STATUS_MVP
+
+        block = ReportBlock(
+            section="S", title="T", chart="line", status=STATUS_MVP,
+            source_id="serie", transform="straight_series", date_to="2026-03-31",
+        )
+        cb = _process_block(block, entries=[ds], parquet_dir=tmp_path)
+        assert cb.render_kind == "chart"
+        assert cb.plot.series[0].points[-1][0] == "2026-03-15"
+
+    def test_text_inherits_the_filter_of_the_block_it_comments(self):
+        """``spec_date_filters``: el párrafo hereda el recorte del bloque que POSEE
+        su slot de texto, no el de un bloque ``no_text`` que use la misma fuente."""
+        from banks_rag.application.reporting.curated_report import spec_date_filters
+        from banks_rag.application.reporting.report_spec import STATUS_MVP
+
+        spec = FamilyReportSpec(
+            family="t", title="T",
+            blocks=(
+                ReportBlock(section="S", title="con texto", chart="line", status=STATUS_MVP,
+                            source_id="serie", transform="straight_series",
+                            date_from="2026-02-01", date_to="2026-04-30"),
+                ReportBlock(section="S", title="sin texto", chart="line", status=STATUS_MVP,
+                            source_id="serie", transform="straight_series",
+                            date_from="2020-01-01", no_text=True),
+            ),
+        )
+        assert spec_date_filters(spec) == {"serie": ("2026-02-01", "2026-04-30")}
+
+    def test_blocks_without_filter_are_not_listed(self):
+        from banks_rag.application.reporting.curated_report import spec_date_filters
+
+        for spec in (FFMM_SPEC, NR_SPEC, AFP_SPEC, FX_SPEC, DCV_SPEC):
+            # Hoy ningún spec recorta fechas: el diccionario vacío confirma que la
+            # función es opt-in y no altera los informes actuales.
+            assert spec_date_filters(spec) == {}, spec.family

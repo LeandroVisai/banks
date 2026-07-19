@@ -82,7 +82,7 @@ CONCEPTS: tuple[Concept, ...] = (
         expansions=("nr", "no", "residentes", "extranjeros", "offshore"),
         segment="no_residentes",
         dataset_hints=("flujo_spot_nr", "posicion_nr_derivados",
-                       "posicion_nr_spc", "posicion_rfl_nr", "spot_acumulado_agente",
+                       "nr_var_posicion_spc", "posicion_rfl_nr", "spot_acumulado_agente",
                        "spot_susc_vcto_agente", "flujos_acumulados_derivados",
                        "susc_vcto_agente_instrumento", "variacion_rfl_dcv_nr",
                        "spot_agente_afecto_derivado", "posicion_spot_derivados_nr"),

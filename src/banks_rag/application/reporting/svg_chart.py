@@ -42,7 +42,13 @@ _OVERLAY_COLOR = "#c8102e"
 
 # Paleta para las series APILADAS cuando hay overlay: sin rojo (reservado para el
 # Neto), tonos del informe (azul/tabaco/pizarra/verde/ámbar/morado).
-_STACK_PALETTE = ["#1f6fb2", "#b08d57", "#5a6b7b", "#0a8a5f", "#e08a00", "#6a3d9a"]
+#
+# Los 6 primeros son los colores canónicos del informe; los 6 siguientes son tonos
+# claros/oscuros de esos mismos para que un apilado de hasta 12 series (el fixing
+# abre por 9 sectores contraparte) no CICLE la paleta — con 6 colores, la serie 7
+# salía del mismo azul que la 1 y la leyenda quedaba ambigua.
+_STACK_PALETTE = ["#1f6fb2", "#b08d57", "#5a6b7b", "#0a8a5f", "#e08a00", "#6a3d9a",
+                  "#7fb2e5", "#6b5327", "#2c3a47", "#5fcfa4", "#a35c00", "#b08fd6"]
 
 
 def _split_overlay(plot: PlotData) -> tuple[list[PlotSeries], list[PlotSeries]]:
@@ -1219,4 +1225,294 @@ def render_dcv_heatmap_tables(
         + _matrix(label7, delta7)
         + _matrix(label30, delta30)
         + unit_note + "</div>"
+    )
+
+
+# ── Tablas del informe de Flujos Cambiarios ──────────────────────────────────
+#
+# El correo real colorea la celda cuando el flujo es GRANDE en términos absolutos
+# (verde = venta de dólares / flujo negativo, rojo = compra), no cuando es
+# simplemente distinto de cero: con ~13 sectores por 6 columnas, colorear todo deja
+# la tabla ilegible. Se resalta el decil superior por |monto| de cada columna.
+
+_HL_THRESHOLD = 0.80  # percentil de |monto| sobre el que se pinta la celda
+
+
+def _fx_cut(values: list[float]) -> float:
+    """Umbral de resaltado: |monto| del percentil ``_HL_THRESHOLD`` de la columna.
+    Devuelve ``inf`` si no hay datos (nada se resalta)."""
+    mags = sorted(abs(v) for v in values if v)
+    if not mags:
+        return float("inf")
+    return mags[min(len(mags) - 1, int(len(mags) * _HL_THRESHOLD))]
+
+
+def _fx_cell(v: float, cut: float, *, bold: bool = False) -> str:
+    tdr = "text-align:right;padding:4px 8px;border-bottom:1px solid #eee;font-size:12px;white-space:nowrap"
+    if bold:
+        tdr += ";font-weight:700"
+    if v and abs(v) >= cut:
+        tdr += ";" + (_CELL_NEG if v > 0 else _CELL_POS)
+    return f'<td style="{tdr}">{_fmt_num(v)}</td>'
+
+
+def render_fx_summary_table(
+    sectors: list[str],
+    data: dict[str, tuple[float, float, float, float]],
+    *,
+    unit: str = "US$ Mill.",
+    day_label: str = "",
+    span_label: str = "",
+) -> str:
+    """RESUMEN GENERAL: una fila por sector, columnas Spot / Derivados / Spot y
+    derivados, para el día y para la ventana acumulada.
+
+    ``data[sector] = (spot_dia, deriv_dia, spot_ventana, deriv_ventana)``; la
+    columna "Spot y derivados" se calcula acá para que el total sea siempre
+    consistente con sus componentes."""
+    th = "text-align:right;padding:6px 8px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap"
+    thl = "text-align:left;padding:6px 8px;background:#4a5a72;color:#fff;font-size:11px"
+    thg = "text-align:center;padding:5px 8px;background:#0b3766;color:#fff;font-size:11px;white-space:nowrap"
+    tdl = "text-align:left;padding:4px 8px;border-bottom:1px solid #eee;font-size:12px;font-weight:700"
+
+    rows_num = {s: (d[0], d[1], d[0] + d[1], d[2], d[3], d[2] + d[3]) for s, d in data.items()}
+    cuts = [_fx_cut([rows_num[s][i] for s in sectors]) for i in range(6)]
+
+    body = ""
+    for s in sectors:
+        vals = rows_num[s]
+        cells = "".join(
+            _fx_cell(v, cuts[i], bold=i in (2, 5)) for i, v in enumerate(vals)
+        )
+        body += f'<tr><td style="{tdl}">{_esc(s)}</td>{cells}</tr>'
+
+    totals = tuple(sum(rows_num[s][i] for s in sectors) for i in range(6))
+    tdt = ("text-align:right;padding:6px 8px;font-size:12px;font-weight:700;"
+           "background:#eef3f9;border-top:2px solid #4a5a72;white-space:nowrap")
+    total_row = (
+        f'<tr><td style="{tdl};background:#eef3f9;border-top:2px solid #4a5a72">TOTAL</td>'
+        + "".join(f'<td style="{tdt}">{_fmt_num(v)}</td>' for v in totals) + "</tr>"
+    )
+
+    return (
+        '<div style="overflow-x:auto;max-width:760px;margin:6px auto">'
+        '<table style="width:100%;border-collapse:collapse">'
+        f'<thead><tr><th style="{thl}" rowspan="2">Sector</th>'
+        f'<th style="{thg}" colspan="3">Día ({_esc(day_label)})</th>'
+        f'<th style="{thg}" colspan="3">Acumulado ({_esc(span_label)})</th></tr>'
+        f'<tr><th style="{th}">Spot</th><th style="{th}">Derivados</th>'
+        f'<th style="{th}">Spot y deriv.</th>'
+        f'<th style="{th}">Spot</th><th style="{th}">Derivados</th>'
+        f'<th style="{th}">Spot y deriv.</th></tr></thead>'
+        f"<tbody>{body}{total_row}</tbody></table>"
+        f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)} · '
+        "positivo = compra de dólares, negativo = venta</div></div>"
+    )
+
+
+def render_fx_delta_table(
+    agents: list[str],
+    data: dict[str, tuple[float, ...]],
+    windows: list[int],
+    *,
+    unit: str = "US$ Mill.",
+    total_label: str = "Total",
+    asof: str = "",
+) -> str:
+    """Posición en derivados por agente: filas = agente, columnas = Δ T-N (variación
+    neta acumulada de las últimas N jornadas con dato)."""
+    th = "text-align:right;padding:6px 8px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap"
+    thl = "text-align:left;padding:6px 8px;background:#4a5a72;color:#fff;font-size:11px"
+    tdl = "text-align:left;padding:4px 8px;border-bottom:1px solid #eee;font-size:12px;font-weight:700"
+
+    cuts = [_fx_cut([data[a][i] for a in agents]) for i in range(len(windows))]
+    body = ""
+    for a in agents:
+        cells = "".join(_fx_cell(v, cuts[i]) for i, v in enumerate(data[a]))
+        body += f'<tr><td style="{tdl}">{_esc(a)}</td>{cells}</tr>'
+
+    tdt = ("text-align:right;padding:6px 8px;font-size:12px;font-weight:700;"
+           "background:#eef3f9;border-top:2px solid #4a5a72;white-space:nowrap")
+    body += (
+        f'<tr><td style="{tdl};background:#eef3f9;border-top:2px solid #4a5a72">{_esc(total_label)}</td>'
+        + "".join(f'<td style="{tdt}">{_fmt_num(v)}</td>' for v in data.get(total_label, ()))
+        + "</tr>"
+    )
+    asof_note = f" · corte {_esc(asof)}" if asof else ""
+    return (
+        '<div style="overflow-x:auto;max-width:760px;margin:6px auto">'
+        '<table style="width:100%;border-collapse:collapse">'
+        f'<thead><tr><th style="{thl}">Agente</th>'
+        + "".join(f'<th style="{th}">&#916; T-{w}</th>' for w in windows)
+        + "</tr></thead>"
+        f"<tbody>{body}</tbody></table>"
+        f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)} · '
+        f"variación neta acumulada de las últimas N jornadas con dato{asof_note}</div></div>"
+    )
+
+
+# ── Tablas del informe DCV (Stocks Depósito Central de Valores) ──────────────
+#
+# El correo real pinta los montos con una escala CONTINUA verde/blanco: cuanto
+# mayor el monto dentro de su columna, más saturada la celda. No es un semáforo
+# de signo (los stocks son siempre ≥ 0) sino un mapa de calor de concentración,
+# así se lee de un vistazo dónde está cargado cada agente. Las filas/columnas de
+# TOTAL quedan fuera de la escala (si entraran, dominarían y el resto saldría
+# blanco) — el original anota justamente "sin considerar montos totales".
+
+_DCV_GREEN = (99, 190, 123)  # tono base de la escala verde del correo
+
+
+def _dcv_shade(value: float | None, vmax: float) -> str:
+    """Fondo verde proporcional a ``value/vmax`` (0 → blanco, vmax → verde pleno).
+
+    Se usa raíz cuadrada para que los montos medianos no se vean casi blancos:
+    en estas tablas unas pocas celdas concentran el stock y una escala lineal
+    dejaría ilegible al resto."""
+    if not value or value <= 0 or vmax <= 0:
+        return ""
+    frac = min(1.0, (value / vmax) ** 0.5)
+    r, g, b = _DCV_GREEN
+    # Mezcla contra blanco en vez de usar alpha: los clientes de correo (Outlook)
+    # no interpolan rgba() sobre el fondo de la celda de forma confiable.
+    mix = tuple(round(255 - (255 - c) * frac) for c in (r, g, b))
+    color = "#155724" if frac > 0.55 else "#1c1c1c"
+    return f"background:rgb({mix[0]},{mix[1]},{mix[2]});color:{color}"
+
+
+def _dcv_num(v: float | None) -> str:
+    """Monto de la tabla DCV: ``—`` cuando no hay dato y ``-`` cuando es cero
+    (igual que el original, que deja el guion para las celdas sin tenencia)."""
+    if v is None:
+        return "&#8212;"
+    if abs(v) < 0.5:
+        return "-"
+    return _fmt_num(v)
+
+
+def render_dcv_portfolio_table(
+    instruments: list[str],
+    agents: list[str],
+    monto: dict[str, dict[str, float]],
+    *,
+    unit: str = "US$ Mill.",
+    asof: str = "",
+    total_label: str = "Total",
+) -> str:
+    """Portafolio por agente: filas = instrumento, y por cada agente dos columnas
+    (Monto y % del portafolio de ESE agente), más una columna de total.
+
+    ``monto[agente][instrumento]`` en la unidad del dataset. El ``%`` se calcula
+    acá sobre el total de la columna, así porcentaje y monto nunca se contradicen.
+    El correo original trae además una columna de duración por agente, que no se
+    puede reproducir con los parquets actuales (ver ``dcv_spec``)."""
+    th = "text-align:right;padding:5px 6px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap"
+    thl = "text-align:left;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px"
+    thg = "text-align:center;padding:4px 6px;background:#0b3766;color:#fff;font-size:11px;white-space:nowrap"
+    tdl = "text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700"
+    tdr = "text-align:right;padding:4px 6px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap"
+
+    cols = [*agents, total_label]
+    totals = {a: sum(monto.get(a, {}).values()) for a in agents}
+    totals[total_label] = sum(totals.values())
+    for inst in instruments:
+        monto.setdefault(total_label, {})[inst] = sum(monto.get(a, {}).get(inst, 0.0) for a in agents)
+
+    # Escala de color por COLUMNA: cada agente se lee contra su propio máximo.
+    vmax = {c: max((monto.get(c, {}).get(i, 0.0) for i in instruments), default=0.0) for c in cols}
+
+    body = ""
+    for inst in instruments:
+        cells = ""
+        for c in cols:
+            v = monto.get(c, {}).get(inst)
+            share = (v / totals[c] * 100) if v and totals.get(c) else 0.0
+            cells += (
+                f'<td style="{tdr};{_dcv_shade(v, vmax[c])}">{_dcv_num(v)}</td>'
+                f'<td style="{tdr};color:#666">{f"{share:.0f}%" if share >= 0.5 else "-"}</td>'
+            )
+        body += f'<tr><td style="{tdl}">{_esc(inst)}</td>{cells}</tr>'
+
+    tdt = ("text-align:right;padding:5px 6px;font-size:11px;font-weight:700;"
+           "background:#eef3f9;border-top:2px solid #4a5a72;white-space:nowrap")
+    total_cells = "".join(
+        f'<td style="{tdt}">{_dcv_num(totals[c])}</td><td style="{tdt}">-</td>' for c in cols
+    )
+    body += (
+        f'<tr><td style="{tdl};background:#eef3f9;border-top:2px solid #4a5a72">{_esc(total_label)}</td>'
+        + total_cells + "</tr>"
+    )
+
+    asof_note = f" · corte {_esc(asof)}" if asof else ""
+    return (
+        '<div style="overflow-x:auto;max-width:760px;margin:6px auto">'
+        '<table style="width:100%;border-collapse:collapse">'
+        f'<thead><tr><th style="{thl}" rowspan="2">Instrumento</th>'
+        + "".join(f'<th style="{thg}" colspan="2">{_esc(c)}</th>' for c in cols)
+        + "</tr><tr>"
+        + "".join(f'<th style="{th}">Monto</th><th style="{th}">% port.</th>' for _ in cols)
+        + "</tr></thead>"
+        f"<tbody>{body}</tbody></table>"
+        f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)}{asof_note} · '
+        "el % es sobre el portafolio de cada agente</div></div>"
+    )
+
+
+def render_dcv_bucket_table(
+    instruments: list[str],
+    buckets: list[str],
+    matrix: dict[str, dict[str, float]],
+    *,
+    unit: str = "US$ Mill.",
+    asof: str = "",
+    total_label: str = "Total",
+) -> str:
+    """Distribución por tramo de plazo: filas = instrumento, columnas = Total +
+    un tramo por columna. ``matrix[instrumento][bucket]``.
+
+    El color escala sobre las celdas de TRAMO únicamente (la columna Total y la
+    fila Total quedan fuera, como en el correo original)."""
+    th = "text-align:right;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap"
+    thl = "text-align:left;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px"
+    tdl = "text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700"
+    tdr = "text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap"
+    tdtot = f"{tdr};font-weight:700;background:#f6f8fb"
+
+    vmax = max(
+        (matrix.get(i, {}).get(b, 0.0) for i in instruments for b in buckets), default=0.0,
+    )
+    body = ""
+    for inst in instruments:
+        row = matrix.get(inst, {})
+        row_total = sum(row.get(b, 0.0) for b in buckets)
+        cells = "".join(
+            f'<td style="{tdr};{_dcv_shade(row.get(b), vmax)}">{_dcv_num(row.get(b))}</td>'
+            for b in buckets
+        )
+        body += (
+            f'<tr><td style="{tdl}">{_esc(inst)}</td>'
+            f'<td style="{tdtot}">{_dcv_num(row_total)}</td>{cells}</tr>'
+        )
+
+    col_totals = [sum(matrix.get(i, {}).get(b, 0.0) for i in instruments) for b in buckets]
+    tdt = ("text-align:right;padding:5px 7px;font-size:11px;font-weight:700;"
+           "background:#eef3f9;border-top:2px solid #4a5a72;white-space:nowrap")
+    body += (
+        f'<tr><td style="{tdl};background:#eef3f9;border-top:2px solid #4a5a72">{_esc(total_label)}</td>'
+        f'<td style="{tdt}">{_dcv_num(sum(col_totals))}</td>'
+        + "".join(f'<td style="{tdt}">{_dcv_num(v)}</td>' for v in col_totals)
+        + "</tr>"
+    )
+
+    asof_note = f" · corte {_esc(asof)}" if asof else ""
+    return (
+        '<div style="overflow-x:auto;max-width:760px;margin:6px auto">'
+        '<table style="width:100%;border-collapse:collapse">'
+        f'<thead><tr><th style="{thl}">Instrumento</th>'
+        f'<th style="{th}">{_esc(total_label)}</th>'
+        + "".join(f'<th style="{th}">{_esc(b)}</th>' for b in buckets)
+        + "</tr></thead>"
+        f"<tbody>{body}</tbody></table>"
+        f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)}{asof_note} · '
+        "escala de color sin considerar montos totales</div></div>"
     )

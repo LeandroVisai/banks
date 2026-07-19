@@ -52,6 +52,7 @@ CHART_FAMILY: dict[str, str] = {
     "fx_var_bar_interactive": "bar",
     "hist_range": "bar",
     "flujo_cambiario": "bar",
+    "flujo_spot_variacion": "bar",
     "bar_scatter_dual": "bar",
     # barras agrupadas
     "grouped_bar": "grouped_bar",
@@ -64,9 +65,11 @@ CHART_FAMILY: dict[str, str] = {
     "pos_bar_delta_interactive": "stacked_bar",
     "pos_delta_interactive": "stacked_bar",
     "ffmm_cum_interactive": "stacked_bar",
+    "ffmm_stock_cum_interactive": "stacked_bar",
     "nr_deriv_cumulative_interactive": "stacked_bar",
     "nr_spot_cumulative_interactive": "stacked_bar",
     "fx_pos_cumulative_interactive": "stacked_bar",
+    "stacked_neto_interactive": "stacked_bar",
     # dispersión
     "scatter": "point",
     "fx_retorno_scatter_interactive": "point",

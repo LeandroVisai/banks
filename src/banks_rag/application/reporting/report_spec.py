@@ -68,6 +68,21 @@ class ReportBlock:
     # otro bloque), evitando prosa duplicada o contradictoria. ``_resolve_text_slots``
     # no le asigna ``text_slot`` y la síntesis excluye su párrafo.
     no_text: bool = False
+    # Recorte de fechas del bloque, en ISO (``"2026-01-01"``). Vacío = sin límite
+    # por ese lado; se puede fijar solo uno de los dos.
+    #
+    # El recorte se aplica al PARQUET, antes de que la transform lo lea: el bloque
+    # ve un dataset que solo contiene esas fechas. Por eso funciona con CUALQUIER
+    # transform sin tocarla, y todo lo que se deriva de la fecha queda coherente
+    # con el recorte — la "última fecha" del gráfico, las ventanas 7d/30d, el
+    # acumulado YtD y el corte que se cita en el pie. Cortar solo los puntos ya
+    # calculados dejaría, por ejemplo, un "Δ T-7" medido contra días que el lector
+    # no ve en el gráfico.
+    #
+    # El párrafo de texto del bloque hereda el MISMO recorte (ver
+    # ``spec_date_filters``), así prosa y gráfico hablan siempre del mismo período.
+    date_from: str = ""
+    date_to: str = ""
 
 
 @dataclass(frozen=True)

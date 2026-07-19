@@ -66,7 +66,7 @@ datasets:
       Serie de dv01 proyectado en swap por moneda (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por moneda (CLP, UF, US$). Incluye las métricas dv01. Cubre el período entre 2020-01-31 y 2026-06-01. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: afp
     unit: "US$ Mill."
-    date_range: ["2020-01-31", "2026-06-10"]
+    date_range: ["2020-01-31", "2026-07-14"]
     columns:
       - {name: "fecha", type: TIMESTAMP}
       - {name: "moneda", type: VARCHAR, values: ["CLP", "UF", "US$"]}
@@ -81,7 +81,7 @@ datasets:
       Serie de traspaso de cotizantes entre fondos (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por fondo (A, B, C, D, E). Incluye las métricas flujos_usd. Cubre el período entre 2026-04-30 y 2026-05-28. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: afp
     unit: "US$ Mill."
-    date_range: ["2026-05-12", "2026-06-09"]
+    date_range: ["2026-06-12", "2026-07-10"]
     columns:
       - {name: "fecha", type: TIMESTAMP}
       - {name: "fondo", type: VARCHAR, values: ["A", "B", "C", "D", "E"]}
@@ -96,7 +96,7 @@ datasets:
       Serie de mtm swaps por tipo de fondo (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por fondo (A, B, C, D, E). Incluye las métricas mtm. Cubre el período entre 2020-01-31 y 2026-06-01. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: afp
     unit: "US$ Mill."
-    date_range: ["2020-01-31", "2026-06-10"]
+    date_range: ["2020-01-31", "2026-07-14"]
     columns:
       - {name: "fecha", type: TIMESTAMP}
       - {name: "fondo", type: VARCHAR, values: ["A", "B", "C", "D", "E"]}
@@ -110,7 +110,7 @@ datasets:
       Serie de posición spot y derivados (mm usd) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Agente (TGR), Mercado (Spot). Incluye las métricas Monto. Cubre el período entre 2014-10-01 y 2026-05-29. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: afp
     unit: "MM USD"
-    date_range: ["2014-10-01", "2026-06-10"]
+    date_range: ["2014-10-01", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Agente", type: VARCHAR, values: ["TGR"]}
@@ -126,7 +126,7 @@ datasets:
       Serie de posición spot y derivados acumulada (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Derivados, Spot. Cubre el período entre 2025-04-28 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: afp
     unit: "US$ Mill."
-    date_range: ["2025-05-08", "2026-06-10"]
+    date_range: ["2024-01-02", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Derivados", type: DOUBLE}
@@ -141,7 +141,7 @@ datasets:
       Serie de stock dcv afp por tramo de plazo (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 1 y 2Y, Entre 2 y 5Y, Entre 5 y 10Y, Mayor a 10Y, Menor a 1Y). Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: afp
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["Entre 1 y 2Y", "Entre 2 y 5Y", "Entre 5 y 10Y", "Mayor a 10Y", "Menor a 1Y"]}
@@ -171,7 +171,7 @@ datasets:
       Serie de stock dcv afp por instrumento (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo. Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: afp
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo", type: VARCHAR, values: ["BB", "BCCh", "BTP", "BTU", "DAP", "Letras MdH", "Otros", "PDBC"]}
@@ -186,7 +186,7 @@ datasets:
       Serie de variación stock dcv afp (us$ mill.) para el seguimiento del segmento de AFP. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 1 y 2Y, Entre 2 y 5Y, Entre 5 y 10Y, Mayor a 10Y, Menor a 1Y), Tipo, Moneda (CLP, UF). Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: afp
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["Entre 1 y 2Y", "Entre 2 y 5Y", "Entre 5 y 10Y", "Mayor a 10Y", "Menor a 1Y"]}
@@ -205,7 +205,7 @@ datasets:
       Serie de activos en moneda local para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Banco, Tipo_banco (Bancos Sistemicos, Otros Bancos), Categoria_general (Colocaciones, Inversiones, Otros activos, Reservas bancarias). Incluye las métricas Monto. Cubre el período entre 2017-11-17 y 2026-05-27. La unidad principal de análisis es monto. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "monto"
-    date_range: ["2017-11-17", "2026-06-08"]
+    date_range: ["2017-11-17", "2026-07-10"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Banco", type: VARCHAR}
@@ -221,7 +221,7 @@ datasets:
       Serie de activos en moneda extranjera para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Banco, Tipo_banco (Bancos Sistemicos, Otros Bancos), Categoria_general (Colocaciones, Inversiones, Otros activos, Reservas bancarias). Incluye las métricas Monto. Cubre el período entre 2017-11-17 y 2026-05-27. La unidad principal de análisis es monto. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "monto"
-    date_range: ["2017-11-17", "2026-06-08"]
+    date_range: ["2017-11-17", "2026-07-10"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Banco", type: VARCHAR}
@@ -237,7 +237,7 @@ datasets:
       Serie de bonos y dap por banco (mm usd) para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Banco, Categoria general (BB, DAP). Incluye las métricas Monto. Cubre el período entre 2017-11-17 y 2026-05-27. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "MM USD"
-    date_range: ["2017-11-17", "2026-06-08"]
+    date_range: ["2017-11-17", "2026-07-10"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Banco", type: VARCHAR}
@@ -252,7 +252,7 @@ datasets:
       Serie de bonos y dap (mm usd) para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Banco, Categoria general (BB, DAP). Incluye las métricas Monto. Cubre el período entre 2017-11-17 y 2026-05-27. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "MM USD"
-    date_range: ["2017-11-17", "2026-06-08"]
+    date_range: ["2017-11-17", "2026-07-10"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Banco", type: VARCHAR}
@@ -267,7 +267,7 @@ datasets:
       Serie de caja por banco (mm$) para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Banco. Incluye las métricas Monto. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es MM$. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "MM$"
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Banco", type: VARCHAR, values: ["BCI", "BICE", "BTG", "Bank of China", "Chile", "China Construction Bank", "Consorcio", "Do Brasil", "Estado", "Falabella", "HSBC", "Internacional", "Itaú-Corpbanca", "JP Morgan", "Ripley", "Santander", "Scotiabank", "Security", "Tanner", "Tokyo"]}
@@ -295,7 +295,7 @@ datasets:
       Serie de inversiones por banco (mm$) para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Banco, Instrumentos (BCCh, MdH, Otros, PDBC). Incluye las métricas Stock. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es MM$. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "MM$"
-    date_range: ["2019-01-02", "2026-06-09"]
+    date_range: ["2019-01-02", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Banco", type: VARCHAR, values: ["BCI", "BICE", "BTG", "Bank of China", "Chile", "China Construction Bank", "Consorcio", "Estado", "Falabella", "HSBC", "Internacional", "Itaú-Corpbanca", "JP Morgan", "Ripley", "Santander", "Scotiabank", "Security", "Tanner"]}
@@ -310,7 +310,7 @@ datasets:
       Serie de inversiones por instrumento (mm$) para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Banco, Instrumentos (BCCh, MdH, Otros, PDBC). Incluye las métricas Stock. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es MM$. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "MM$"
-    date_range: ["2019-01-02", "2026-06-09"]
+    date_range: ["2019-01-02", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Banco", type: VARCHAR, values: ["BCI", "BICE", "BTG", "Bank of China", "Chile", "China Construction Bank", "Consorcio", "Estado", "Falabella", "HSBC", "Internacional", "Itaú-Corpbanca", "JP Morgan", "Ripley", "Santander", "Scotiabank", "Security", "Tanner"]}
@@ -325,7 +325,7 @@ datasets:
       Serie de pasivos en moneda local para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Banco, Tipo_banco (Bancos Sistemicos, Otros Bancos), Categoria_general. Incluye las métricas Monto. Cubre el período entre 2017-11-17 y 2026-05-27. La unidad principal de análisis es monto. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "monto"
-    date_range: ["2017-11-17", "2026-06-08"]
+    date_range: ["2017-11-17", "2026-07-10"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Banco", type: VARCHAR}
@@ -341,7 +341,7 @@ datasets:
       Serie de pasivos en moneda extranjera para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Banco, Tipo_banco (Bancos Sistemicos, Otros Bancos), Categoria_general. Incluye las métricas Monto. Cubre el período entre 2017-11-17 y 2026-05-27. La unidad principal de análisis es monto. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "monto"
-    date_range: ["2017-11-17", "2026-06-08"]
+    date_range: ["2017-11-17", "2026-07-10"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Banco", type: VARCHAR}
@@ -357,7 +357,7 @@ datasets:
       Serie de perfil de vencimientos deuda bancaria (millones usd) para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Bonos, DAP. La unidad principal de análisis es Millones USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "Millones USD"
-    date_range: ["2026-06-10", "2028-12-29"]
+    date_range: ["2026-07-15", "2028-12-29"]
     columns:
       - {name: "Vencimiento", type: TIMESTAMP}
       - {name: "Bonos", type: DOUBLE}
@@ -371,7 +371,7 @@ datasets:
       Serie de perfil de vencimientos deuda bancaria por emisor (millones usd) para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas BCI, Chile, Estado. La unidad principal de análisis es Millones USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "Millones USD"
-    date_range: ["2026-06-10", "2026-09-30"]
+    date_range: ["2026-07-15", "2026-10-30"]
     columns:
       - {name: "Vencimiento", type: TIMESTAMP}
       - {name: "BCI", type: DOUBLE}
@@ -390,7 +390,7 @@ datasets:
       Serie de constitucion de rt para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion, Instrumento. Incluye las métricas Monto. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "MM USD"
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Institucion", type: VARCHAR, values: ["BCI", "BICE", "BTG", "Chile", "Estado", "Falabella", "HSBC", "JP Morgan", "Santander"]}
@@ -405,7 +405,7 @@ datasets:
       Serie de rt exigible para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Banco. Incluye las métricas RT Exigible. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "MM USD"
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Banco", type: VARCHAR, values: ["BCI", "BICE", "BTG", "Chile", "Estado", "Falabella", "HSBC", "JP Morgan", "Santander"]}
@@ -419,7 +419,7 @@ datasets:
       Serie de stock dcv bancos por tramo de plazo (us$ mill.) para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 1 y 2Y, Entre 2 y 5Y, Entre 5 y 10Y, Mayor a 10Y, Menor a 1Y). Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["Entre 1 y 2Y", "Entre 2 y 5Y", "Entre 5 y 10Y", "Mayor a 10Y", "Menor a 1Y"]}
@@ -433,7 +433,7 @@ datasets:
       Serie de stock de dap y bonos bancarios del sistema (millones usd) para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Bonos, DAP. Cubre el período entre 2021-06-01 y 2026-05-29. La unidad principal de análisis es Millones USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "Millones USD"
-    date_range: ["2021-06-11", "2026-06-10"]
+    date_range: ["2021-07-15", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bonos", type: DOUBLE}
@@ -447,7 +447,7 @@ datasets:
       Serie de stock dcv bancos por instrumento (us$ mill.) para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo. Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo", type: VARCHAR, values: ["BB", "BCCh", "BTP", "BTU", "DAP", "Letras MdH", "Otros", "PDBC"]}
@@ -461,7 +461,7 @@ datasets:
       Serie de variación stock dcv bancos (us$ mill.) para el seguimiento del segmento de bancos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 1 y 2Y, Entre 2 y 5Y, Entre 5 y 10Y, Mayor a 10Y, Menor a 1Y), Tipo, Moneda (CLP, UF). Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: bancos
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["Entre 1 y 2Y", "Entre 2 y 5Y", "Entre 5 y 10Y", "Mayor a 10Y", "Menor a 1Y"]}
@@ -595,7 +595,7 @@ datasets:
       Serie de duración cartera de btp para el seguimiento del segmento de CSV y seguros. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Duracion_Cartera. Cubre el período entre 2024-01-02 y 2026-05-29. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: csv_seguros
     unit: "N/A"
-    date_range: ["2024-01-02", "2026-06-10"]
+    date_range: ["2019-11-29", "2026-07-14"]
     columns:
       - {name: "fecha", type: TIMESTAMP}
       - {name: "Duracion_Cartera", type: DOUBLE}
@@ -608,7 +608,7 @@ datasets:
       Serie de flujos spot acumulados (us$ mill.) para el seguimiento del segmento de CSV y seguros. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas No Afecto, Afecto. Cubre el período entre 2022-01-03 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: csv_seguros
     unit: "US$ Mill."
-    date_range: ["2022-01-03", "2026-06-10"]
+    date_range: ["2022-01-03", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "No Afecto", type: DOUBLE}
@@ -622,7 +622,7 @@ datasets:
       Serie de posición cambiaria histórica (us$ mill.) para el seguimiento del segmento de CSV y seguros. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas 1 a 90 dias, 91 a 360 dias, Mayor a 360 dias. Cubre el período entre 2014-01-02 y 2026-05-28. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: csv_seguros
     unit: "US$ Mill."
-    date_range: ["2014-01-02", "2026-06-09"]
+    date_range: ["2014-01-02", "2026-07-10"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "1 a 90 dias", type: DOUBLE}
@@ -638,7 +638,7 @@ datasets:
       Serie de posición spot y derivados (mm usd) para el seguimiento del segmento de CSV y seguros. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Agente (TGR), Mercado (Spot). Incluye las métricas Monto. Cubre el período entre 2014-10-01 y 2026-05-29. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: csv_seguros
     unit: "MM USD"
-    date_range: ["2014-10-01", "2026-06-10"]
+    date_range: ["2014-10-01", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Agente", type: VARCHAR, values: ["TGR"]}
@@ -653,7 +653,7 @@ datasets:
       Serie de stock dcv por plazo (us$ mill.) para el seguimiento del segmento de CSV y seguros. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 1 y 2Y, Entre 2 y 5Y, Entre 5 y 10Y, Mayor a 10Y, Menor a 1Y). Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: csv_seguros
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["Entre 1 y 2Y", "Entre 2 y 5Y", "Entre 5 y 10Y", "Mayor a 10Y", "Menor a 1Y"]}
@@ -667,7 +667,7 @@ datasets:
       Serie de stock dcv por instrumento (us$ mill.) para el seguimiento del segmento de CSV y seguros. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo. Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: csv_seguros
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo", type: VARCHAR, values: ["BB", "BCCh", "BTP", "BTU", "DAP", "Letras MdH", "Otros", "PDBC"]}
@@ -681,7 +681,7 @@ datasets:
       Serie de variación stock dcv (us$ mill.) para el seguimiento del segmento de CSV y seguros. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 1 y 2Y, Entre 2 y 5Y, Entre 5 y 10Y, Mayor a 10Y, Menor a 1Y), Tipo, Moneda (CLP, UF). Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: csv_seguros
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["Entre 1 y 2Y", "Entre 2 y 5Y", "Entre 5 y 10Y", "Mayor a 10Y", "Menor a 1Y"]}
@@ -700,7 +700,7 @@ datasets:
       Serie de allocation rf por instrumento (mill us$.) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo_instrumento, Tipo_fondo (Tipo 2, Tipo 3, Tipo 6). Incluye las métricas Monto_USD. Cubre el período entre 2019-01-31 y 2026-04-30. La unidad principal de análisis es Mill US$.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: ffmm
     unit: "Mill US$."
-    date_range: ["2019-01-31", "2026-04-30"]
+    date_range: ["2019-01-31", "2026-05-31"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo_instrumento", type: VARCHAR, values: ["BB", "BCP", "BCU", "BE", "BTP", "BTU", "BU", "DPC", "DPL", "Otro_RF", "PDBC"]}
@@ -715,7 +715,7 @@ datasets:
       Serie de stock dap y pdbc (acum us$ mill.) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por instrumento_largo (DAP, PDBC). Incluye las métricas mmus. Cubre el período entre 2024-01-02 y 2026-05-29. La unidad principal de análisis es Acum US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: ffmm
     unit: "Acum US$ Mill."
-    date_range: ["2024-01-02", "2026-06-10"]
+    date_range: ["2024-01-02", "2026-07-14"]
     columns:
       - {name: "fecha", type: TIMESTAMP}
       - {name: "instrumento_largo", type: VARCHAR, values: ["DAP", "PDBC"]}
@@ -742,7 +742,7 @@ datasets:
       Serie de duración por tipo de fondo (años) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por tipo_fondo (Tipo 1, Tipo 2, Tipo 3, Tipo 6). Incluye las métricas Duracion. Cubre el período entre 2019-01-01 y 2026-04-01. La unidad principal de análisis es Años. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: ffmm
     unit: "Años"
-    date_range: ["2019-01-01", "2026-04-01"]
+    date_range: ["2019-01-01", "2026-05-01"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "tipo_fondo", type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6"]}
@@ -756,7 +756,7 @@ datasets:
       Serie de dv01 por fondo para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Fondo (Tipo 1, Tipo 2, Tipo 3, Tipo 6). Incluye las métricas Valor. Cubre el período entre 2019-01-31 y 2026-04-30. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: ffmm
     unit: "valor"
-    date_range: ["2019-01-31", "2026-04-30"]
+    date_range: ["2019-01-31", "2026-05-31"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Fondo", type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 6"]}
@@ -771,7 +771,7 @@ datasets:
       Serie de flujos acumulados por fondo (us$ mill.) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por tipo_fondo. Incluye las métricas Incremento_USD. Cubre el período entre 2019-01-01 y 2026-05-31. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: ffmm
     unit: "US$ Mill."
-    date_range: ["2019-01-01", "2026-06-10"]
+    date_range: ["2019-01-01", "2026-07-14"]
     columns:
       - {name: "fecha", type: TIMESTAMP}
       - {name: "tipo_fondo", type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 4", "Tipo 5", "Tipo 6", "Tipo 7", "Tipo 8"]}
@@ -786,7 +786,7 @@ datasets:
       Serie de flujos semanales por fondo (us$ mill.) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por tipo_fondo. Incluye las métricas flujos_usd. Cubre el período entre 2019-01-06 y 2026-05-31. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: ffmm
     unit: "US$ Mill."
-    date_range: ["2019-01-06", "2026-06-14"]
+    date_range: ["2019-01-06", "2026-07-19"]
     columns:
       - {name: "fecha", type: TIMESTAMP}
       - {name: "tipo_fondo", type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 4", "Tipo 5", "Tipo 6", "Tipo 7", "Tipo 8"]}
@@ -801,7 +801,7 @@ datasets:
       Serie de flujo spot acumulados (us$ mill.) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Spot. Cubre el período entre 2022-01-03 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: ffmm
     unit: "US$ Mill."
-    date_range: ["2022-01-03", "2026-06-10"]
+    date_range: ["2022-01-03", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Spot", type: DOUBLE}
@@ -814,7 +814,7 @@ datasets:
       Serie de posición spot y derivados (mm usd) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Agente (TGR), Mercado (Spot). Incluye las métricas Monto. Cubre el período entre 2014-10-01 y 2026-05-29. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: ffmm
     unit: "MM USD"
-    date_range: ["2014-10-01", "2026-06-10"]
+    date_range: ["2014-10-01", "2026-07-13"]
     # value_scale=-1: la serie es posición acumulada de USD VENDIDOS por TGR (signo
     # negativo en el dato origen). El informe de Mercado Cambiario de la gerencia la
     # muestra como positivo (USD vendidos → posición larga del mercado frente a TGR).
@@ -835,7 +835,7 @@ datasets:
       Serie de stock dcv por plazo (us$ mill.) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 1 y 2Y, Entre 2 y 5Y, Entre 5 y 10Y, Mayor a 10Y, Menor a 1Y). Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: ffmm
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["Entre 1 y 2Y", "Entre 2 y 5Y", "Entre 5 y 10Y", "Mayor a 10Y", "Menor a 1Y"]}
@@ -849,7 +849,7 @@ datasets:
       Serie de stock dcv por instrumento (us$ mill.) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo. Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: ffmm
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo", type: VARCHAR, values: ["BB", "BCCh", "BTP", "BTU", "DAP", "Letras MdH", "Otros", "PDBC"]}
@@ -863,7 +863,7 @@ datasets:
       Serie de variación stock dcv (us$ mill.) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 1 y 2Y, Entre 2 y 5Y, Entre 5 y 10Y, Mayor a 10Y, Menor a 1Y), Tipo, Moneda (CLP, UF). Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: ffmm
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["Entre 1 y 2Y", "Entre 2 y 5Y", "Entre 5 y 10Y", "Mayor a 10Y", "Menor a 1Y"]}
@@ -880,7 +880,7 @@ datasets:
       Serie de retornos diarios por tipo de fondo para el seguimiento del segmento de fondos mutuos. Se desagrega por Tipo (Tipo 1..Tipo 8) e incluye la métrica Retorno. Útil para la rentabilidad por ventana (7d, 30d, YtD) y la rentabilidad mensual por tipo de fondo.
     segment: ffmm
     unit: "%"
-    date_range: ["2019-01-01", "2026-06-10"]
+    date_range: ["2019-01-01", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo", type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 4", "Tipo 5", "Tipo 6", "Tipo 7", "Tipo 8"]}
@@ -899,7 +899,7 @@ datasets:
     segment: ffmm
     unit: "%"
     value_scale: 100.0
-    date_range: ["2019-01-01", "2026-06-10"]
+    date_range: ["2019-01-01", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo 1", type: DOUBLE}
@@ -925,7 +925,7 @@ datasets:
       Serie de flujos diarios por tipo de fondo para el seguimiento del segmento de fondos mutuos. Se desagrega por Tipo (Tipo 1..Tipo 8) e incluye la métrica Flujo. La unidad principal es US$ Mill.
     segment: ffmm
     unit: "US$ Mill."
-    date_range: ["2019-01-01", "2026-06-10"]
+    date_range: ["2019-01-01", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo", type: VARCHAR, values: ["Tipo 1", "Tipo 2", "Tipo 3", "Tipo 4", "Tipo 5", "Tipo 6", "Tipo 7", "Tipo 8"]}
@@ -940,7 +940,7 @@ datasets:
     segment: ffmm
     unit: "Mill US$."
     value_scale: 0.001
-    date_range: ["2019-01-31", "2026-04-30"]
+    date_range: ["2019-01-31", "2026-05-31"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo_instrumento", type: VARCHAR, values: ["BB", "BCP", "BCU", "BE", "BTP", "BTU", "BU", "CFM", "DPC", "DPL", "Otro_RF", "Otro_RV", "PDBC"]}
@@ -956,7 +956,7 @@ datasets:
     segment: ffmm
     unit: "Mill US$."
     value_scale: 0.001
-    date_range: ["2019-01-31", "2026-04-30"]
+    date_range: ["2019-01-31", "2026-05-31"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo_instrumento", type: VARCHAR, values: ["BB", "BCP", "BCU", "BE", "BTP", "BTU", "BU", "CFM", "DPC", "DPL", "Otro_RF", "Otro_RV", "PDBC"]}
@@ -974,7 +974,7 @@ datasets:
       Serie de inversiones tgr (mm usd) para el seguimiento del segmento de fisco. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Instrumento, Moneda (CLP, UF, USD). Incluye las métricas Monto. Cubre el período entre 2019-01-04 y 2026-05-29. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fisco
     unit: "MM USD"
-    date_range: ["2019-01-04", "2026-06-05"]
+    date_range: ["2019-01-04", "2026-07-10"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Instrumento", type: VARCHAR, values: ["Bono BCCh", "Certificado Deposito", "DAP", "FFMM", "PDBC", "Pacto", "Time Deposit", "Treasury Bill", "Treasury Note"]}
@@ -989,7 +989,7 @@ datasets:
       Serie de posición spot y derivados (mm usd) para el seguimiento del segmento de fisco. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Agente (TGR), Mercado (Spot). Incluye las métricas Monto. Cubre el período entre 2014-10-01 y 2026-05-29. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fisco
     unit: "MM USD"
-    date_range: ["2014-10-01", "2026-06-10"]
+    date_range: ["2014-10-01", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Agente", type: VARCHAR, values: ["TGR"]}
@@ -1007,7 +1007,7 @@ datasets:
       Serie de promedio de amplitud de puntas (%) para el seguimiento del segmento de mercado cambiario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Promedio_puntas. Cubre el período entre 2013-01-11 y 2026-06-01. La unidad principal de análisis es %. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fx
     unit: "%"
-    date_range: ["2013-01-11", "2026-06-11"]
+    date_range: ["2013-01-11", "2026-07-15"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Promedio_puntas", type: DOUBLE}
@@ -1020,7 +1020,7 @@ datasets:
       Serie de clp vs monto transado para el seguimiento del segmento de mercado cambiario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas CLP, Monto transado. Cubre el período entre 2022-01-05 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fx
     unit: "N/A"
-    date_range: ["2022-01-05", "2026-06-11"]
+    date_range: ["2022-01-05", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "CLP", type: DOUBLE}
@@ -1034,7 +1034,7 @@ datasets:
       Serie de cobre vs dxy para el seguimiento del segmento de mercado cambiario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Cobre, DXY. Cubre el período entre 2019-01-02 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fx
     unit: "N/A"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Cobre", type: DOUBLE}
@@ -1048,7 +1048,7 @@ datasets:
       Serie de puntos forward (pesos) para el seguimiento del segmento de mercado cambiario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (12M, 1M, 3M, 6M). Incluye las métricas Valor. Cubre el período entre 2025-01-02 y 2026-06-01. La unidad principal de análisis es pesos. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fx
     unit: "pesos"
-    date_range: ["2025-01-02", "2026-06-11"]
+    date_range: ["2025-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["12M", "1M", "3M", "6M"]}
@@ -1062,7 +1062,7 @@ datasets:
       Serie de posición spot y derivados por agente (mm usd) para el seguimiento del segmento de mercado cambiario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Agente, Mercado (Derivados, Spot). Incluye las métricas Monto. Cubre el período entre 2014-10-01 y 2026-05-29. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fx
     unit: "MM USD"
-    date_range: ["2014-10-01", "2026-06-10"]
+    date_range: ["2014-10-01", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Agente", type: VARCHAR, values: ["AFP", "BCCh", "CB", "CS", "Empresas", "FFMM", "NR", "Otros", "TGR"]}
@@ -1077,7 +1077,7 @@ datasets:
       Serie de variacion moneda (%) para el seguimiento del segmento de mercado cambiario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas CLP, DXY, MXN. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es %. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fx
     unit: "%"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "CLP", type: DOUBLE}
@@ -1100,7 +1100,7 @@ datasets:
       Serie de variacion desde fecha base (%) para el seguimiento del segmento de mercado cambiario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas CLP, DXY, MXN. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es %. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fx
     unit: "%"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "CLP", type: DOUBLE}
@@ -1123,7 +1123,7 @@ datasets:
       Serie de volatilidad del precio de transacciones (%) x 1000 para el seguimiento del segmento de mercado cambiario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Volatilidad_diaria. Cubre el período entre 2021-01-04 y 2026-06-01. La unidad principal de análisis es %. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fx
     unit: "%"
-    date_range: ["2021-01-04", "2026-06-11"]
+    date_range: ["2021-01-04", "2026-07-15"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Volatilidad_diaria", type: DOUBLE}
@@ -1138,22 +1138,21 @@ datasets:
     description: >
       Serie de fixing de la banca para el seguimiento del segmento de diferencial cambiario y spreads. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por NombreInformanteNorm, _title_override (Fixing de la banca · 02-06-2026). Incluye las métricas AFP, BCCh, Bancos. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fx_diferencial
-    unit: "N/A"
+    unit: "US$ Mill."
     date_range: []
     columns:
-      - {name: "NombreInformanteNorm", type: VARCHAR, values: ["BCI", "BICE", "BTG", "Chile", "Consorcio", "Estado", "Falabella", "HSBC", "Internacional", "Itaú-Corpbanca", "JP Morgan", "Santander", "Scotiabank", "Total"]}
+      - {name: "Institucion", type: VARCHAR, values: ["BCI", "BICE", "BTG", "Chile", "Consorcio", "Estado", "Falabella", "HSBC", "Internacional", "Itaú-Corpbanca", "Santander", "Scotiabank", "Total"]}
       - {name: "AFP", type: DOUBLE}
       - {name: "BCCh", type: DOUBLE}
       - {name: "Bancos", type: DOUBLE}
       - {name: "CB", type: DOUBLE}
       - {name: "CS", type: DOUBLE}
-      - {name: "FFMM", type: DOUBLE}
       - {name: "NR", type: DOUBLE}
       - {name: "Emp_real", type: DOUBLE}
       - {name: "Emp_financiera", type: DOUBLE}
       - {name: "Otros", type: DOUBLE}
       - {name: "Neto", type: DOUBLE}
-      - {name: "_title_override", type: VARCHAR, values: ["Fixing de la banca  ·  02-06-2026"]}
+      - {name: "_title_override", type: VARCHAR}
 
   - id: fixing_por_fecha
     file: fixing_por_fecha.parquet
@@ -1162,7 +1161,7 @@ datasets:
     description: >
       Serie de fixing por temporalidad para el seguimiento del segmento de diferencial cambiario y spreads. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Temporalidad (1 mes, 1 semana, 2 semanas, Ayer, Hoy). Incluye las métricas AFP, BCCh, Bancos. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fx_diferencial
-    unit: "N/A"
+    unit: "US$ Mill."
     date_range: []
     columns:
       - {name: "Temporalidad", type: VARCHAR, values: ["1 mes", "1 semana", "2 semanas", "Ayer", "Hoy"]}
@@ -1186,10 +1185,10 @@ datasets:
       Serie de flujo cambiario por sector (us$ mill.) para el seguimiento del segmento de diferencial cambiario y spreads. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Grupo_Sector. Incluye las métricas Spot, Forward. Cubre el período entre 2024-01-02 y 2026-05-30. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: fx_diferencial
     unit: "US$ Mill."
-    date_range: ["2024-01-02", "2026-06-10"]
+    date_range: ["2024-01-01", "2026-07-14"]
     columns:
-      - {name: "Fecha", type: VARCHAR}
-      - {name: "Grupo_Sector", type: VARCHAR, values: ["AFP", "BCCh", "Bancos", "CB", "CS", "Emp_financiera", "Emp_real", "FFMM", "Mineras", "NR", "Otros", "TGR"]}
+      - {name: "Fecha", type: DATE}
+      - {name: "Sector", type: VARCHAR, values: ["AFP", "BCCh", "Bancos", "CB", "CS", "Emp_financiera", "Emp_real", "FFMM", "Mineras", "NR", "Otros", "Persona_natural", "TGR"]}
       - {name: "Spot", type: DOUBLE}
       - {name: "Forward", type: DOUBLE}
 
@@ -1204,7 +1203,7 @@ datasets:
       Serie de compensación inflacionaria en spc para el seguimiento del segmento de inflación y expectativas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (10Y, 2Y, 5Y). Incluye las métricas Valor. Cubre el período entre 2022-01-03 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: inflacion
     unit: "valor"
-    date_range: ["2022-01-03", "2026-06-11"]
+    date_range: ["2022-01-03", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["10Y", "2Y", "5Y"]}
@@ -1218,7 +1217,7 @@ datasets:
       Serie de expectativas inflacionarias en seguros de inflación para el seguimiento del segmento de inflación y expectativas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (12M, 1en1, dic26). Incluye las métricas Valor. Cubre el período entre 2022-01-03 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: inflacion
     unit: "valor"
-    date_range: ["2022-01-03", "2026-06-11"]
+    date_range: ["2022-01-03", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["12M", "1en1", "dic26"]}
@@ -1232,7 +1231,7 @@ datasets:
       Serie de inflación y wti para el seguimiento del segmento de inflación y expectativas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas 12M, dic26, 1en1. Cubre el período entre 2022-01-03 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: inflacion
     unit: "N/A"
-    date_range: ["2022-01-03", "2026-06-11"]
+    date_range: ["2022-01-03", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "12M", type: DOUBLE}
@@ -1248,7 +1247,7 @@ datasets:
       Serie de petróleo y tcn para el seguimiento del segmento de inflación y expectativas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas TCN, Petroleo. Cubre el período entre 2022-01-03 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: inflacion
     unit: "N/A"
-    date_range: ["2022-01-03", "2026-06-11"]
+    date_range: ["2022-01-03", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "TCN", type: DOUBLE}
@@ -1262,7 +1261,7 @@ datasets:
       Serie de posiciones netas por afp (us$ mm) para el seguimiento del segmento de inflación y expectativas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por AFP. Incluye las métricas Monto. Cubre el período entre 2023-01-03 y 2026-05-04. La unidad principal de análisis es US$ MM. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: inflacion
     unit: "US$ MM"
-    date_range: ["2023-01-03", "2026-06-01"]
+    date_range: ["2023-01-03", "2026-07-06"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "AFP", type: VARCHAR, values: ["Capital", "Cuprum", "Habitat", "Modelo", "Planvital", "Provida", "Uno"]}
@@ -1276,7 +1275,7 @@ datasets:
       Serie de posiciones netas por agente (us$ mm) para el seguimiento del segmento de inflación y expectativas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Sector (AFP, CB, CS, Emp_real, FFMM). Incluye las métricas Monto. Cubre el período entre 2023-01-03 y 2026-05-04. La unidad principal de análisis es US$ MM. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: inflacion
     unit: "US$ MM"
-    date_range: ["2023-01-03", "2026-06-01"]
+    date_range: ["2023-01-03", "2026-07-06"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Sector", type: VARCHAR, values: ["AFP", "CB", "CS", "Emp_real", "FFMM"]}
@@ -1290,7 +1289,7 @@ datasets:
       Serie de variación expectativas inflación (pb) para el seguimiento del segmento de inflación y expectativas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Indicador. Incluye las métricas Valor. Cubre el período entre 2025-01-01 y 2026-06-01. La unidad principal de análisis es pb. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: inflacion
     unit: "pb"
-    date_range: ["2025-01-01", "2026-06-11"]
+    date_range: ["2025-01-01", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Indicador", type: VARCHAR, values: ["CI SPC 1Y", "CI SPC 1en1", "CI SPC 2Y", "CI SPC 5Y", "SI 12M", "SI 1Y1Y", "SI dic 2026"]}
@@ -1304,7 +1303,7 @@ datasets:
       Serie de variación en seguros de inflación (pb) para el seguimiento del segmento de inflación y expectativas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Variable. Incluye las métricas Valor. Cubre el período entre 2024-07-08 y 2026-06-01. La unidad principal de análisis es pb. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: inflacion
     unit: "pb"
-    date_range: ["2024-07-08", "2026-06-11"]
+    date_range: ["2024-08-08", "2026-07-15"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Variable", type: VARCHAR, values: ["abr-27", "ago-26", "ago-27", "dic-26", "ene-27", "feb-27", "jul-26", "jul-27", "jun-26", "jun-27", "mar-27", "may-27", "nov-26", "oct-26", "sep-26"]}
@@ -1321,7 +1320,7 @@ datasets:
       Serie de caja y circulante (mm$) para el seguimiento del segmento de liquidez en moneda nacional. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Circulante, Caja. Cubre el período entre 2026-05-28 y 2026-05-28. La unidad principal de análisis es MM$. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mn
     unit: "MM$"
-    date_range: ["2019-01-02", "2026-06-09"]
+    date_range: ["2019-01-02", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Circulante", type: DOUBLE}
@@ -1335,7 +1334,7 @@ datasets:
       Serie de duracion pdbc por agente (días) para el seguimiento del segmento de liquidez en moneda nacional. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Sector (AFP, Bancos, FFMM, Otros, Total). Incluye las métricas Duracion. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es días. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mn
     unit: "días"
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Sector", type: VARCHAR, values: ["AFP", "Bancos", "FFMM", "Otros", "Total"]}
@@ -1349,7 +1348,7 @@ datasets:
       Serie de facilidades de depósitos (mm usd) para el seguimiento del segmento de liquidez en moneda nacional. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas BCI, Chile, Estado. Cubre el período entre 2016-01-04 y 2026-05-29. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mn
     unit: "MM USD"
-    date_range: ["2016-01-04", "2026-06-10"]
+    date_range: ["2016-01-04", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "BCI", type: DOUBLE}
@@ -1369,7 +1368,7 @@ datasets:
       Serie de facilidades de liquidez (mm usd) para el seguimiento del segmento de liquidez en moneda nacional. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas BCI, Chile, Estado. Cubre el período entre 2016-01-04 y 2026-05-29. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mn
     unit: "MM USD"
-    date_range: ["2016-01-04", "2026-06-10"]
+    date_range: ["2016-01-04", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "BCI", type: DOUBLE}
@@ -1389,7 +1388,7 @@ datasets:
       Serie de mercado interbancario (mm usd) para el seguimiento del segmento de liquidez en moneda nacional. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas BCI, Chile, Estado. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mn
     unit: "MM USD"
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "BCI", type: DOUBLE}
@@ -1408,7 +1407,7 @@ datasets:
       Serie de lcr para el seguimiento del segmento de liquidez en moneda nacional. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Categoria (No Sistémico, Sistémico). Incluye las métricas LCR. Cubre el período entre 2019-04-04 y 2026-05-24. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mn
     unit: "N/A"
-    date_range: ["2019-04-04", "2026-06-04"]
+    date_range: ["2019-04-04", "2026-07-08"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Categoria", type: VARCHAR, values: ["No Sistémico", "Sistémico"]}
@@ -1422,7 +1421,7 @@ datasets:
       Serie de nsfr para el seguimiento del segmento de liquidez en moneda nacional. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Categoria (No Sistémico, Sistémico). Incluye las métricas NSFR. Cubre el período entre 2019-04-04 y 2026-05-24. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mn
     unit: "N/A"
-    date_range: ["2019-04-04", "2026-06-04"]
+    date_range: ["2019-04-04", "2026-07-08"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Categoria", type: VARCHAR, values: ["No Sistémico", "Sistémico"]}
@@ -1436,7 +1435,7 @@ datasets:
       Serie de liquidez en pesos para el seguimiento del segmento de liquidez en moneda nacional. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion, Serie (CC, FPD, FPL, Int_cap, Int_col, RT$). Incluye las métricas Valor. Cubre el período entre 2010-09-01 y 2026-05-29. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mn
     unit: "valor"
-    date_range: ["2010-09-01", "2026-06-10"]
+    date_range: ["2010-09-01", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Institucion", type: VARCHAR}
@@ -1451,7 +1450,7 @@ datasets:
       Serie de stock pdbc por agente (mm$) para el seguimiento del segmento de liquidez en moneda nacional. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (14, 180, 30, 360, 60, 90), Serie (AFP, Bancos, FFMM, Otros). Incluye las métricas Stock. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es MM$. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mn
     unit: "MM$"
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["14", "180", "30", "360", "60", "90"]}
@@ -1466,7 +1465,7 @@ datasets:
       Serie de stock pdbc por plazo (mm$) para el seguimiento del segmento de liquidez en moneda nacional. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (AFP, Bancos, FFMM, Otros), Bucket (14, 180, 30, 360, 60, 90). Incluye las métricas Stock. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es MM$. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mn
     unit: "MM$"
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["AFP", "Bancos", "FFMM", "Otros"]}
@@ -1481,7 +1480,7 @@ datasets:
       Serie de variación stock de pdbc por sector (millones clp) para el seguimiento del segmento de liquidez en moneda nacional. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Bancos, FFMM, AFP. Cubre el período entre 2026-01-21 y 2026-05-29. La unidad principal de análisis es Millones CLP. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mn
     unit: "Millones CLP"
-    date_range: ["2026-02-02", "2026-06-10"]
+    date_range: ["2026-03-04", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bancos", type: DOUBLE}
@@ -1501,7 +1500,7 @@ datasets:
       Serie de liquidez mx e ihh para el seguimiento del segmento de liquidez en moneda extranjera. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Categoria (No Sistémico, Sistémico). Incluye las métricas Total, IHH. Cubre el período entre 2022-05-09 y 2026-06-01. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mx
     unit: "US$ Mill."
-    date_range: ["2022-05-19", "2026-06-11"]
+    date_range: ["2022-06-22", "2026-07-15"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Categoria", type: VARCHAR, values: ["No Sistémico", "Sistémico"]}
@@ -1516,7 +1515,7 @@ datasets:
       Serie de ratio liquidez/obligaciones a 30d para el seguimiento del segmento de liquidez en moneda extranjera. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Categoria (No Sistémico, Sistémico). Incluye las métricas LCR_MX. Cubre el período entre 2025-04-09 y 2026-06-01. La unidad principal de análisis es ratio. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mx
     unit: "ratio"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-15"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Categoria", type: VARCHAR, values: ["No Sistémico", "Sistémico"]}
@@ -1530,7 +1529,7 @@ datasets:
       Serie de spreads a 12m (bps) para el seguimiento del segmento de liquidez en moneda extranjera. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (DAP-SOFR, Prime-SOFR, SoS, TADO-SOFR). Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es bps. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mx
     unit: "bps"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["DAP-SOFR", "Prime-SOFR", "SoS", "TADO-SOFR"]}
@@ -1544,7 +1543,7 @@ datasets:
       Serie de spreads a 1m (bps) para el seguimiento del segmento de liquidez en moneda extranjera. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (DAP-SOFR, Prime-SOFR, SoS, TADO-SOFR). Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es bps. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mx
     unit: "bps"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["DAP-SOFR", "Prime-SOFR", "SoS", "TADO-SOFR"]}
@@ -1558,7 +1557,7 @@ datasets:
       Serie de spreads a 3m (bps) para el seguimiento del segmento de liquidez en moneda extranjera. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (DAP-SOFR, Prime-SOFR, SoS, TADO-SOFR). Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es bps. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mx
     unit: "bps"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["DAP-SOFR", "Prime-SOFR", "SoS", "TADO-SOFR"]}
@@ -1572,7 +1571,7 @@ datasets:
       Serie de spreads a 6m (bps) para el seguimiento del segmento de liquidez en moneda extranjera. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (DAP-SOFR, Prime-SOFR, SoS, TADO-SOFR). Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es bps. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mx
     unit: "bps"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["DAP-SOFR", "Prime-SOFR", "SoS", "TADO-SOFR"]}
@@ -1586,7 +1585,7 @@ datasets:
       Serie de spread dap-sofr por plazo (bps) para el seguimiento del segmento de liquidez en moneda extranjera. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tenor (12M, 1M, 3M, 6M). Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es bps. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mx
     unit: "bps"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tenor", type: VARCHAR, values: ["12M", "1M", "3M", "6M"]}
@@ -1600,7 +1599,7 @@ datasets:
       Serie de spread prime-sofr por plazo (bps) para el seguimiento del segmento de liquidez en moneda extranjera. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tenor (12M, 1M, 3M, 6M). Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es bps. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mx
     unit: "bps"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tenor", type: VARCHAR, values: ["12M", "1M", "3M", "6M"]}
@@ -1614,7 +1613,7 @@ datasets:
       Serie de spread on shore por plazo (bps) para el seguimiento del segmento de liquidez en moneda extranjera. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tenor (12M, 1M, 3M, 6M). Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es bps. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mx
     unit: "bps"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tenor", type: VARCHAR, values: ["12M", "1M", "3M", "6M"]}
@@ -1628,7 +1627,7 @@ datasets:
       Serie de spread tado-sofr por plazo (bps) para el seguimiento del segmento de liquidez en moneda extranjera. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tenor (12M, 1M, 3M, 6M). Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es bps. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: liquidez_mx
     unit: "bps"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tenor", type: VARCHAR, values: ["12M", "1M", "3M", "6M"]}
@@ -1645,7 +1644,7 @@ datasets:
       Serie de dap: flujos por plazo (mm usd) para el seguimiento del segmento de mercado monetario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket, Sector, Moneda (Pesos, UF, USD). Incluye las métricas Monto. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: mercado_monetario
     unit: "MM USD"
-    date_range: ["2017-11-01", "2026-06-01"]
+    date_range: ["2017-11-01", "2026-07-01"]
     columns:
       - {name: "Mes", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["14", "180", "30", "360", "540", "60", "720", "90", ">720", "Vencimiento"]}
@@ -1661,7 +1660,7 @@ datasets:
       Serie de spread dap-swap y prime-swap uf 12m (bps) para el seguimiento del segmento de mercado monetario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (DAP-SPC, Prime-SPC). Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es bps. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: mercado_monetario
     unit: "bps"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["DAP-SPC", "Prime-SPC"]}
@@ -1675,7 +1674,7 @@ datasets:
       Serie de spread dap-swap (bps) para el seguimiento del segmento de mercado monetario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (12M, 3M, 6M). Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es bps. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: mercado_monetario
     unit: "bps"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["12M", "3M", "6M"]}
@@ -1689,7 +1688,7 @@ datasets:
       Serie de stock por instrumento (mm$) para el seguimiento del segmento de mercado monetario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo (DAP, Letras MdH, PDBC), Sector (AFP, Bancos, FFMM, Otros). Incluye las métricas Stock. Cubre el período entre 2009-07-10 y 2026-05-29. La unidad principal de análisis es MM$. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: mercado_monetario
     unit: "MM$"
-    date_range: ["2009-07-10", "2026-06-10"]
+    date_range: ["2009-07-10", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo", type: VARCHAR, values: ["DAP", "Letras MdH", "PDBC"]}
@@ -1704,7 +1703,7 @@ datasets:
       Serie de stock por sector (mm$) para el seguimiento del segmento de mercado monetario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo (DAP, Letras MdH, PDBC), Sector (AFP, Bancos, FFMM, Otros). Incluye las métricas Stock. Cubre el período entre 2009-07-10 y 2026-05-29. La unidad principal de análisis es MM$. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: mercado_monetario
     unit: "MM$"
-    date_range: ["2009-07-10", "2026-06-10"]
+    date_range: ["2009-07-10", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo", type: VARCHAR, values: ["DAP", "Letras MdH", "PDBC"]}
@@ -1719,7 +1718,7 @@ datasets:
       Serie de mercado interbancario: monto y spread tib-tpm para el seguimiento del segmento de mercado monetario. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Monto, Spread TIB-TPM. Cubre el período entre 2015-01-02 y 2026-06-01. La unidad principal de análisis es MM$. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: mercado_monetario
     unit: "MM$"
-    date_range: ["2015-01-02", "2026-06-10"]
+    date_range: ["2015-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Monto", type: DOUBLE}
@@ -1737,7 +1736,7 @@ datasets:
       Serie de flujos spot acumulados (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas No Afecto, Afecto. Cubre el período entre 2022-01-03 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: no_residentes
     unit: "US$ Mill."
-    date_range: ["2022-01-03", "2026-06-10"]
+    date_range: ["2022-01-03", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "No Afecto", type: DOUBLE}
@@ -1753,7 +1752,7 @@ datasets:
       Serie de flujos acumulados en derivados (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion, Instrumento (CALL, CSS, FWD, FWD_obs, FXS, PUT), Modalidad_pago (Compensación, Entrega física). Incluye las métricas Net. Cubre el período entre 2025-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: no_residentes
     unit: "US$ Mill."
-    date_range: ["2025-01-02", "2026-06-10"]
+    date_range: ["2025-01-02", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Institucion", type: VARCHAR, values: ["BBVA", "Citibank", "Goldman Sachs", "HSBC", "JP Morgan", "Merrill Lynch", "Morgan Stanley", "Santander", "Scotiabank", "Standard Chartered", "Total"]}
@@ -1770,29 +1769,13 @@ datasets:
       Serie de posición cambiaria histórica (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Plazo (1 a 90 dias, 91 a 360 dias, Mayor a 360 dias). Incluye las métricas Valor, Neto. Cubre el período entre 2014-01-02 y 2026-05-28. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: no_residentes
     unit: "US$ Mill."
-    date_range: ["2014-01-02", "2026-06-09"]
+    date_range: ["2014-01-02", "2026-07-10"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
-      - {name: "Plazo", type: VARCHAR, values: ["1 a 90 dias", "91 a 360 dias", "Mayor a 360 dias"]}
-      - {name: "Valor", type: DOUBLE}
+      - {name: "1 a 90 dias", type: DOUBLE}
+      - {name: "91 a 360 dias", type: DOUBLE}
+      - {name: "Mayor a 360 dias", type: DOUBLE}
       - {name: "Neto", type: DOUBLE}
-
-  - id: posicion_nr_spc
-    file: posicion_nr_spc.parquet
-    chart_type: "stacked_bar"
-    value_kind: "stock"   # posicion (nivel) por tramo; puede ser negativa (pagan/reciben fija)
-    value_scale: 1000.0   # parquet en US$ mil millones -> x1000 = US$ Mill. (chart Y texto)
-    facts: {exclude: {Plazos_D: ["1 a 90 dias"]}}   # el chart omite el tramo corto (~-34.000); el texto tambien
-    name: "Posición en SPC nominal (US$ Mill.)"
-    description: >
-      Serie de posición en spc nominal (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Plazos_D (1 a 90 dias, 91 a 360 dias, Entre 1 y 2Y, Mayor a 2Y). Incluye las métricas Monto_USD. Cubre el período entre 2022-01-03 y 2026-05-27. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
-    segment: no_residentes
-    unit: "US$ Mill."
-    date_range: ["2022-01-03", "2026-06-08"]
-    columns:
-      - {name: "Fecha", type: TIMESTAMP}
-      - {name: "Plazos_D", type: VARCHAR, values: ["1 a 90 dias", "91 a 360 dias", "Entre 1 y 2Y", "Mayor a 2Y"]}
-      - {name: "Monto_USD", type: DOUBLE}
 
   - id: posicion_rfl_nr
     file: posicion_rfl_nr.parquet
@@ -1803,7 +1786,7 @@ datasets:
       Serie de posición en btp (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 3 y 5Y, Entre 6 y 9Y, Mayor a 10Y, Menor a 2Y). Incluye las métricas mmusd. Cubre el período entre 2024-12-30 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: no_residentes
     unit: "US$ Mill."
-    date_range: ["2024-12-30", "2026-06-10"]
+    date_range: ["2024-12-30", "2026-07-14"]
     columns:
       - {name: "fecha", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["Entre 3 y 5Y", "Entre 6 y 9Y", "Mayor a 10Y", "Menor a 2Y"]}
@@ -1817,7 +1800,7 @@ datasets:
       Serie de posición spot y derivados (mm usd) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Agente (TGR), Mercado (Spot). Incluye las métricas Monto. Cubre el período entre 2014-10-01 y 2026-05-29. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: no_residentes
     unit: "MM USD"
-    date_range: ["2014-10-01", "2026-06-10"]
+    date_range: ["2014-10-01", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Agente", type: VARCHAR, values: ["TGR"]}
@@ -1834,7 +1817,7 @@ datasets:
       Serie de flujos spot acumulados por agente (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion, Afecto_derivado (No, Sí). Incluye las métricas Net. Cubre el período entre 2026-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: no_residentes
     unit: "US$ Mill."
-    date_range: ["2026-01-02", "2026-06-10"]
+    date_range: ["2026-01-02", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Institucion", type: VARCHAR, values: ["BBVA", "Citibank", "Euroclear", "Goldman Sachs", "HSBC", "Itau", "JP Morgan", "Santander", "Scotiabank", "Standard Chartered", "Total"]}
@@ -1850,7 +1833,7 @@ datasets:
       Serie de spot por agente (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion, Afecto_derivado (No, Sí), Tipo (Spot). Incluye las métricas Monto_neto. Cubre el período entre 2026-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: no_residentes
     unit: "US$ Mill."
-    date_range: ["2026-01-02", "2026-06-10"]
+    date_range: ["2026-01-02", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Institucion", type: VARCHAR, values: ["BBVA", "Citibank", "Euroclear", "Goldman Sachs", "HSBC", "Itau", "JP Morgan", "Otros", "Santander", "Scotiabank", "Standard Chartered"]}
@@ -1868,7 +1851,7 @@ datasets:
       Serie de spot y derivados por agente (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion, Tipo (Spot, Suscripción, Vencimiento). Incluye las métricas Monto. Cubre el período entre 2025-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: no_residentes
     unit: "US$ Mill."
-    date_range: ["2025-01-02", "2026-06-10"]
+    date_range: ["2025-01-02", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Institucion", type: VARCHAR, values: ["BBVA", "Citibank", "Goldman Sachs", "HSBC", "JP Morgan", "Merrill Lynch", "Morgan Stanley", "Otros", "Santander", "Scotiabank", "Standard Chartered"]}
@@ -1885,7 +1868,7 @@ datasets:
       Serie de suscripciones y vencimientos por agente (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion, Instrumento (CALL, CSS, FWD, FWD_obs, FXS, PUT), Modalidad_pago (Compensación, Entrega física). Incluye las métricas Monto. Cubre el período entre 2025-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: no_residentes
     unit: "US$ Mill."
-    date_range: ["2025-01-02", "2026-06-10"]
+    date_range: ["2025-01-02", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Institucion", type: VARCHAR, values: ["BBVA", "Citibank", "Goldman Sachs", "HSBC", "JP Morgan", "Merrill Lynch", "Morgan Stanley", "Otros", "Santander", "Scotiabank", "Standard Chartered"]}
@@ -1903,7 +1886,7 @@ datasets:
       Serie de variación stock btp en dcv (us$ mill.) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas mmusd. Cubre el período entre 2026-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: no_residentes
     unit: "US$ Mill."
-    date_range: ["2026-01-02", "2026-06-10"]
+    date_range: ["2026-01-02", "2026-07-14"]
     columns:
       - {name: "fecha", type: TIMESTAMP}
       - {name: "mmusd", type: DOUBLE}
@@ -1918,7 +1901,7 @@ datasets:
       Suscripciones y vencimientos de derivados cambiarios de no residentes desagregados por tramo de plazo (1 a 90 días, 91 a 360 días, Mayor a 360 días). Permite leer el cambio de la posición compradora/vendedora de la última semana por tramo y su neto. La unidad principal de análisis es US$ Mill..
     segment: no_residentes
     unit: "US$ Mill."
-    date_range: ["2023-01-24", "2026-06-10"]
+    date_range: ["2023-01-03", "2026-07-13"]
     columns:
       - {name: "Fecha", type: VARCHAR}
       - {name: "Plazo", type: VARCHAR, values: ["1 a 90 días", "91 a 360 días", "Mayor a 360 días"]}
@@ -1935,7 +1918,7 @@ datasets:
       Variación de la posición de no residentes en SPC nominal desagregada por tramo de plazo (91 a 360 días, Entre 1 y 2Y, Mayor a 2Y) con su neto. Permite seguir el sesgo direccional (pagan/reciben fija) por plazo en el tiempo. La unidad principal de análisis es US$ Mill..
     segment: no_residentes
     unit: "US$ Mill."
-    date_range: ["2022-01-03", "2026-06-08"]
+    date_range: ["2022-01-04", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "91 a 360 dias", type: DOUBLE}
@@ -1952,7 +1935,7 @@ datasets:
       Variación (flujo neto suscripción − vencimiento) de la posición de no residentes en derivados cambiarios, desagregada por tramo de plazo (1 a 90 días, 91 a 360 días, Mayor a 360 días) con su neto. Flujos diarios que se agregan por mes para leer la variación mensual de la posición. La unidad principal de análisis es US$ Mill..
     segment: no_residentes
     unit: "US$ Mill."
-    date_range: ["2023-01-03", "2026-06-10"]
+    date_range: ["2023-01-03", "2026-07-13"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "1 a 90 días", type: DOUBLE}
@@ -1971,7 +1954,7 @@ datasets:
       Serie de bei por plazo para el seguimiento del segmento de tasas de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (10Y, 20Y, 2Y, 5Y). Incluye las métricas Valor. Cubre el período entre 2020-01-29 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_tasas
     unit: "valor"
-    date_range: ["2020-01-29", "2026-06-11"]
+    date_range: ["2020-01-29", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["10Y", "20Y", "2Y", "5Y"]}
@@ -1985,7 +1968,7 @@ datasets:
       Serie de curva btp (%) para el seguimiento del segmento de tasas de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Variable, Tenor. Incluye las métricas Valor. Cubre el período entre 2020-01-29 y 2026-06-01. La unidad principal de análisis es %. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_tasas
     unit: "%"
-    date_range: ["2020-01-29", "2026-06-11"]
+    date_range: ["2020-01-29", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Variable", type: VARCHAR, values: ["10Y", "15Y", "1Y", "20Y", "25Y", "2Y", "30Y", "5Y", "7Y"]}
@@ -2000,7 +1983,7 @@ datasets:
       Serie de btp por plazo para el seguimiento del segmento de tasas de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (10Y, 20Y, 2Y, 5Y). Incluye las métricas Valor. Cubre el período entre 2020-01-29 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_tasas
     unit: "valor"
-    date_range: ["2020-01-29", "2026-06-11"]
+    date_range: ["2020-01-29", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["10Y", "20Y", "2Y", "5Y"]}
@@ -2014,7 +1997,7 @@ datasets:
       Serie de curva btu (%) para el seguimiento del segmento de tasas de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Variable, Tenor. Incluye las métricas Valor. Cubre el período entre 2020-01-29 y 2026-06-01. La unidad principal de análisis es %. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_tasas
     unit: "%"
-    date_range: ["2020-01-29", "2026-06-11"]
+    date_range: ["2020-01-29", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Variable", type: VARCHAR, values: ["10Y", "15Y", "20Y", "25Y", "2Y", "30Y", "5Y", "7Y"]}
@@ -2029,7 +2012,7 @@ datasets:
       Serie de btu por plazo para el seguimiento del segmento de tasas de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (10Y, 20Y, 2Y, 5Y). Incluye las métricas Valor. Cubre el período entre 2020-01-29 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_tasas
     unit: "valor"
-    date_range: ["2020-01-29", "2026-06-11"]
+    date_range: ["2020-01-29", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["10Y", "20Y", "2Y", "5Y"]}
@@ -2043,7 +2026,7 @@ datasets:
       Serie de variación tasas desde fecha base (pb) para el seguimiento del segmento de tasas de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas BTP_2, BTP_5, BTP_10. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es pb. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_tasas
     unit: "pb"
-    date_range: ["2019-01-02", "2026-06-10"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "BTP_2", type: DOUBLE}
@@ -2061,7 +2044,7 @@ datasets:
       Serie de pendiente btp/btu 10-5 y 10-2 para el seguimiento del segmento de tasas de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (BTP_10-2, BTP_10-5, BTU_10-2, BTU_10-5). Incluye las métricas Valor. Cubre el período entre 2021-03-26 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_tasas
     unit: "valor"
-    date_range: ["2021-03-26", "2026-06-11"]
+    date_range: ["2021-03-26", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["BTP_10-2", "BTP_10-5", "BTU_10-2", "BTU_10-5"]}
@@ -2075,7 +2058,7 @@ datasets:
       Serie de spread btp-spc 5y y 10y (bp) para el seguimiento del segmento de tasas de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (10Y, 5Y). Incluye las métricas Valor. Cubre el período entre 2020-11-24 y 2026-06-01. La unidad principal de análisis es bp. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_tasas
     unit: "bp"
-    date_range: ["2020-11-24", "2026-06-11"]
+    date_range: ["2020-11-24", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["10Y", "5Y"]}
@@ -2089,7 +2072,7 @@ datasets:
       Serie de spread btp-ust 5y y 10y (bp) para el seguimiento del segmento de tasas de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (10Y, 5Y). Incluye las métricas Valor. Cubre el período entre 2020-11-24 y 2026-06-01. La unidad principal de análisis es bp. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_tasas
     unit: "bp"
-    date_range: ["2020-11-24", "2026-06-11"]
+    date_range: ["2020-11-24", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["10Y", "5Y"]}
@@ -2106,7 +2089,7 @@ datasets:
       Serie de bonos bancarios (mill $usd) para el seguimiento del segmento de volúmenes de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Monto_USD. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es Mill $USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_volumenes
     unit: "Mill $USD"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-15"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Monto_USD", type: DOUBLE}
@@ -2119,7 +2102,7 @@ datasets:
       Serie de bonos corporativos (mill $usd) para el seguimiento del segmento de volúmenes de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Monto_USD. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es Mill $USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_volumenes
     unit: "Mill $USD"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-15"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Monto_USD", type: DOUBLE}
@@ -2132,7 +2115,7 @@ datasets:
       Serie de btp/btu (mill $usd) para el seguimiento del segmento de volúmenes de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas BTP, BTU. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es Mill $USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_volumenes
     unit: "Mill $USD"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-15"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "BTP", type: DOUBLE}
@@ -2146,7 +2129,7 @@ datasets:
       Serie de btp/btu (%) para el seguimiento del segmento de volúmenes de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas BTP, BTU. Cubre el período entre 2019-01-02 y 2026-06-01. La unidad principal de análisis es %. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_volumenes
     unit: "%"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-15"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "BTP", type: DOUBLE}
@@ -2160,7 +2143,7 @@ datasets:
       Serie de bonos bancarios para el seguimiento del segmento de volúmenes de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas BB. Cubre el período entre 2019-01-02 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: rf_volumenes
     unit: "N/A"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-15"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "BB", type: DOUBLE}
@@ -2176,7 +2159,7 @@ datasets:
       Serie de tpm implícita chile para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tenor (12M, 2Y, 3M, 6M, 9M). Incluye las métricas Valor. Cubre el período entre 2020-01-02 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "valor"
-    date_range: ["2020-01-02", "2026-06-11"]
+    date_range: ["2020-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tenor", type: VARCHAR, values: ["12M", "2Y", "3M", "6M", "9M"]}
@@ -2190,7 +2173,7 @@ datasets:
       Serie de tpm implícita: chile para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Variable (12M, 2Y, 3M, 6M, 9M), Tenor (12M, 2Y, 3M, 6M, 9M). Incluye las métricas Valor. Cubre el período entre 2020-01-02 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "valor"
-    date_range: ["2020-01-02", "2026-06-11"]
+    date_range: ["2020-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Variable", type: VARCHAR, values: ["12M", "2Y", "3M", "6M", "9M"]}
@@ -2205,7 +2188,7 @@ datasets:
       Serie de histograma spread mipr spc-ois para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tenor (12M, 2Y, 3M, 6M, 9M). Incluye las métricas Valor. Cubre el período entre 2020-01-02 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "valor"
-    date_range: ["2020-01-02", "2026-06-11"]
+    date_range: ["2020-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tenor", type: VARCHAR, values: ["12M", "2Y", "3M", "6M", "9M"]}
@@ -2219,7 +2202,7 @@ datasets:
       Serie de tpm implícita: estados unidos para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Variable (12M, 2Y, 3M, 6M, 9M), Tenor (12M, 2Y, 3M, 6M, 9M). Incluye las métricas Valor. Cubre el período entre 2020-01-02 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "valor"
-    date_range: ["2020-01-02", "2026-06-11"]
+    date_range: ["2020-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Variable", type: VARCHAR, values: ["12M", "2Y", "3M", "6M", "9M"]}
@@ -2234,7 +2217,7 @@ datasets:
       Serie de variación tpm implícita para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (CL, US), Tenor (12M, 2Y, 3M, 6M, 9M). Incluye las métricas Valor. Cubre el período entre 2020-01-02 y 2026-06-01. La unidad principal de análisis es puntos base. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "puntos base"
-    date_range: ["2020-01-02", "2026-06-11"]
+    date_range: ["2020-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["CL", "US"]}
@@ -2249,7 +2232,7 @@ datasets:
       Serie de histograma tasas ois para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tenor. Incluye las métricas Valor. Cubre el período entre 2019-01-01 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "valor"
-    date_range: ["2019-01-01", "2026-06-11"]
+    date_range: ["2019-01-01", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tenor", type: VARCHAR, values: ["10Y", "12M", "18M", "2Y", "3M", "5Y", "6M", "9M"]}
@@ -2263,7 +2246,7 @@ datasets:
       Serie de tasas ois por plazo para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Variable, Tenor. Incluye las métricas Valor. Cubre el período entre 2019-01-01 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "valor"
-    date_range: ["2019-01-01", "2026-06-11"]
+    date_range: ["2019-01-01", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Variable", type: VARCHAR, values: ["10Y", "12M", "18M", "2Y", "3M", "5Y", "6M", "9M"]}
@@ -2278,7 +2261,7 @@ datasets:
       Serie de curva spc para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Variable, Tenor. Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "valor"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Variable", type: VARCHAR, values: ["10Y", "12M", "18M", "2Y", "3M", "5Y", "6M", "9M"]}
@@ -2293,7 +2276,7 @@ datasets:
       Serie de histograma tasas spc para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tenor. Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "valor"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tenor", type: VARCHAR, values: ["10Y", "12M", "18M", "2Y", "3M", "5Y", "6M", "9M"]}
@@ -2307,7 +2290,7 @@ datasets:
       Serie de variación curvas spc y ois para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (OIS, SPC), Tenor. Incluye las métricas Valor. Cubre el período entre 2019-01-01 y 2026-06-01. La unidad principal de análisis es puntos base. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "puntos base"
-    date_range: ["2019-01-01", "2026-06-11"]
+    date_range: ["2019-01-01", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["OIS", "SPC"]}
@@ -2322,7 +2305,7 @@ datasets:
       Serie de tasas spc por plazo para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Variable, Tenor. Incluye las métricas Valor. Cubre el período entre 2019-01-02 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "valor"
-    date_range: ["2019-01-02", "2026-06-11"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Variable", type: VARCHAR, values: ["10Y", "12M", "18M", "2Y", "3M", "5Y", "6M", "9M"]}
@@ -2337,7 +2320,7 @@ datasets:
       Serie de spread tpm implícita chile - us para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tenor (12M, 2Y, 3M, 6M, 9M). Incluye las métricas Valor. Cubre el período entre 2020-01-02 y 2026-06-01. La unidad principal de análisis es puntos base. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "puntos base"
-    date_range: ["2020-01-02", "2026-06-11"]
+    date_range: ["2020-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tenor", type: VARCHAR, values: ["12M", "2Y", "3M", "6M", "9M"]}
@@ -2351,7 +2334,7 @@ datasets:
       Serie de spread spc - ois para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie. Incluye las métricas Valor. Cubre el período entre 2006-05-03 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "valor"
-    date_range: ["2006-05-03", "2026-06-11"]
+    date_range: ["2006-05-03", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["10Y", "12M", "2Y", "3M", "5Y", "6M", "9M"]}
@@ -2365,7 +2348,7 @@ datasets:
       Serie de spread implícito tpm - fed para el seguimiento del segmento de SPC/OIS y curvas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (12M, 2Y, 3M, 6M, 9M). Incluye las métricas Valor. Cubre el período entre 2012-07-06 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: spc_ois
     unit: "valor"
-    date_range: ["2012-07-06", "2026-06-11"]
+    date_range: ["2012-07-06", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Serie", type: VARCHAR, values: ["12M", "2Y", "3M", "6M", "9M"]}
@@ -2382,7 +2365,7 @@ datasets:
       Serie de stock dcv por tramo de plazo (us$ mill.) para el seguimiento del segmento de agregado transversal. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 1 y 2Y, Entre 2 y 5Y, Entre 5 y 10Y, Mayor a 10Y, Menor a 1Y). Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: todos
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-09"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["Entre 1 y 2Y", "Entre 2 y 5Y", "Entre 5 y 10Y", "Mayor a 10Y", "Menor a 1Y"]}
@@ -2396,7 +2379,7 @@ datasets:
       Serie de stock dcv por instrumento (us$ mill.) para el seguimiento del segmento de agregado transversal. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo. Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: todos
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-09"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Tipo", type: VARCHAR, values: ["BB", "BCCh", "BTP", "BTU", "DAP", "Letras MdH", "Otros", "PDBC"]}
@@ -2410,7 +2393,7 @@ datasets:
       Serie de variación stock dcv (us$ mill.) para el seguimiento del segmento de agregado transversal. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (Entre 1 y 2Y, Entre 2 y 5Y, Entre 5 y 10Y, Mayor a 10Y, Menor a 1Y), Tipo, Sector (AFP, Bancos, CS, FFMM, Otros). Incluye las métricas Stock_USD. Cubre el período entre 2019-01-02 y 2026-05-29. La unidad principal de análisis es US$ Mill.. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: todos
     unit: "US$ Mill."
-    date_range: ["2019-01-02", "2026-06-09"]
+    date_range: ["2019-01-02", "2026-07-14"]
     columns:
       - {name: "Fecha", type: TIMESTAMP}
       - {name: "Bucket", type: VARCHAR, values: ["Entre 1 y 2Y", "Entre 2 y 5Y", "Entre 5 y 10Y", "Mayor a 10Y", "Menor a 1Y"]}
@@ -2419,3 +2402,491 @@ datasets:
       - {name: "Moneda", type: VARCHAR, values: ["CLP", "UF"]}
       - {name: "Stock_USD", type: DOUBLE}
 
+
+  # -- nuevos (2026-07-18, data_pipeline/parquet_excel/diccionario_parquets_IA.yaml) --
+
+  # -- Compensaciones --
+  - id: bei_curve
+    file: bei_curve.parquet
+    chart_type: "spc_curve"
+    name: "Compensaciones inflacionarias en bonos soberanos"
+    description: >
+      Serie de compensación inflacionaria en bonos soberanos para el seguimiento del segmento de inflación y expectativas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Serie (2Y, 5Y, 10Y y 20Y). Incluye las métricas Valor. Cubre el período entre 2022-01-03 y 2026-06-01. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: Compensaciones
+    unit: "%"
+    date: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Variable, type: VARCHAR, values: ["10Y", "20Y", "2Y", "5Y"]}
+      - {name: Valor, type: DOUBLE}
+
+  # -- Stocks --
+  - id: var_acum_stock
+    file: var_acum_stock.parquet
+    chart_type: "ffmm_stock_cum_interactive"
+    name: "Variación acumulada stock DCV"
+    description: >
+      Serie de variación acumulada del stock DCV (mm usd) para el seguimiento del segmento de fondos mutuos. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo de instrumento. Incluye las métricas Stock. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: Stocks
+    unit: "MM USD"
+    date_range: ["2019-01-02", "2026-07-14"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tipo, type: VARCHAR, values: ["BB", "BCCh", "BE", "BTP", "BTU", "DAP", "Letras MdH", "Otros", "PDBC"]}
+      - {name: Moneda, type: VARCHAR, values: ["CLP", "UF"]}
+      - {name: Stock, type: DOUBLE}
+
+  # -- Variaciones --
+  - id: 10y_comp_tasas
+    file: 10y_comp_tasas.parquet
+    chart_type: "var_line_interactive"
+    name: "Tasa a 10 años de economías comparables"
+    description: >
+      Serie de tasas a 10 años en economías comparables para el seguimiento del segmento de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por país. Incluye las métricas Valor. Cubre variaciones en puntos base. La unidad principal de análisis es pb. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: Variaciones
+    unit: "pb"
+    date_range: ["2019-01-02", "2026-07-14"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Brasil, type: DOUBLE}
+      - {name: Chile, type: DOUBLE}
+      - {name: EEUU, type: DOUBLE}
+      - {name: Mexico, type: DOUBLE}
+      - {name: Peru, type: DOUBLE}
+      - {name: Polonia, type: DOUBLE}
+      - {name: Rep_Checa, type: DOUBLE}
+  - id: 5y_comp_tasas
+    file: 5y_comp_tasas.parquet
+    chart_type: "var_line_interactive"
+    name: "Tasa a 5 años de economías comparables"
+    description: >
+      Serie de tasas a 5 años en economías comparables para el seguimiento del segmento de renta fija. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por país. Incluye las métricas Valor. Cubre variaciones en puntos base. La unidad principal de análisis es pb. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: Variaciones
+    unit: "pb"
+    date_range: ["2019-01-02", "2026-07-14"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Brasil, type: DOUBLE}
+      - {name: Chile, type: DOUBLE}
+      - {name: EEUU, type: DOUBLE}
+      - {name: Mexico, type: DOUBLE}
+      - {name: Peru, type: DOUBLE}
+      - {name: Polonia, type: DOUBLE}
+      - {name: Rep_Checa, type: DOUBLE}
+
+  # -- afp --
+  - id: afp_posicion_spc
+    file: afp_posicion_spc.parquet
+    chart_type: "stacked_area"
+    name: "Posicion SPC nominal con agentes locales"
+    description: >
+      Serie de posicion spc nominal con agentes locales para el seguimiento del segmento de Fondos de Pensiones. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Plazo (1 a 90 dias, 91 a 360 dias, Entre 1 y 2Y, Mayor a 2Y). Incluye las métricas mmusd. Cubre el período entre 2022-01-03 y 2026-07-07. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: afp
+    unit: "Millones de USD"
+    date_range: ["2022-01-03", "2026-07-09"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Plazo, type: VARCHAR, values: ["1 a 90 dias", "91 a 360 dias", "Entre 1 y 2Y", "Mayor a 2Y"]}
+      - {name: mmusd, type: DOUBLE}
+
+
+  - id: afp_posicion_spc_usd
+    file: afp_posicion_spc_usd.parquet
+    chart_type: "stacked_area"
+    name: "Posicion SPC en dólares"
+    description: >
+      Serie de posicion spc en dólares para el seguimiento del segmento de Fondos de Pensiones. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tramo (10Y, 1Y, 2Y, 5Y), Plazo (10Y, 1Y, 2Y, 5Y). Incluye las métricas mmusd. Cubre el período entre 2019-09-30 y 2026-06-30. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: afp
+    unit: "Millones de USD"
+    date_range: ["2019-09-30", "2026-06-30"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tramo, type: VARCHAR, values: ["10Y", "1Y", "2Y", "5Y"]}
+      - {name: mmusd, type: DOUBLE}
+      - {name: Plazo, type: VARCHAR, values: ["10Y", "1Y", "2Y", "5Y"]}
+  - id: afp_var_posicion_spc_mensual
+    file: afp_var_posicion_spc_mensual.parquet
+    chart_type: "stacked_bar_interactive"
+    name: "Variación mensual posición SPC nominal"
+    description: >
+      Serie de variación mensual posición spc nominal para el seguimiento del segmento de Fondos de Pensiones. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas 1 a 90 dias, 91 a 360 dias, Entre 1 y 2Y, Mayor a 2Y, Neto. Cubre el período entre 2022-02-01 y 2026-07-01. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: afp
+    unit: "Millones de USD"
+    date_range: ["2022-02-01", "2026-06-01"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: 1 a 90 dias, type: DOUBLE}
+      - {name: 91 a 360 dias, type: DOUBLE}
+      - {name: Entre 1 y 2Y, type: DOUBLE}
+      - {name: Mayor a 2Y, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+  - id: afp_variacion_spc
+    file: afp_variacion_spc.parquet
+    chart_type: "stacked_neto_interactive"
+    name: "Variación acumulada en SPC nominal con agentes locales"
+    description: >
+      Serie de variación acumulada en spc nominal con agentes locales para el seguimiento del segmento de Fondos de Pensiones. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas 1 a 90 dias, 91 a 360 dias, Entre 1 y 2Y, Mayor a 2Y, Neto. Cubre el período entre 2022-01-03 y 2026-07-07. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: afp
+    unit: "Millones de USD"
+    date_range: ["2022-01-03", "2026-07-09"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: 1 a 90 dias, type: DOUBLE}
+      - {name: 91 a 360 dias, type: DOUBLE}
+      - {name: Entre 1 y 2Y, type: DOUBLE}
+      - {name: Mayor a 2Y, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+
+
+  - id: allocation_categoria
+    file: allocation_categoria.parquet
+    chart_type: "multi_line_dual"
+    name: "Distribución inversiones por categoria"
+    description: >
+      Serie de distribución inversiones por categoria para el seguimiento del segmento de Fondos de Pensiones. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas RFN, RVN, RFI, RVI, Otros, AUM. Cubre el período entre 2008-09-30 y 2026-05-29. La unidad principal de análisis es Porcentaje y Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: afp
+    unit: "Porcentaje y Millones de USD"
+    date_range: ["2008-09-30", "2026-05-29"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: RFN, type: DOUBLE}
+      - {name: RVN, type: DOUBLE}
+      - {name: RFI, type: DOUBLE}
+      - {name: RVI, type: DOUBLE}
+      - {name: Otros, type: DOUBLE}
+      - {name: AUM, type: DOUBLE}
+
+  - id: allocation_fondo_categoria
+    file: allocation_fondo_categoria.parquet
+    chart_type: "multi_line_dual"
+    name: "Distribución inversiones por fondo y categoria"
+    description: >
+      Serie de distribución inversiones por fondo y categoria para el seguimiento del segmento de Fondos de Pensiones. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Fondo (A, B, C, D, E). Incluye las métricas RFN, RVN, RFI, RVI, Otros, AUM. Cubre el período entre 2008-09-30 y 2026-05-29. La unidad principal de análisis es Porcentaje y Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: afp
+    unit: "Porcentaje y Millones de USD"
+    date_range: ["2008-09-30", "2026-05-29"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Fondo, type: VARCHAR, values: ["A", "B", "C", "D", "E"]}
+      - {name: RFN, type: DOUBLE}
+      - {name: RVN, type: DOUBLE}
+      - {name: RFI, type: DOUBLE}
+      - {name: RVI, type: DOUBLE}
+      - {name: Otros, type: DOUBLE}
+      - {name: AUM, type: DOUBLE}
+  - id: mtm_afp_moneda
+    file: mtm_afp_moneda.parquet
+    chart_type: "line"
+    name: "MtM swaps por moneda"
+    description: >
+      Serie de mtm swaps por moneda para el seguimiento del segmento de Fondos de Pensiones. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Moneda (CLP, UF, USD). Incluye las métricas MtM. Cubre el período entre 2020-01-31 y 2026-07-09. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: afp
+    unit: "Millones de USD"
+    date_range: ["2020-01-31", "2026-07-14"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Moneda, type: VARCHAR, values: ["CLP", "UF", "USD"]}
+      - {name: MtM, type: DOUBLE}
+
+
+  # -- fisco --
+  - id: spot_afecto_cumul
+    file: spot_afecto_cumul.parquet
+    chart_type: "line"
+    name: "Flujo spot acumulado"
+    description: >
+      Serie de flujo spot acumulado para el seguimiento del segmento de Fisco. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Afecto_derivado (No, Si), Tipo (Spot). Incluye las métricas Monto. Cubre el período entre 2026-01-02 y 2026-06-26. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fisco
+    unit: "Millones de USD"
+    date_range: ["2026-01-02", "2026-07-13"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tipo, type: VARCHAR, values: ["Spot"]}
+      - {name: Afecto_derivado, type: VARCHAR, values: ["No", "Si"]}
+      - {name: Monto, type: DOUBLE}
+  - id: spot_agente
+    file: spot_agente.parquet
+    chart_type: "bar"
+    name: "Flujos spot por agente"
+    description: >
+      Serie de flujos spot por agente para el seguimiento del segmento de Fisco. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Institucion (BCI, BICE, BTG, Chile, China Construction Bank, Consorcio, Estado, Falabella, HSBC, Itau-Corpbanca, JP Morgan, Santander, Scotiabank), Tipo (Spot). Incluye las métricas Monto. Cubre el período entre 2026-01-02 y 2026-06-26. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fisco
+    unit: "Millones de USD"
+    date_range: ["2026-01-02", "2026-07-13"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Institucion, type: VARCHAR, values: ["BCI", "BICE", "BTG", "Chile", "China Construction Bank", "Consorcio", "Estado", "Falabella", "HSBC", "Itau-Corpbanca", "JP Morgan", "Santander", "Scotiabank"]}
+      - {name: Tipo, type: VARCHAR, values: ["Spot"]}
+      - {name: Monto, type: DOUBLE}
+
+
+  # -- fx --
+  - id: cobre_petroleo_index
+    file: cobre_petroleo_index.parquet
+    chart_type: "fx_var_line_interactive"
+    name: "Evolución CLP, Cobre y Petróleo"
+    description: >
+      Serie de evolución clp, cobre y petróleo para el seguimiento del segmento de Mercado FX. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas CLP, Cobre, Petroleo. Cubre el período entre 2019-01-02 y 2026-06-26. La unidad principal de análisis es Índice, base = 100. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx
+    unit: "Índice, base = 100"
+    date_range: ["2019-01-02", "2026-07-14"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: CLP, type: DOUBLE}
+      - {name: Cobre, type: DOUBLE}
+      - {name: Petroleo, type: DOUBLE}
+  - id: gbi_index
+    file: gbi_index.parquet
+    chart_type: "hist_range"
+    name: "Rendimiento monedas"
+    description: >
+      Serie de rendimiento monedas para el seguimiento del segmento de Mercado FX. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tenor (BRL  |  BB-, CLP  |  A, COP  |  BB+, CZK  |  AA, HUF  |  BBB, MXN  |  BBB-, PEN  |  BBB+, PLN  |  A-, USD  |  AA). Incluye las métricas Valor. Cubre el período entre 2020-01-02 y 2026-07-08. La unidad principal de análisis es Índice, base = 100. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx
+    unit: "Índice, base = 100"
+    date_range: ["2020-01-02", "2026-07-14"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["BRL  |  BB-", "CLP  |  A", "COP  |  BB+", "CZK  |  AA", "HUF  |  BBB", "MXN  |  BBB-", "PEN  |  BBB+", "PLN  |  A-", "USD  |  AA"]}
+      - {name: Valor, type: DOUBLE}
+  - id: retorno_fx_tasas
+    file: retorno_fx_tasas.parquet
+    chart_type: "fx_retorno_scatter_interactive"
+    name: "Retorno FX/Tasas GBI"
+    description: >
+      Serie de retorno fx/tasas gbi para el seguimiento del segmento de Mercado FX. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas fx_CLP, fx_COP, fx_MXN, fx_PEN, fx_BRL, fx_CNY, fx_MYR, fx_THB, fx_IDR, fx_CZK, fx_PLN, fx_TRY, fx_ZAR, fx_HUF, fx_USD, rates_USD, rates_CZK, rates_CNY, rates_MYR, rates_PLN, rates_THB, rates_PEN, rates_HUF, rates_IDR, rates_MXN, rates_COP, rates_BRL, rates_ZAR, rates_TRY, rates_CLP. Cubre el período entre 2024-01-02 y 2026-07-08. La unidad principal de análisis es Porcentaje. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx
+    unit: "Porcentaje"
+    date_range: ["2024-01-02", "2026-07-14"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: fx_CLP, type: DOUBLE}
+      - {name: fx_COP, type: DOUBLE}
+      - {name: fx_MXN, type: DOUBLE}
+      - {name: fx_PEN, type: DOUBLE}
+      - {name: fx_BRL, type: DOUBLE}
+      - {name: fx_CNY, type: DOUBLE}
+      - {name: fx_MYR, type: DOUBLE}
+      - {name: fx_THB, type: DOUBLE}
+      - {name: fx_IDR, type: DOUBLE}
+      - {name: fx_CZK, type: DOUBLE}
+      - {name: fx_PLN, type: DOUBLE}
+      - {name: fx_TRY, type: DOUBLE}
+      - {name: fx_ZAR, type: DOUBLE}
+      - {name: fx_HUF, type: DOUBLE}
+      - {name: fx_USD, type: DOUBLE}
+      - {name: rates_USD, type: DOUBLE}
+      - {name: rates_CZK, type: DOUBLE}
+      - {name: rates_CNY, type: DOUBLE}
+      - {name: rates_MYR, type: DOUBLE}
+      - {name: rates_PLN, type: DOUBLE}
+      - {name: rates_THB, type: DOUBLE}
+      - {name: rates_PEN, type: DOUBLE}
+      - {name: rates_HUF, type: DOUBLE}
+      - {name: rates_IDR, type: DOUBLE}
+      - {name: rates_MXN, type: DOUBLE}
+      - {name: rates_COP, type: DOUBLE}
+      - {name: rates_BRL, type: DOUBLE}
+      - {name: rates_ZAR, type: DOUBLE}
+      - {name: rates_TRY, type: DOUBLE}
+      - {name: rates_CLP, type: DOUBLE}
+
+  # -- inflacion --
+  - id: variacion_por_agente_si
+    file: variacion_por_agente_si.parquet
+    chart_type: "variation_bar"
+    name: "Variación en posiciones por agente"
+    description: >
+      Serie de variación en posiciones por agente para el seguimiento del segmento de Inflación. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Sector (AFP, CB, CS, Emp_real, FFMM). Incluye las métricas Monto. Cubre el período entre 2023-01-03 y 2026-06-15. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: inflacion
+    unit: "Millones de USD"
+    date_range: ["2023-01-03", "2026-07-06"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Sector, type: VARCHAR, values: ["AFP", "CB", "CS", "Emp_real", "FFMM"]}
+      - {name: Monto, type: DOUBLE}
+
+  # -- no_residentes --
+  - id: nr_tenencia_cf_btp
+    file: nr_tenencia_cf_btp.parquet
+    chart_type: "stacked_area"
+    name: "Tenencia BTP"
+    description: >
+      Serie de tenencia btp para el seguimiento del segmento de No Residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tramo (Entre 11 y 20Y, Entre 2 y 5Y, Entre 6 y 10Y, Mayor a 20Y, Menor a 2Y). Incluye las métricas mmusd. Cubre el período entre 2019-01-31 y 2026-05-31. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: no_residentes
+    unit: "Millones de USD"
+    date_range: ["2022-01-01", "2026-06-01"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tramo, type: VARCHAR, values: ["Entre 11 y 20Y", "Entre 2 y 5Y", "Entre 6 y 10Y", "Mayor a 20Y", "Menor a 2Y"]}
+      - {name: mmusd, type: DOUBLE}
+  - id: nr_tenencia_cf_soberanos
+    file: nr_tenencia_cf_soberanos.parquet
+    chart_type: "stacked_area"
+    name: "Tenencia soberanos"
+    description: >
+      Serie de tenencia soberanos para el seguimiento del segmento de No Residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo (BTP, BTU). Incluye las métricas mmusd. Cubre el período entre 2019-01-31 y 2026-05-31. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: no_residentes
+    unit: "Millones de USD"
+    date_range: ["2019-01-01", "2026-06-01"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tipo, type: VARCHAR, values: ["BTP", "BTU"]}
+      - {name: mmusd, type: DOUBLE}
+  - id: nr_var_cf_btp
+    file: nr_var_cf_btp.parquet
+    chart_type: "stacked_bar_interactive"
+    name: "Variación mensual stock BTP"
+    description: >
+      Serie de variación mensual stock btp para el seguimiento del segmento de No Residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Menor a 2Y, Entre 2 y 5Y, Entre 6 y 10Y, Entre 11 y 20Y, Mayor a 20Y, Neto. Cubre el período entre 2019-02-28 y 2026-05-31. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: no_residentes
+    unit: "Millones de USD"
+    date_range: ["2019-02-01", "2026-06-01"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Menor a 2Y, type: DOUBLE}
+      - {name: Entre 2 y 5Y, type: DOUBLE}
+      - {name: Entre 6 y 10Y, type: DOUBLE}
+      - {name: Entre 11 y 20Y, type: DOUBLE}
+      - {name: Mayor a 20Y, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+
+  - id: nr_var_cf_soberanos
+    file: nr_var_cf_soberanos.parquet
+    chart_type: "stacked_bar_interactive"
+    name: "Variación mensual stock soberano"
+    description: >
+      Serie de variación mensual stock soberano para el seguimiento del segmento de No Residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas BTP, BTU, Neto. Cubre el período entre 2019-02-28 y 2026-05-31. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: no_residentes
+    unit: "Millones de USD"
+    date_range: ["2019-02-01", "2026-06-01"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: BTP, type: DOUBLE}
+      - {name: BTU, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+
+
+  - id: nr_var_posicion_derivados_mensual
+    file: nr_var_posicion_derivados_mensu.parquet
+    chart_type: "stacked_bar_interactive"
+    name: "Variación mensual posición derivados"
+    description: >
+      Serie de variación mensual posición derivados para el seguimiento del segmento de No Residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas 1 a 90 dias, 91 a 360 dias, Mayor a 360 dias, Neto. Cubre el período entre 2023-02-01 y 2026-07-01. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: no_residentes
+    unit: "Millones de USD"
+    date_range: ["2023-01-01", "2026-07-01"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tipo, type: VARCHAR, values: ["Suscripcion", "Vencimiento"]}
+      - {name: 1 a 90 dias, type: DOUBLE}
+      - {name: 91 a 360 dias, type: DOUBLE}
+      - {name: Mayor a 360 dias, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+  - id: nr_var_posicion_spc_mensual
+    file: nr_var_posicion_spc_mensual.parquet
+    chart_type: "stacked_bar_interactive"
+    name: "Variación mensual posición SPC nominal"
+    description: >
+      Serie de variación mensual posición spc nominal para el seguimiento del segmento de No Residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas 1 a 90 dias, 91 a 360 dias, Entre 1 y 2Y, Mayor a 2Y, Neto. Cubre el período entre 2022-02-01 y 2026-07-01. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: no_residentes
+    unit: "Millones de USD"
+    date_range: ["2022-02-01", "2026-06-01"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: 1 a 90 dias, type: DOUBLE}
+      - {name: 91 a 360 dias, type: DOUBLE}
+      - {name: Entre 1 y 2Y, type: DOUBLE}
+      - {name: Mayor a 2Y, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+  - id: posicion_derivados_plazo
+    file: posicion_derivados_plazo.parquet
+    chart_type: "stacked_bar"
+    name: "Posición derivados por plazo"
+    description: >
+      Serie de posición derivados por plazo para el seguimiento del segmento de No Residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Fecha, Plazo (1 a 7 dias, 181 a 360 dias, 31 a 90 dias, 361 a 720 dias, 8 a 30 dias, 91 a 180 dias, >720 dias), Instrumento (CALL, CSS, FWD, FWD_obs, FXS, PUT), Modalidad_pago (Compensación, Entrega física). Incluye las métricas Suscripcion, Vencimiento. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: no_residentes
+    unit: "US$ Mill."
+    date_range: ["2025-01-02", "2026-07-13"]
+    columns:
+      - {name: Fecha, type: VARCHAR}
+      - {name: Plazo, type: VARCHAR, values: ["1 a 7 dias", "181 a 360 dias", "31 a 90 dias", "361 a 720 dias", "8 a 30 dias", "91 a 180 dias", ">720 dias"]}
+      - {name: Instrumento, type: VARCHAR, values: ["CALL", "CSS", "FWD", "FWD_obs", "FXS", "PUT"]}
+      - {name: Modalidad, type: VARCHAR, values: ["Compensación", "Entrega física"]}
+      - {name: Suscripcion, type: DOUBLE}
+      - {name: Vencimiento, type: DOUBLE}
+  - id: posicion_spot_derivados
+    file: posicion_spot_derivados.parquet
+    chart_type: "pos_delta_interactive"
+    name: "Posición Spot y Derivados (MM USD)"
+    description: >
+      Serie de posición spot y derivados (mm usd) para el seguimiento del segmento de posición y flujos de no residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Agente (TGR), Mercado (Spot). Incluye las métricas Monto. Cubre el período entre 2014-10-01 y 2026-05-29. La unidad principal de análisis es MM USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: no_residentes
+    unit: "MM USD"
+    date_range: ["2014-10-01", "2026-07-13"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Agente, type: VARCHAR, values: ["TGR"]}
+      - {name: Mercado, type: VARCHAR, values: ["Spot"]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: var_flujo_spot_nr
+    file: var_flujo_spot_nr.parquet
+    chart_type: "flujo_spot_variacion"
+    name: "Variación flujos spot"
+    description: >
+      Serie de variación flujos spot para el seguimiento del segmento de No Residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas No Afecto, Afecto. Cubre el período entre 2022-01-03 y 2026-07-06. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: no_residentes
+    unit: "Millones de USD"
+    date_range: ["2022-01-03", "2026-07-13"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: No Afecto, type: DOUBLE}
+      - {name: Afecto, type: DOUBLE}
+
+
+  - id: variacion_nr_spc
+    file: variacion_nr_spc.parquet
+    chart_type: "stacked_neto_interactive"
+    name: "Variación acumulada en SPC nominal"
+    description: >
+      Serie de variación acumulada en spc nominal para el seguimiento del segmento de No Residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas 1 a 90 dias, 91 a 360 dias, Entre 1 y 2Y, Mayor a 2Y, Neto. Cubre el período entre 2022-01-03 y 2026-07-07. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: no_residentes
+    unit: "Millones de USD"
+    date_range: ["2022-01-03", "2026-07-09"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: 1 a 90 dias, type: DOUBLE}
+      - {name: 91 a 360 dias, type: DOUBLE}
+      - {name: Entre 1 y 2Y, type: DOUBLE}
+      - {name: Mayor a 2Y, type: DOUBLE}
+      - {name: Neto, type: DOUBLE}
+
+
+
+  # -- rf_tasas --
+  - id: gbi_10y_spread_hist
+    file: gbi_10y_spread_hist.parquet
+    chart_type: "hist_range"
+    name: "Spread de tasas vs UST10Y"
+    description: >
+      Serie de spread de tasas vs ust10y para el seguimiento del segmento de Mercado RF — Tasas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tenor (BRL | BB-, CLP | A, COP | BB+, CZK | AA-, HUF | BBB, MXN | BBB-, PEN | BBB+, PLN | A-). Incluye las métricas Valor. Cubre el período entre 2024-01-02 y 2026-07-08. La unidad principal de análisis es pb. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: rf_tasas
+    unit: "pb"
+    date_range: ["2024-01-02", "2026-07-14"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["BRL | BB-", "CLP | A", "COP | BB+", "CZK | AA-", "HUF | BBB", "MXN | BBB-", "PEN | BBB+", "PLN | A-"]}
+      - {name: Valor, type: DOUBLE}
+  - id: gbi_10y_tasas_hist
+    file: gbi_10y_tasas_hist.parquet
+    chart_type: "hist_range"
+    name: "Tasas 10Y GBI"
+    description: >
+      Serie de tasas 10y gbi para el seguimiento del segmento de Mercado RF — Tasas. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tenor (BRL | BB-, CLP | A, COP | BB+, CZK | AA-, HUF | BBB, MXN | BBB-, PEN | BBB+, PLN | A-, USD | AA-). Incluye las métricas Valor. Cubre el período entre 2024-01-02 y 2026-07-08. La unidad principal de análisis es porcentaje. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: rf_tasas
+    unit: "porcentaje"
+    date_range: ["2024-01-02", "2026-07-14"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Tenor, type: VARCHAR, values: ["BRL | BB-", "CLP | A", "COP | BB+", "CZK | AA-", "HUF | BBB", "MXN | BBB-", "PEN | BBB+", "PLN | A-", "USD | AA-"]}
+      - {name: Valor, type: DOUBLE}

@@ -378,7 +378,7 @@ NR_ANALYST_PROMPT = _market_specialist_prompt(
     ),
     dominio=(
         "Datasets típicos (su id suele contener `nr`): `posicion_rfl_nr`, "
-        "`flujo_spot_nr`, `posicion_nr_derivados`, `posicion_nr_spc`, "
+        "`flujo_spot_nr`, `posicion_nr_derivados`, `nr_var_posicion_spc`, "
         "`variacion_rfl_dcv_nr`. Para el flujo cambiario NR usa "
         "`flujo_cambiario` filtrando el sector NR."
     ),

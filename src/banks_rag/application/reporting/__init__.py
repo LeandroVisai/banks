@@ -26,6 +26,7 @@ from .parquet_report import (
     select_datasets,
 )
 from .report_spec import FamilyReportSpec, ReportBlock
+from .svg_raster import rasterize_inline_svgs, svg_to_png
 from .verify import (
     Issue,
     Ledger,
@@ -56,9 +57,11 @@ __all__ = [
     "generate_parquet_report",
     "inject_charts_into_html",
     "make_editable_html",
+    "rasterize_inline_svgs",
     "render_curated_html",
     "render_parquet_report_html",
     "select_datasets",
     "strip_editable_chrome",
+    "svg_to_png",
     "verify_report",
 ]

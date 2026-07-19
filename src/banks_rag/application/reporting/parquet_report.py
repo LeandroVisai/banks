@@ -399,12 +399,16 @@ async def _describe_dataset(
     think: bool = False,
     weekly_asof: str | None = None,
     include_monthly: bool = True,
+    date_filter: tuple[str, str] = ("", ""),
 ) -> DatasetSection:
     """Genera la sección de un dataset: facts en Python + UNA llamada al LLM.
 
     ``weekly_asof`` = corte / T común del informe (ancla TODAS las ventanas de los
     facts: semanal y mensual). ``include_monthly`` decide si el párrafo lleva también
-    la lectura mensual (solo el primer dataset de cada sección) o solo la semanal."""
+    la lectura mensual (solo el primer dataset de cada sección) o solo la semanal.
+    ``date_filter`` = ``(date_from, date_to)`` del bloque que este párrafo comenta
+    (ver ``spec_date_filters``): los hechos se calculan sobre el MISMO recorte que
+    dibuja el gráfico, si no el texto citaría fechas que el lector no ve."""
     section = DatasetSection(
         dataset_id=dataset.id,
         name=dataset.name,
@@ -417,7 +421,10 @@ async def _describe_dataset(
         include_monthly=include_monthly,
     )
     try:
-        facts = compute_facts(dataset, parquet_dir, list(window_specs), weekly_asof=weekly_asof)
+        from banks_rag.application.reporting.curated_report import date_filtered_dir
+
+        with date_filtered_dir(dataset, parquet_dir, *date_filter) as pdir:
+            facts = compute_facts(dataset, pdir, list(window_specs), weekly_asof=weekly_asof)
     except Exception as exc:
         log.exception("[%s] el cálculo de hechos falló", dataset.id)
         section.status = "error"
@@ -718,11 +725,13 @@ async def generate_parquet_report(
     monthly_ids: set[str] = set()
     spec_ids: set[str] = set()
     anchor_ids: set[str] = set()
+    date_filters: dict[str, tuple[str, str]] = {}
     try:
         from banks_rag.application.reporting.curated_report import (
             _spec_source_ids,
             compute_weekly_cutoff,
             monthly_section_source_ids,
+            spec_date_filters,
             weekly_anchor_source_ids,
         )
         from banks_rag.application.reporting.specs import get_spec
@@ -733,6 +742,8 @@ async def generate_parquet_report(
             monthly_ids = monthly_section_source_ids(spec)
             spec_ids = set(_spec_source_ids(spec))
             anchor_ids = weekly_anchor_source_ids(spec)
+            # Mismo recorte de fechas que dibuja el gráfico del bloque comentado.
+            date_filters = spec_date_filters(spec)
         else:
             from banks_rag.application.reporting.parquet_facts import weekly_cutoff
 
@@ -766,6 +777,7 @@ async def generate_parquet_report(
                 # (Flujos+DCV en ffmm); el resto usa el máximo de su propio parquet.
                 weekly_asof=weekly_asof if ds.id in anchor_ids else None,
                 include_monthly=_include_monthly(ds.id),
+                date_filter=date_filters.get(ds.id, ("", "")),
             )
 
     log.info(

@@ -49,6 +49,36 @@ _SAMPLE = (
     '<div class="section-text" data-text-slot="flujos_ffmm"><p>Parrafo.</p></div>'
     f"{_PNG_FIG}</section></div></body></html>"
 )
+# Informe CURADO (curated_report.py): gráfico como <svg> inline + tooltip JS.
+_CURATED_SVG = (
+    '<svg class="report-chart" viewBox="0 0 760 320" width="100%" role="img" '
+    'xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">'
+    '<rect x="0" y="0" width="760" height="320" fill="white"/>'
+    '<rect x="60" y="100" width="40" height="140" fill="#0b3766"/>'
+    '<rect x="120" y="284" width="67" height="18" fill="transparent" stroke="none"/>'
+    '<text x="140" y="294" font-size="11" fill="#444">Tipo 1</text></svg>'
+)
+_CURATED_SAMPLE = (
+    '<!DOCTYPE html><html><head><title>Informe Fondos Mutuos</title><style>.x{}</style></head>'
+    '<body><div class="page"><div class="report-title">Informe Fondos Mutuos</div>'
+    '<div class="subtitle">disclaimer</div>'
+    '<div class="report-synthesis"><div class="synthesis-title">Síntesis</div>'
+    '<div class="synthesis-body" data-synthesis-body><p>Escrito a mano.</p></div></div>'
+    '<div class="section-banner">Flujos</div>'
+    '<div class="block" data-chart="grouped_bar"><div class="block-title">Flujos por tipo</div>'
+    '<div class="block-unit">(US$ Mill.)</div>'
+    '<div class="section-text" data-text-slot="ffmm:flujos"><p>Parrafo.</p></div>'
+    f"{_CURATED_SVG}</div></div>"
+    '<div id="chart-tip" role="tooltip"></div><script>var tip=1;</script></body></html>'
+)
+
+
+def _html_body(msg: email.message.EmailMessage) -> str:
+    """Cuerpo ``text/html`` del mensaje (no el adjunto)."""
+    return next(
+        p.get_content() for p in msg.walk()
+        if p.get_content_type() == "text/html" and p.get_content_disposition() is None
+    )
 
 
 @pytest.mark.unit
@@ -98,13 +128,14 @@ class TestProcessFilePassthrough:
         )
         assert msg.startswith("OK")
 
-        plain_file = plain / "reporte_ffmm.plain.html"
+        plain_file = plain / "reporte_ffmm.plano.html"
         eml_file = out / "reporte_ffmm.eml"
         assert plain_file.exists() and eml_file.exists()
 
-        # HTML plano: sin plotly interactivo, con el PNG
+        # HTML plano: sin plotly interactivo ni JS, imágenes embebidas (data:)
         pt = plain_file.read_text(encoding="utf-8")
         assert "Plotly.newPlot" not in pt and "data:image/png" in pt
+        assert "<script" not in pt and "cid:" not in pt
 
         # .eml parseable: cuerpo HTML + imagen inline; asunto con el título
         m = email.message_from_bytes(eml_file.read_bytes())
@@ -112,3 +143,139 @@ class TestProcessFilePassthrough:
         assert "text/html" in types
         assert "image/png" in types
         assert "Informe FFMM" in m["Subject"]
+
+    def test_curated_svg_charts_become_inline_images(self, tmp_path: pathlib.Path) -> None:
+        """El informe curado trae los gráficos como <svg> inline (Outlook no los
+        renderiza): deben salir del correo como PNG referenciados por cid:."""
+        src = tmp_path / "ffmm_2026-01-01.html"
+        src.write_text(_CURATED_SAMPLE, encoding="utf-8")
+        out = tmp_path / "eml"
+        out.mkdir()
+
+        r2e.process_file_passthrough(
+            src, out, sender="a@x.cl", to="b@y.cl", subject_prefix="", plain_dir=tmp_path / "plain",
+        )
+        # salidas agrupadas por familia (ffmm/)
+        m = email.message_from_bytes(
+            (out / "ffmm" / "ffmm_2026-01-01.eml").read_bytes(), policy=email.policy.default,
+        )
+        body = _html_body(m)
+        assert "<svg" not in body            # ningún SVG sobrevive en el cuerpo
+        assert 'src="cid:chart' in body      # el gráfico va como PNG inline
+        # el ADJUNTO sí conserva el SVG vectorial (es tu HTML final tal cual)
+        adj = next(p for p in m.walk() if p.get_content_disposition() == "attachment")
+        assert "<svg" in adj.get_content()
+        # la copia PLANA, en cambio, va sin interacción: PNG embebido, sin SVG ni JS
+        plano = (tmp_path / "plain" / "ffmm" / "ffmm_2026-01-01.plano.html").read_text(encoding="utf-8")
+        assert "<svg" not in plano and "<script" not in plano
+        assert "data:image/png" in plano
+
+    def test_attachment_declares_utf8_and_keeps_accents(self, tmp_path: pathlib.Path) -> None:
+        """Una parte text/* SIN charset es us-ascii por RFC 2045: el HTML adjunto se
+        abría con los acentos rotos aunque los bytes fueran UTF-8 válidos."""
+        src = tmp_path / "fx_2026-01-01.html"
+        src.write_text(_CURATED_SAMPLE, encoding="utf-8")
+        out = tmp_path / "eml"
+
+        r2e.process_file_passthrough(
+            src, out, sender="a@x.cl", to="b@y.cl", subject_prefix="", plain_dir=tmp_path / "plain",
+        )
+        m = email.message_from_bytes(
+            (out / "fx" / "fx_2026-01-01.eml").read_bytes(), policy=email.policy.default,
+        )
+        adj = next(p for p in m.walk() if p.get_content_disposition() == "attachment")
+        assert adj.get_content_charset() == "utf-8"
+        assert "Síntesis" in adj.get_content()
+
+    def test_attachment_is_the_final_html_the_user_fed_in(self, tmp_path: pathlib.Path) -> None:
+        """Flujo real: se edita el informe en el navegador, se baja la "versión final"
+        (sin panel 💾/📄) y ESE archivo se adjunta tal cual, con su nombre."""
+        src = tmp_path / "fx_2026-01-01.html"
+        src.write_text(r2e.make_editable_html(_CURATED_SAMPLE)
+                       if hasattr(r2e, "make_editable_html") else _CURATED_SAMPLE, encoding="utf-8")
+        out = tmp_path / "eml"
+
+        r2e.process_file_passthrough(
+            src, out, sender="a@x.cl", to="b@y.cl", subject_prefix="", plain_dir=tmp_path / "plain",
+        )
+        m = email.message_from_bytes(
+            (out / "fx" / "fx_2026-01-01.eml").read_bytes(), policy=email.policy.default,
+        )
+        adj = next(p for p in m.walk() if p.get_content_disposition() == "attachment")
+        adjunto = adj.get_content()
+        assert adj.get_filename() == "fx_2026-01-01.html"   # TU nombre, no el interno
+        assert "cb-save-widget" not in adjunto          # sin panel 💾/📄
+        assert "contenteditable" not in adjunto
+        assert "<svg" in adjunto                        # conserva los gráficos vectoriales
+        # es TU archivo de entrada, no la copia plana (salvo los CRLF del correo)
+        assert adjunto.replace("\r\n", "\n").rstrip() == src.read_text(encoding="utf-8").rstrip()
+
+    def test_images_are_related_siblings_of_the_body(self, tmp_path: pathlib.Path) -> None:
+        """Las imágenes cid: deben colgar de un multipart/related HERMANO del cuerpo.
+        Anidadas bajo la parte HTML, Outlook las lista como datos adjuntos en vez de
+        incrustarlas."""
+        src = tmp_path / "reporte_ffmm.html"
+        src.write_text(_SAMPLE, encoding="utf-8")
+        out = tmp_path / "eml"
+        out.mkdir()
+
+        r2e.process_file_passthrough(
+            src, out, sender="a@x.cl", to="b@y.cl", subject_prefix="", plain_dir=tmp_path / "plain",
+        )
+        m = email.message_from_bytes(
+            (out / "reporte_ffmm.eml").read_bytes(), policy=email.policy.default,
+        )
+        assert m.get_content_type() == "multipart/mixed"
+        related = m.get_payload(0)
+        assert related.get_content_type() == "multipart/related"
+        kids = [p.get_content_type() for p in related.iter_parts()]
+        assert kids[0] == "multipart/alternative"
+        assert "image/png" in kids
+        # inline y sin filename: con nombre reaparecen en la lista de adjuntos
+        img = next(p for p in related.iter_parts() if p.get_content_maintype() == "image")
+        assert img.get_content_disposition() == "inline" and img.get_filename() is None
+        # el único adjunto de verdad es el HTML navegable, con el nombre de entrada
+        assert [p.get_filename() for p in m.iter_parts() if p.get_content_disposition() == "attachment"] == [
+            "reporte_ffmm.html"
+        ]
+
+
+@pytest.mark.unit
+class TestFamilyFolders:
+    """Las salidas se agrupan por familia, igual que ``build_family_report.py``."""
+
+    def test_family_from_filename_prefix(self) -> None:
+        assert r2e._family_from_name(pathlib.Path("x/fx_2026-07-18.html")) == "fx"
+        assert r2e._family_from_name(pathlib.Path("x/ffmm_2026-06-15.html")) == "ffmm"
+
+    def test_family_falls_back_to_the_parent_folder(self) -> None:
+        """HTML renombrado a mano tras editarlo: el prefijo ya no dice la familia,
+        pero sigue viviendo en ``curated/<familia>/``."""
+        assert r2e._family_from_name(pathlib.Path("curated/fx/reporte_final.html")) == "fx"
+
+    def test_non_family_report_has_no_family(self) -> None:
+        # el informe descriptivo (parquet_report.py) no pertenece a una familia
+        assert r2e._family_from_name(pathlib.Path("html/reporte_ffmm_2026-06-21.html")) is None
+
+    def test_family_report_lands_in_its_subfolder(self, tmp_path: pathlib.Path) -> None:
+        src = tmp_path / "fx_2026-07-18.html"
+        src.write_text(_SAMPLE, encoding="utf-8")
+        out, plain = tmp_path / "eml", tmp_path / "plain"
+
+        r2e.process_file_passthrough(
+            src, out, sender="a@x.cl", to="b@y.cl", subject_prefix="", plain_dir=plain,
+        )
+        assert (out / "fx" / "fx_2026-07-18.eml").exists()
+        assert (plain / "fx" / "fx_2026-07-18.plano.html").exists()
+        assert [p.name for p in out.iterdir()] == ["fx"]  # nada suelto en la raíz
+
+    def test_non_family_report_stays_flat(self, tmp_path: pathlib.Path) -> None:
+        src = tmp_path / "reporte_ffmm_2026-06-21.html"
+        src.write_text(_SAMPLE, encoding="utf-8")
+        out, plain = tmp_path / "eml", tmp_path / "plain"
+
+        r2e.process_file_passthrough(
+            src, out, sender="a@x.cl", to="b@y.cl", subject_prefix="", plain_dir=plain,
+        )
+        assert (out / "reporte_ffmm_2026-06-21.eml").exists()
+        assert not (out / "ffmm").exists()
