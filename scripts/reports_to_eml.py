@@ -397,18 +397,42 @@ def _img_tag(cid: str, *, width: str) -> str:
 # en el HTML (no se redibuja desde los datos), así el correo lleva exactamente el
 # gráfico revisado en el navegador.
 
-def _cidify_charts(html: str, images: dict[str, tuple[str, bytes]]) -> tuple[str, int]:
-    """``<svg>`` inline → ``<img src="cid:…">`` con el PNG registrado en ``images``."""
+_RE_LEFTOVER_SVG = re.compile(r"<svg\b[^>]*>.*?</svg>", re.S | re.I)
+
+# Lo que ve el destinatario si un gráfico no se pudo rasterizar. Feo a propósito:
+# un hueco marcado es recuperable, texto de ejes derramado en el correo no.
+_SVG_FAILED_CARD = (
+    '<div style="border:1px dashed #c04a2a;background:#fff6f3;color:#9a3412;padding:18px;'
+    'text-align:center;font-size:13px;margin:6px auto">'
+    "Gráfico no disponible en el cuerpo del correo — abrir el HTML adjunto</div>"
+)
+
+
+def _cidify_charts(html: str, images: dict[str, tuple[str, bytes]]) -> tuple[str, int, int]:
+    """``<svg>`` inline → ``<img src="cid:…">`` con el PNG registrado en ``images``.
+
+    Ningún ``<svg>`` puede sobrevivir a esta función: el motor Word de Outlook no
+    renderiza SVG y, en vez de ignorarlo, **derrama el texto de los ``<text>``**
+    (ticks, categorías, leyenda) como párrafo en el cuerpo del correo. Los que no
+    se logren rasterizar se sustituyen por un recuadro de error visible.
+
+    Devuelve ``(html, n_rasterizados, n_fallidos)``.
+    """
 
     def emit(png: bytes, width: int, _height: int) -> str:
         cid = f"chart{uuid.uuid4().hex[:8]}@banks"
         images[cid] = ("png", png)
+        # SIN width:100%: el motor Word ignora max-width, así que un porcentaje estira
+        # el PNG al ancho del panel de lectura (borroso). El atributo width lo fija a
+        # su tamaño natural y max-width lo mantiene fluido en los clientes web.
         return (
             f'<img src="cid:{cid}" width="{width}" alt="" '
-            f'style="width:100%;max-width:{width}px;height:auto;display:block;margin:6px auto">'
+            f'style="max-width:100%;height:auto;display:block;margin:6px auto">'
         )
 
-    return rasterize_inline_svgs(html, emit)
+    html, n_ok = rasterize_inline_svgs(html, emit)
+    html, n_failed = _RE_LEFTOVER_SVG.subn(_SVG_FAILED_CARD, html)
+    return html, n_ok, n_failed
 
 
 # ── Ensamblado del cuerpo email-safe (inline styles + tablas) ────────────────
@@ -733,6 +757,31 @@ def strip_body_scripts(html: str) -> str:
     return _RE_CHART_TIP.sub("", _RE_ANY_SCRIPT.sub("", html))
 
 
+# ── Envoltorio de ancho (Outlook) ────────────────────────────────────────────
+# El motor Word NO soporta max-width ni `margin:auto`, así que el `.page` del informe
+# (max-width:1200px; margin:18px auto) no acota nada: el contenido queda pegado a los
+# bordes del panel de lectura. Lo único que Word respeta para el layout son TABLAS con
+# atributos, así que el cuerpo se envuelve en una tabla fluida con padding en su celda.
+# Fluida (width="100%") a propósito: una tabla de ancho fijo más ancha que el panel se
+# recorta sin scroll, y las tablas de datos del informe ya son anchas.
+_RE_BODY_OPEN = re.compile(r"<body\b[^>]*>", re.I)
+_RE_BODY_CLOSE = re.compile(r"</body>", re.I)
+
+_SHELL_OPEN = (
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+    'style="border-collapse:collapse"><tr><td style="padding:18px 24px 40px">'
+)
+_SHELL_CLOSE = "</td></tr></table>"
+
+
+def wrap_outlook_shell(html: str) -> str:
+    """Envuelve el contenido del ``<body>`` en la tabla de layout que Word sí respeta."""
+    if not (_RE_BODY_OPEN.search(html) and _RE_BODY_CLOSE.search(html)):
+        return _SHELL_OPEN + html + _SHELL_CLOSE  # fragmento sin <body>
+    html = _RE_BODY_OPEN.sub(lambda m: m.group(0) + _SHELL_OPEN, html, count=1)
+    return _RE_BODY_CLOSE.sub(_SHELL_CLOSE + "</body>", html, count=1)
+
+
 _RE_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.S | re.I)
 _RE_H1 = re.compile(r"<h1[^>]*>(.*?)</h1>", re.S | re.I)
 
@@ -761,9 +810,10 @@ def process_file_passthrough(path: pathlib.Path, out_dir: pathlib.Path, *, sende
 
     images: dict[str, tuple[str, bytes]] = {}
     body = _cidify_images(plain, images)        # data: (PNG + fotos pegadas) → cid:
-    body, n_svg = _cidify_charts(body, images)  # <svg> del informe curado → PNG cid:
+    body, n_svg, n_svg_fail = _cidify_charts(body, images)  # <svg> curado → PNG cid:
     body = strip_body_scripts(body)             # JS del tooltip: inútil en un correo
     body = inline_report_css(body)              # CSS del <head> → inline (Outlook)
+    body = wrap_outlook_shell(body)             # márgenes: Word ignora max-width
 
     # Copia PLANA (sin interacción) agrupada por familia, igual que build_family_report.py.
     plano_out = _family_dir(path, plain_dir)
@@ -784,6 +834,12 @@ def process_file_passthrough(path: pathlib.Path, out_dir: pathlib.Path, *, sende
     out = eml_out / f"{path.stem}.eml"
     out.write_bytes(eml)
     warn = f" · OJO {n_inter} gráfico(s) interactivo(s) omitido(s): reinsértalos en modo PNG" if n_inter else ""
+    if n_svg_fail:
+        # Rasterizar es lo que hace visible el gráfico en Outlook: si falla, el correo
+        # sale con huecos. Casi siempre es PyMuPDF ausente en el intérprete que corre
+        # el script (`pip install PyMuPDF`), no un SVG malo.
+        warn += (f" · FALLO {n_svg_fail} gráfico(s) NO rasterizado(s) → hueco en el correo; "
+                 f"revisa que PyMuPDF esté instalado en este intérprete")
     return (f"OK   {path.name} -> {out}  ({len(images)} imágenes inline, "
             f"{n_svg} desde SVG · plano -> {plano_path}){warn}")
 
