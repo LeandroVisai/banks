@@ -42,12 +42,22 @@ CHART_FAMILY: dict[str, str] = {
     "fx_var_line_interactive": "line",
     "spc_curve": "line",
     "curve_snapshot": "line",
+    "variation_line_interactive": "line",
+    "cumulative_line_interactive": "line",
+    # Curva por tenor con una fecha elegible (spread BTP-UST/SPC): el eje X es
+    # el plazo, no el tiempo — misma lectura que `spc_curve`.
+    "variation_per_date_selected": "line",
+    # Vela OHLC (Informe Cambiario AM). El informe curado la dibuja nativa
+    # (svg_chart._render_candlestick); fuera de ahí degrada a línea, que es la
+    # lectura correcta de un cierre diario.
+    "candlestick": "line",
     # áreas (apiladas)
     "stacked_area": "area",
     "stacked_area_line": "area",
     # barras simples
     "bar": "bar",
     "variation_bar": "bar",
+    "variation_bar_interactive": "bar",
     "relative_bar": "bar",
     "fx_var_bar_interactive": "bar",
     "hist_range": "bar",
@@ -70,6 +80,7 @@ CHART_FAMILY: dict[str, str] = {
     "nr_spot_cumulative_interactive": "stacked_bar",
     "fx_pos_cumulative_interactive": "stacked_bar",
     "stacked_neto_interactive": "stacked_bar",
+    "stock_cum_interactive": "stacked_bar",
     # dispersión
     "scatter": "point",
     "fx_retorno_scatter_interactive": "point",

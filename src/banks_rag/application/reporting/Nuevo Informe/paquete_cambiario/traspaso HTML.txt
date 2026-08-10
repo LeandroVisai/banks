@@ -1,0 +1,3407 @@
+import argparse
+import json
+import webbrowser
+import numpy as np
+import Get_Data as gd
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from pathlib import Path
+
+# ── Paths ─────────────────────────────────────────────────────────────
+ROOT        = Path(__file__).resolve().parents[1]
+VSCODE_ROOT = ROOT.parents[1]
+OUTPUT_HTML = ROOT / "outputs" / "CambiarioAM.html"
+TEMPLATE    = ROOT / "outputs" / "CambiarioAM_template.html"
+DATA_PATH   = r'C:\Users\jnunez\Documents\VisualStudio2017\Joaquin\banco\data\raw\Datos BI Informe Cambiario.xlsm'
+
+# ── Paleta ────────────────────────────────────────────────────────────
+NAVY   = "#001730"
+GOLD   = "#946826"
+MAROON = "#85144b"
+TEAL   = "#39CCCC"
+CYAN   = "#7FDBFF"
+BLUE   = "#0074D9"
+GRAY   = "rgba(128,128,128,0.20)"
+RED    = "#b42e20"
+
+# Paleta de percentiles para gráficos S/R — 
+PCT_P10  = "#0c8599"
+PCT_P25  = "#1f6feb"
+PCT_P50  = "#c0392b"
+PCT_P75  = "#8e44ad"
+PCT_P90  = "#1e8449"
+PCT_P100 = "#2c2c2c"
+
+# ═════════════════════════════════════════════════════════════════════
+# CARGA DE DATOS
+
+df = pd.read_excel(DATA_PATH, sheet_name="Datos", skiprows=3)
+df = df.rename(columns={df.columns[0]: "Fecha", df.columns[2]: "CLP minimo"})
+df["Fecha"] = pd.to_datetime(df["Fecha"])
+df = df.sort_values("Fecha").reset_index(drop=True)
+intradia = pd.read_excel(r'C:\Users\jnunez\Documents\VisualStudio2017\Joaquin\banco\data\raw\Datos BI Informe Cambiario.xlsm', sheet_name='Intradía').sort_values('Fecha - Hora')
+carrytrade= pd.read_excel('C:/Users/jnunez/Documents/VisualStudio2017/Joaquin/banco/data/raw/Datos BI Informe Cambiario.xlsm', sheet_name= 'CarryTrade', skiprows= 0)
+monedas = gd.get_data("select top 10 * from bbg_monedas order by fecha desc").dropna()
+clp_intra = gd.get_data("select * from inter_tc_intra where year(Fecha) >= 2023 and Hora between '9:00:00' and '14:00:00' order by fecha desc, hora asc")
+fixing = gd.get_data("WITH base AS (SELECT CASE WHEN Nombre_informante = 'BANCOBICE' THEN 'BICE' WHEN Nombre_informante IN ('BANCOBTGPA','BTGPACTUAL') THEN 'BTG' WHEN Nombre_informante = 'BANCOCONSO' THEN 'Consorcio' WHEN Nombre_informante = 'BANCODECHI' THEN 'Chile' WHEN Nombre_informante = 'BANCODECRE' THEN 'BCI' WHEN Nombre_informante = 'BANCODELES' THEN 'Estado' WHEN Nombre_informante = 'BANCOFALAB' THEN 'Falabella' WHEN Nombre_informante = 'BANCOINTER' THEN 'Internacional' WHEN Nombre_informante = 'BANCORIPLE' THEN 'Ripley' WHEN Nombre_informante = 'BANCOSANTA' THEN 'Santander' WHEN Nombre_informante = 'BANCOSECUR' THEN 'Security' WHEN Nombre_informante = 'CHINACONST' THEN 'China Construction Bank' WHEN Nombre_informante = 'HSBCBANK' THEN 'HSBC' WHEN Nombre_informante = 'ITAUCORPBA' THEN 'Itaú-Corpbanca' WHEN Nombre_informante = 'JPMORGANCH' THEN 'JP Morgan' WHEN Nombre_informante = 'SCOTIABANK' THEN 'Scotiabank' ELSE 'Nombre no encontrado' END AS NombreInformanteNorm, CASE WHEN UPPER(sector_cont) = 'FFMM' OR UPPER(sector_cont) LIKE '%FFMM%' THEN 'FFMM' WHEN UPPER(sector_cont) = 'AFP' OR UPPER(sector_cont) LIKE '%AFP%' THEN 'AFP' WHEN UPPER(sector_det_cont) LIKE '%AFP%' THEN 'AFP' WHEN UPPER(sector_det_cont) LIKE '%FFMM%' THEN 'FFMM' WHEN UPPER(sector_det_cont) LIKE '%PERSONAS%' THEN 'Otros' WHEN UPPER(sector_det_cont) = 'CORREDORAS_DE_BOLSA' THEN 'CB' WHEN UPPER(sector_det_cont) = 'CIAS_DE_SEGUROS' THEN 'CS' WHEN UPPER(sector_det_cont) = 'OFF_SHORE' THEN 'NR' WHEN UPPER(sector_det_cont) = 'BANCOS' THEN 'Bancos' WHEN UPPER(sector_det_cont) = 'BCCH' THEN 'BCCh' WHEN UPPER(sector_det_cont) = 'OTROS' THEN 'Otros' WHEN UPPER(sector_det_cont) = 'EMPRESA_REAL' THEN 'Emp_real' WHEN UPPER(sector_det_cont) = 'EMPRESA_FINANCIERA' THEN 'Emp_financiera' ELSE sector_det_cont END AS SectorContNorm, CAST(Fixing AS date) AS Fixing, Pos_neta FROM dace.dbo.deriv_vencimientos WHERE YEAR(Fecha_ven) >= 2026 AND YEAR(Fixing) >= 2026 AND Modalidad_pago = 'C' AND instrumento_nom = 'Forward' AND Nombre_informante NOT IN ('CREDICORPC','EUROAMERIC','LARRAINVIA')) SELECT NombreInformanteNorm, SectorContNorm, Fixing, SUM(Pos_neta) AS Pos_neta FROM base GROUP BY NombreInformanteNorm, SectorContNorm, Fixing UNION ALL SELECT 'Total' AS NombreInformanteNorm, SectorContNorm, Fixing, SUM(Pos_neta) AS Pos_neta FROM base GROUP BY SectorContNorm, Fixing ORDER BY Fixing DESC;")
+distclp = gd.get_data("WITH base AS (SELECT Fecha,Cotizacion FROM mesadineOLTP_.Mercado.Divisas WHERE Paridad='USD' AND Fecha>=DATEADD(DAY,-400,CAST(GETDATE() AS DATE)) AND Fecha<=CAST(GETDATE() AS DATE)),stats AS (SELECT AVG(Cotizacion) AS media,STDEV(Cotizacion) AS desviacion FROM base),normalizado AS (SELECT b.Fecha,b.Cotizacion,(b.Cotizacion-s.media)/s.desviacion AS z_score,s.media,s.desviacion FROM base b CROSS JOIN stats s),bins AS (SELECT ROUND(z_score,1) AS z_bin,(z_score*desviacion+media) AS clp_teorico FROM normalizado) SELECT FLOOR(clp_teorico/5)*5 AS CLP_Bucket,COUNT(*) AS Frecuencia FROM bins WHERE z_bin BETWEEN -2.5 AND 2.5 GROUP BY FLOOR(clp_teorico/5)*5 ORDER BY CLP_Bucket;")
+monedas1m = gd.get_data("WITH base AS (SELECT Fecha,Moneda,Valor,LAG(Valor,30) OVER (PARTITION BY Moneda ORDER BY Fecha) AS valor_t_30,ROW_NUMBER() OVER (PARTITION BY Moneda ORDER BY Fecha DESC) AS rn FROM (SELECT Fecha,Moneda,Valor FROM bbg_monedas UNPIVOT (Valor FOR Moneda IN (Argentina,Australia,Brasil,Bulgaria,Canada,Chile,China,Chinac,Colombia,Dinamarca,EEUU,Filipinas,Hongkong,Hungria,India,Indonesia,Israel,Japon,Korea,MSCILatam,Malasia,Mexico,NZelanda,Noruega,Peru,Polonia,RCheca,Rumania,Rusia,Singapur,Sudafrica,Suecia,Suiza,Tailandia,Turquia,UK,Zeuro)) u WHERE Valor IS NOT NULL AND YEAR(Fecha) >= 2026) t) SELECT Moneda,Fecha,Valor AS valor_t,valor_t_30,ROUND(((Valor/valor_t_30-1)*100),2) AS variacion_30d FROM base WHERE rn = 1 ORDER BY Moneda").sort_values('variacion_30d')
+gammaproxy = gd.get_data(";WITH base AS (SELECT Strike, FLOOR(Strike) AS Strike_bucket, Nocional, CAST(Fecha_negociacion AS date) AS fecha, CAST(Vencimiento AS date) AS venc, DATEDIFF(day, CAST(GETDATE() AS date), CAST(Vencimiento AS date)) AS dte, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY Strike) OVER (PARTITION BY CAST(Fecha_negociacion AS date)) AS strike_mediana FROM Inputs.Derivados.SDR_opciones_moneda WHERE Subyacente LIKE '%CLP%' AND Strike IS NOT NULL AND Strike > 0 AND Nocional > 0 AND Vencimiento >= CAST(GETDATE() AS date)), gamma_calc AS (SELECT Strike_bucket, MIN(Strike) AS Strike_min, MAX(Strike) AS Strike_max, SUM(Nocional * EXP(-50 * ABS((Strike * 1.0) / NULLIF(strike_mediana, 0) - 1)) * CASE WHEN dte > 0 THEN 1.0 / SQRT(dte) ELSE 1.0 END) AS gamma_proxy FROM base WHERE dte BETWEEN 0 AND 30 GROUP BY Strike_bucket), top20 AS (SELECT TOP 30 Strike_bucket, Strike_min, Strike_max, gamma_proxy FROM gamma_calc ORDER BY gamma_proxy DESC) SELECT Strike_bucket, Strike_min, Strike_max, gamma_proxy / 1000000.0 AS gamma_proxy_mm FROM top20 ORDER BY Strike_bucket ASC;")
+heatmap = gd.get_data(";WITH spot AS (SELECT TOP 1 Cotizacion AS spot_value FROM mesadineOLTP_.Mercado.Divisas WHERE Paridad = 'USD' ORDER BY Fecha DESC), base AS (SELECT Strike, ROUND(Strike,0) AS Strike_bucket, CONVERT(date, Vencimiento) AS venc, Nocional, CONVERT(date, Fecha_negociacion) AS fecha, DATEDIFF(day, CONVERT(date, GETDATE()), CONVERT(date, Vencimiento)) AS dte, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY Strike) OVER (PARTITION BY CONVERT(date, Fecha_negociacion)) AS strike_mediana FROM Inputs.Derivados.SDR_opciones_moneda WHERE Subyacente LIKE '%CLP%' AND Strike > 0 AND Nocional > 0 AND Vencimiento >= CONVERT(date, GETDATE())), gamma_calc AS (SELECT Strike_bucket, venc, SUM(Nocional * EXP(-50 * ABS((Strike*1.0) / NULLIF(strike_mediana,0) - 1)) * CASE WHEN dte > 0 THEN 1.0 / SQRT(dte) ELSE 1.0 END) / 1000000.0 AS gamma_proxy FROM base WHERE dte BETWEEN 0 AND 30 GROUP BY Strike_bucket, venc), range_filtered AS (SELECT g.Strike_bucket, g.venc, g.gamma_proxy FROM gamma_calc g CROSS JOIN spot s WHERE ABS(g.Strike_bucket - s.spot_value) <= 40), top10 AS (SELECT TOP 10 Strike_bucket FROM range_filtered GROUP BY Strike_bucket ORDER BY SUM(gamma_proxy) DESC), top_above AS (SELECT TOP 1 Strike_bucket FROM range_filtered r CROSS JOIN spot s WHERE r.Strike_bucket > s.spot_value GROUP BY Strike_bucket ORDER BY SUM(gamma_proxy) DESC), final_strikes AS (SELECT Strike_bucket FROM top10 UNION SELECT Strike_bucket FROM top_above) SELECT r.Strike_bucket, r.venc, r.gamma_proxy FROM range_filtered r JOIN final_strikes f ON r.Strike_bucket = f.Strike_bucket ORDER BY r.venc ASC, r.Strike_bucket ASC;").round(2)
+
+
+def _last_year(frame: pd.DataFrame, fecha_col: str = 'Fecha') -> pd.DataFrame:
+    """Filtra un DataFrame a los últimos 12 meses según fecha_col.
+
+    Usado por todos los gráficos de soporte/resistencia para que los
+    percentiles reflejen el régimen reciente y no toda la serie histórica.
+    """
+    max_date = frame[fecha_col].max()
+    return frame[frame[fecha_col] >= max_date - pd.DateOffset(years=1)].copy()
+
+# ═════════════════════════════════════════════════════════════════════
+# FIGURAS
+# ═════════════════════════════════════════════════════════════════════
+
+GRID = dict(showgrid=False, zeroline=False)
+
+LAYOUT_BASE = dict(
+    template='plotly_white',
+    font=dict(family='Arial, sans-serif', size=12, color='#333333'),
+    hovermode='closest',
+    hoverlabel=dict(
+        bgcolor='#ffffff',
+        bordercolor=GOLD,
+        font=dict(family='Barlow, Arial, sans-serif', size=12, color=NAVY),
+        namelength=-1,
+    ),
+    margin=dict(l=50, r=25, t=30, b=40),
+    legend=dict(orientation='h', yanchor='top', y=-0.15, xanchor='center', x=0.5, font=dict(size=11)),
+)
+
+data_select = dict(
+    **GRID,
+    rangeslider=dict(visible=False),
+)
+
+EMBED = dict(
+    **LAYOUT_BASE,
+    xaxis=data_select,
+)
+
+# Layout de los gráficos S/R: mismo margen base pero con más espacio a la
+# derecha para los tags P10/P25/… que se agregan al final de cada línea.
+SR_LAYOUT = {**LAYOUT_BASE, 'margin': dict(l=50, r=46, t=30, b=40)}
+
+
+def _add_pct_labels(fig: go.Figure, x_end, levels: list[tuple[float, str, str]]) -> None:
+    """Tag de texto (P10, P25, …) junto al extremo de cada línea de percentil.
+
+    Con la leyenda oculta (para no duplicar la info) esta es la única forma
+    de identificar a simple vista qué línea es cada banda; el nivel exacto
+    sigue viviendo en el hover.
+    """
+    for level, color, label in levels:
+        fig.add_annotation(
+            x=x_end, y=level, text=f'<b>{label}</b>',
+            showarrow=False, xref='x', yref='y',
+            xanchor='left', yanchor='middle', xshift=6,
+            font=dict(size=9.5, color=color, family='Barlow, Arial, sans-serif'),
+            bgcolor='rgba(255,255,255,0.80)', borderpad=1,
+        )
+
+
+# ── Candlestick CLP (últimos 3 meses) ────────────────────────────────
+candle = df.iloc[:, 0:7].copy()
+candle['Fecha'] = pd.to_datetime(candle['Fecha'])
+candle = candle[candle['Fecha'] >= candle['Fecha'].max() - pd.DateOffset(months=3)].reset_index(drop=True)
+
+# Soporte/resistencia del candlestick: P25/P75 del cierre sobre la misma
+# ventana de 3 meses que muestra el gráfico (coherencia visual-numérica).
+_candle_close = candle['CLP Cierre'].dropna()
+soporte_3m, resistencia_3m = np.percentile(_candle_close, [25, 75])
+
+figcandle = go.Figure(data=[go.Candlestick(
+    x=candle['Fecha'],
+    open=candle['CLP Apertura'], high=candle['CLP Max'],
+    low=candle['CLP minimo'],   close=candle['CLP Cierre'],
+    increasing=dict(line=dict(color='#27ae60'), fillcolor='#27ae60'),
+    decreasing=dict(line=dict(color='#e74c3c'), fillcolor='#e74c3c'),
+    name='USD/CLP', whiskerwidth=0.4,
+)]).update_layout(
+    **LAYOUT_BASE,
+    xaxis=dict(**GRID, rangeslider=dict(visible=False)),
+    yaxis=dict(**GRID, title='CLP', fixedrange=False),
+)
+
+# ── Cobre vs CLP ─────────────────────────────────────────────────────
+figcobre_clp = make_subplots(specs=[[{"secondary_y": True}]])
+figcobre_clp.add_trace(go.Scatter(
+    x=df['Fecha'], y=df['Drivers Precio Cobre HGA']/100,
+    name='Cobre (USD/lb)', line=dict(color='#b5551b', width=1.5),
+), secondary_y=False)
+figcobre_clp.add_trace(go.Scatter(
+    x=df['Fecha'], y=df['CLP Cierre'],
+    name='CLP Cierre', line=dict(color=NAVY, width=1.5),
+), secondary_y=True)
+figcobre_clp.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='Cobre · USD/lb'),
+    yaxis2=dict(**GRID, title='CLP', overlaying='y', side='right'),
+)
+
+# ── DXY vs CLP ───────────────────────────────────────────────────────
+figdxy_clp = make_subplots(specs=[[{"secondary_y": True}]])
+figdxy_clp.add_trace(go.Scatter(
+    x=df['Fecha'], y=df['Drivers DXY '],
+    name='DXY', line=dict(color='#e67e22', width=1.5),
+), secondary_y=False)
+figdxy_clp.add_trace(go.Scatter(
+    x=df['Fecha'], y=df['CLP Cierre'],
+    name='CLP Cierre', line=dict(color=NAVY, width=1.5),
+), secondary_y=True)
+figdxy_clp.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='DXY'),
+    yaxis2=dict(**GRID, title='CLP', overlaying='y', side='right'),
+)
+
+# ── Variación monedas ─────────────────────────────────────────────────
+monedas2 = pd.melt(monedas, id_vars='Fecha', var_name='Pais', value_name='Valor Moneda').sort_values(['Fecha', 'Pais'])
+monedas2['Variacion pct (%)'] = (monedas2.groupby('Pais')['Valor Moneda'].pct_change() * 100).round(2)
+last = monedas2.sort_values(['Pais', 'Fecha']).groupby('Pais').tail(1)
+last['color'] = last['Variacion pct (%)'].apply(lambda x: 'Variación Positiva' if x > 0 else 'Variación negativa')
+last = last.sort_values('Variacion pct (%)', ascending=False)
+figvariacion = px.bar(
+    data_frame=last, x='Pais', y='Variacion pct (%)', color='color',
+    color_discrete_map={'Variación Positiva': NAVY, 'Variación negativa': MAROON},
+    template='plotly_white',
+).update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='Variación (%)'),
+    legend_title_text='Variación',
+)
+
+# ── Intradía ──────────────────────────────────────────────────────────
+figintra = go.Figure()
+figintra.add_traces([
+    go.Scatter(x=intradia['Fecha - Hora'], y=intradia['CLP base 100'],
+               name='CLP Base 100', line=dict(color=NAVY, width=1.5)),
+    go.Scatter(x=intradia['Fecha - Hora'], y=intradia['DXY Base 100'],
+               name='DXY Base 100', line=dict(color='#e67e22', width=1.5)),
+    go.Scatter(x=intradia['Fecha - Hora'], y=intradia['HGA Base 100'],
+               name='Cobre Base 100', line=dict(color='#b5551b', width=1.5)),
+])
+figintra.update_layout(
+    **LAYOUT_BASE,
+    xaxis=dict(**GRID, tickangle=-40),
+    yaxis=dict(**GRID, title='Índice Base 100'),
+)
+
+# ── Bollinger CLP (20d) ───────────────────────────────────────────────
+period = 20
+clp_bb = df[['Fecha', 'CLP Cierre']].copy()
+clp_bb['BB_MA']    = clp_bb['CLP Cierre'].rolling(period).mean()
+clp_bb['BB_STD']   = clp_bb['CLP Cierre'].rolling(period).std()
+clp_bb['BB_Upper'] = clp_bb['BB_MA'] + 2 * clp_bb['BB_STD']
+clp_bb['BB_Lower'] = clp_bb['BB_MA'] - 2 * clp_bb['BB_STD']
+figclpbb = go.Figure()
+figclpbb.add_traces([
+    go.Scatter(x=clp_bb['Fecha'], y=clp_bb['BB_Upper'], name='Banda superior',
+               line=dict(color=GOLD, width=1, dash='dot'), showlegend=True),
+    go.Scatter(x=clp_bb['Fecha'], y=clp_bb['BB_Lower'], name='Banda inferior',
+               line=dict(color=GOLD, width=1, dash='dot'),
+               fill='tonexty', fillcolor='rgba(133,117,25,0.07)'),
+    go.Scatter(x=clp_bb['Fecha'], y=clp_bb['BB_MA'], name=f'MA {period}d',
+               line=dict(color=MAROON, width=1, dash='dash')),
+    go.Scatter(x=clp_bb['Fecha'], y=clp_bb['CLP Cierre'], name='CLP Cierre',
+               line=dict(color=NAVY, width=1.8)),
+])
+figclpbb.update_layout(**LAYOUT_BASE, xaxis=data_select, yaxis=dict(**GRID, title='CLP'))
+
+# ── Medias móviles CLP ───────────────────────────────────────────────
+# MA50/MA200 son las relevantes técnicamente (cruce dorado/de la muerte), así
+# que se destacan con los colores institucionales fuertes (oro/granate) y
+# trazo grueso; el resto queda en una gama gris-navy tenue de solo contexto.
+ma_cols = [c for c in df.columns if isinstance(c, str) and "Media móvil" in c]
+
+
+def _ma_period(col: str) -> int | None:
+    for token in col.split():
+        if token.isdigit():
+            return int(token)
+    return None
+
+
+MA_HIGHLIGHT = {50: GOLD, 200: MAROON}
+MA_MUTED     = {10: "#c3ccd6", 20: "#8fa0b3", 100: "#4d6178"}
+
+figma = make_subplots(specs=[[{"secondary_y": True}]])
+
+for col in ["CLP Cierre"] + ma_cols:
+    if col == "CLP Cierre":
+        style = dict(color=NAVY, width=1.6)
+    else:
+        period = _ma_period(col)
+        if period in MA_HIGHLIGHT:
+            style = dict(color=MA_HIGHLIGHT[period], width=2.2)
+        else:
+            style = dict(color=MA_MUTED.get(period, "#9aa2b1"), width=0.8)
+    figma.add_trace(go.Scatter(
+        x=df["Fecha"], y=df[col],
+        name=col,
+        line=dict(**style, shape="spline", smoothing=0.8),
+    ), secondary_y=False)
+
+figma.add_trace(go.Scatter(
+    x=df["Fecha"], y=df["CLP Monto Transado"].rolling(window = 5).mean(),
+    name="Media Móvil 5d Monto Transado",
+    fill="tozeroy",
+    fillcolor="rgba(128,128,128,0.15)",
+    line=dict(color="rgba(128,128,128,0.45)", width=0, shape="spline", smoothing=0.8),
+    hovertemplate="<b>Media Móvil 5d Monto Transado</b><br>%{x|%Y-%m-%d}: %{y:,.0f}<extra></extra>",
+), secondary_y=True)
+
+figma.update_layout(
+    **LAYOUT_BASE,
+    xaxis=data_select,
+    yaxis=dict(**GRID, title="CLP"),
+    yaxis2=dict(**GRID, title="Monto Transado", overlaying="y", side="right",
+                range=[500, df["CLP Monto Transado"].max() * 1.2]),
+)
+
+
+# ── S/R CLP ──────────────────────────────────────────────────────────
+clp_sr = _last_year(df[['Fecha', 'CLP Cierre']].dropna(subset=['CLP Cierre']))
+p10_c, p25_c, p50_c, p75_c, p90_c, p100_c = np.percentile(clp_sr['CLP Cierre'], [10, 25, 50, 75, 90, 100])
+max_dt_clp = clp_sr['Fecha'].max()
+min_dt_clp = clp_sr['Fecha'].min()
+
+figsr_clp = go.Figure()
+figsr_clp.add_trace(go.Scatter(x=clp_sr['Fecha'], y=clp_sr['CLP Cierre'],
+                               name='CLP Cierre', line=dict(color=NAVY, width=1.8)))
+figsr_clp.add_traces([
+    go.Scatter(x=[min_dt_clp, max_dt_clp], y=[p10_c, p10_c],   name=f'P10  · {p10_c:,.0f}',  mode='lines', line=dict(color=PCT_P10,  width=1.3, dash='dash'), showlegend=False),
+    go.Scatter(x=[min_dt_clp, max_dt_clp], y=[p25_c, p25_c],   name=f'P25  · {p25_c:,.0f}',  mode='lines', line=dict(color=PCT_P25,  width=1.3, dash='dot'), showlegend=False),
+    go.Scatter(x=[min_dt_clp, max_dt_clp], y=[p50_c, p50_c],   name=f'P50  · {p50_c:,.0f}',  mode='lines', line=dict(color=PCT_P50,  width=1.8, dash='dash'), showlegend=False),
+    go.Scatter(x=[min_dt_clp, max_dt_clp], y=[p75_c, p75_c],   name=f'P75  · {p75_c:,.0f}',  mode='lines', line=dict(color=PCT_P75,  width=1.3, dash='dot'), showlegend=False),
+    go.Scatter(x=[min_dt_clp, max_dt_clp], y=[p90_c, p90_c],   name=f'P90  · {p90_c:,.0f}',  mode='lines', line=dict(color=PCT_P90,  width=1.3, dash='dash'), showlegend=False),
+    go.Scatter(x=[min_dt_clp, max_dt_clp], y=[p100_c, p100_c], name=f'P100 · {p100_c:,.0f}', mode='lines', line=dict(color=PCT_P100, width=1.2, dash='longdash'), showlegend=False),
+])
+_add_pct_labels(figsr_clp, max_dt_clp, [
+    (p10_c, PCT_P10, 'P10'), (p25_c, PCT_P25, 'P25'), (p50_c, PCT_P50, 'P50'),
+    (p75_c, PCT_P75, 'P75'), (p90_c, PCT_P90, 'P90'), (p100_c, PCT_P100, 'P100'),
+])
+figsr_clp.update_layout(
+    **SR_LAYOUT,
+    xaxis=dict(**GRID, rangeslider=dict(visible=False)),
+    yaxis=dict(**GRID, title='CLP', fixedrange=False)
+)
+
+# ──  CLP ──────────────────────────────────────────────────────────
+_rsi_start = df['RSI RSI Pos. OffShore'].first_valid_index()
+_rsi_start_date = df.loc[_rsi_start, 'Fecha']
+rsi_df = df[df['Fecha'] >= _rsi_start_date].copy()
+
+figrsi = make_subplots(specs=[[{"secondary_y": True}]])
+figrsi.add_trace(go.Scatter(x=rsi_df['Fecha'], y=rsi_df['RSI RSI Pos. OffShore'],
+                             name='RSI Pos. Offshore', line=dict(color=MAROON, width=1.5)),
+                 secondary_y=False)
+figrsi.add_trace(go.Scatter(x=rsi_df['Fecha'], y=rsi_df['RSI RSI CLP'],
+                             name='RSI CLP', line=dict(color=NAVY, width=1.5)),
+                 secondary_y=True)
+figrsi.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='RSI Pos. Offshore'),
+    yaxis2=dict(**GRID, title='RSI CLP', overlaying='y', side='right'),
+)
+
+# ── Distribución CLP ─────────────────────────────────────────────────
+figdistclp = px.bar(
+    data_frame=distclp, x='CLP_Bucket', y='Frecuencia',
+    template='plotly_white', color_discrete_sequence=["#001730"],
+).update_xaxes(title='Bucket CLP', dtick=5).update_layout(**LAYOUT_BASE, xaxis=dict(**GRID, tickangle=-40))
+
+# ── S/R Cobre ────────────────────────────────────────────────────────
+cobre_sr = _last_year(df[['Fecha', 'Drivers Precio Cobre HGA']].dropna(subset=['Drivers Precio Cobre HGA']))
+p10_cu, p25_cu, p50_cu, p75_cu, p90_cu, p100_cu = np.percentile(cobre_sr['Drivers Precio Cobre HGA'], [10, 25, 50, 75, 90, 100])
+max_dt_cu = cobre_sr['Fecha'].max()
+min_dt_cu = cobre_sr['Fecha'].min()
+
+figsr_cobre = go.Figure()
+figsr_cobre.add_trace(go.Scatter(x=cobre_sr['Fecha'], y=cobre_sr['Drivers Precio Cobre HGA'],
+                                  name='Cobre (USD/lb)', line=dict(color='#b5551b', width=1.8)))
+figsr_cobre.add_traces([
+    go.Scatter(x=[min_dt_cu, max_dt_cu], y=[p10_cu, p10_cu],   name=f'P10  · {p10_cu:.2f}',  mode='lines', line=dict(color=PCT_P10,  width=1.3, dash='dash'), showlegend=False),
+    go.Scatter(x=[min_dt_cu, max_dt_cu], y=[p25_cu, p25_cu],   name=f'P25  · {p25_cu:.2f}',  mode='lines', line=dict(color=PCT_P25,  width=1.3, dash='dot'), showlegend=False),
+    go.Scatter(x=[min_dt_cu, max_dt_cu], y=[p50_cu, p50_cu],   name=f'P50  · {p50_cu:.2f}',  mode='lines', line=dict(color=PCT_P50,  width=1.8, dash='dash'), showlegend=False),
+    go.Scatter(x=[min_dt_cu, max_dt_cu], y=[p75_cu, p75_cu],   name=f'P75  · {p75_cu:.2f}',  mode='lines', line=dict(color=PCT_P75,  width=1.3, dash='dot'), showlegend=False),
+    go.Scatter(x=[min_dt_cu, max_dt_cu], y=[p90_cu, p90_cu],   name=f'P90  · {p90_cu:.2f}',  mode='lines', line=dict(color=PCT_P90,  width=1.3, dash='dash'), showlegend=False),
+    go.Scatter(x=[min_dt_cu, max_dt_cu], y=[p100_cu, p100_cu], name=f'P100 · {p100_cu:.2f}', mode='lines', line=dict(color=PCT_P100, width=1.2, dash='longdash'), showlegend=False),
+])
+_add_pct_labels(figsr_cobre, max_dt_cu, [
+    (p10_cu, PCT_P10, 'P10'), (p25_cu, PCT_P25, 'P25'), (p50_cu, PCT_P50, 'P50'),
+    (p75_cu, PCT_P75, 'P75'), (p90_cu, PCT_P90, 'P90'), (p100_cu, PCT_P100, 'P100'),
+])
+figsr_cobre.update_layout(
+    **SR_LAYOUT,
+    xaxis=dict(**GRID, rangeslider=dict(visible=False)),
+    yaxis=dict(**GRID, title='Cobre · USD/lb', fixedrange=False)
+)
+
+# ── S/R DXY ──────────────────────────────────────────────────────────
+dxy_sr = _last_year(df[['Fecha', 'Drivers DXY ']].dropna(subset=['Drivers DXY ']))
+p10_dx, p25_dx, p50_dx, p75_dx, p90_dx, p100_dx = np.percentile(dxy_sr['Drivers DXY '], [10, 25, 50, 75, 90, 100])
+max_dt_dx = dxy_sr['Fecha'].max()
+min_dt_dx = dxy_sr['Fecha'].min()
+figsr_dxy = go.Figure()
+figsr_dxy.add_trace(go.Scatter(x=dxy_sr['Fecha'], y=dxy_sr['Drivers DXY '],
+                                name='DXY', line=dict(color='#e67e22', width=1.8)))
+figsr_dxy.add_traces([
+    go.Scatter(x=[min_dt_dx, max_dt_dx], y=[p10_dx, p10_dx],   name=f'P10  · {p10_dx:.2f}',  mode='lines', line=dict(color=PCT_P10,  width=1.3, dash='dash'), showlegend=False),
+    go.Scatter(x=[min_dt_dx, max_dt_dx], y=[p25_dx, p25_dx],   name=f'P25  · {p25_dx:.2f}',  mode='lines', line=dict(color=PCT_P25,  width=1.3, dash='dot'), showlegend=False),
+    go.Scatter(x=[min_dt_dx, max_dt_dx], y=[p50_dx, p50_dx],   name=f'P50  · {p50_dx:.2f}',  mode='lines', line=dict(color=PCT_P50,  width=1.8, dash='dash'), showlegend=False),
+    go.Scatter(x=[min_dt_dx, max_dt_dx], y=[p75_dx, p75_dx],   name=f'P75  · {p75_dx:.2f}',  mode='lines', line=dict(color=PCT_P75,  width=1.3, dash='dot'), showlegend=False),
+    go.Scatter(x=[min_dt_dx, max_dt_dx], y=[p90_dx, p90_dx],   name=f'P90  · {p90_dx:.2f}',  mode='lines', line=dict(color=PCT_P90,  width=1.3, dash='dash'), showlegend=False),
+    go.Scatter(x=[min_dt_dx, max_dt_dx], y=[p100_dx, p100_dx], name=f'P100 · {p100_dx:.2f}', mode='lines', line=dict(color=PCT_P100, width=1.2, dash='longdash'), showlegend=False),
+])
+_add_pct_labels(figsr_dxy, max_dt_dx, [
+    (p10_dx, PCT_P10, 'P10'), (p25_dx, PCT_P25, 'P25'), (p50_dx, PCT_P50, 'P50'),
+    (p75_dx, PCT_P75, 'P75'), (p90_dx, PCT_P90, 'P90'), (p100_dx, PCT_P100, 'P100'),
+])
+figsr_dxy.update_layout(
+    **SR_LAYOUT,
+    xaxis=dict(**GRID, rangeslider=dict(visible=False)),
+    yaxis=dict(**GRID, title='DXY', fixedrange=False)
+)
+
+# ── RSI DXY (14d) con niveles 70/30 ──────────────────────────────────
+rsi_dx = df[['Fecha', 'RSI RSI DXY']].dropna(subset=['RSI RSI DXY']).sort_values('Fecha')
+_mn_dx, _mx_dx = rsi_dx['Fecha'].min(), rsi_dx['Fecha'].max()
+
+fig_rsi_dxy = go.Figure()
+fig_rsi_dxy.add_trace(go.Scatter(
+    x=rsi_dx['Fecha'], y=rsi_dx['RSI RSI DXY'],
+    name='RSI DXY (14d)',
+    line=dict(color='#e67e22', width=1.8),
+    hovertemplate='<b>RSI DXY</b><br>%{x|%Y-%m-%d}: %{y:.1f}<extra></extra>',
+))
+for level, name, color in [(70, 'Sobrecompra · 70', MAROON), (30, 'Sobreventa · 30', TEAL)]:
+    fig_rsi_dxy.add_trace(go.Scatter(
+        x=[_mn_dx, _mx_dx], y=[level, level],
+        name=name, mode='lines',
+        line=dict(color=color, width=1.2, dash='dash'),
+        hoverinfo='skip',
+    ))
+fig_rsi_dxy.update_layout(
+    **LAYOUT_BASE,
+    title=dict(text='RSI 14d · DXY (Índice Dólar)', font=dict(size=15, color=NAVY)),
+    xaxis=data_select,
+    yaxis=dict(**GRID, title='RSI', range=[0, 100]),
+)
+
+
+#Volatilidad implícita 1w de todos los países:
+VOL_CFG = [
+    ('Misceláneos Volatilidad implicita Opciones 1W CLP', 'Vol 1W · CLP', NAVY),
+    ('Misceláneos Volatilidad implicita Opciones 1W MXN', 'Vol 1W · MXN', MAROON),
+    ('Misceláneos Volatilidad implicita Opciones 1W BRL', 'Vol 1W · BRL', '#2ECC40'),
+    ('Misceláneos Volatilidad implicita Opciones 1W COP', 'Vol 1W · COP', BLUE),
+]
+
+fig_vol1w = go.Figure()
+for col, label, color in VOL_CFG:
+    s = df[['Fecha', col]].dropna(subset=[col])
+    fig_vol1w.add_trace(go.Scatter(
+        x=s['Fecha'], y=s[col],
+        name=label,
+        line=dict(color=color, width=1.5),
+        hovertemplate=f'<b>{label}</b><br>%{{x|%Y-%m-%d}}: %{{y:.2f}}%<extra></extra>',
+    ))
+fig_vol1w.update_layout(
+    **LAYOUT_BASE,
+    xaxis=data_select,
+    yaxis=dict(**GRID, title='Vol. Implícita (%)'),
+)
+
+#____________________________________________________________________________________________
+# Monedas base 100:
+
+# ───Funcion de calculo para las monedas en Base 100
+
+def fig_base100_dynamic(df, fecha_col, series_cfg, title):
+    """
+    Gráfico de monedas base 100 con rebase dinámico por período.
+    Cada botón (1M, 3M…) recalcula la base 100 desde el inicio de esa ventana.
+    """
+    max_date = df[fecha_col].dropna().max()
+
+    # Fecha de inicio común para 'Todo': última primera-fecha-válida entre todas las series
+    all_starts = [
+        df[[fecha_col, col]].dropna(subset=[col])[fecha_col].min()
+        for col, _, _ in series_cfg
+        if len(df[[fecha_col, col]].dropna(subset=[col])) > 0
+    ]
+    min_date = max(all_starts) if all_starts else df[fecha_col].min()
+
+    periods = [
+        ('1M',  max_date - pd.DateOffset(months=1)),
+        ('3M',  max_date - pd.DateOffset(months=3)),
+        ('6M',  max_date - pd.DateOffset(months=6)),
+        ('1A',  max_date - pd.DateOffset(years=1)),
+        ('YTD', pd.Timestamp(max_date.year, 1, 1)),
+        ('Todo', min_date),
+    ]
+
+    def _rebase(start):
+        """Retorna (xs, ys) para todas las series rebased a 100 desde start."""
+        xs, ys = [], []
+        for col, _, _ in series_cfg:
+            s = df[[fecha_col, col]].dropna(subset=[col]).sort_values(fecha_col)
+            sf = s[s[fecha_col] >= start]
+            if len(sf) == 0:
+                xs.append([])
+                ys.append([])
+            else:
+                base = sf[col].iloc[0]
+                xs.append(sf[fecha_col].dt.strftime('%Y-%m-%d').tolist())
+                ys.append((sf[col] / base * 100).tolist())
+        return xs, ys
+
+    # El gráfico muestra solo los últimos 2 meses (rebase a 100 desde el
+    # inicio de esa ventana) en vez de toda la historia, para que se lea mejor.
+    default_window_start = max(min_date, max_date - pd.DateOffset(months=2))
+    init_xs, init_ys = _rebase(default_window_start)
+
+    fig = go.Figure()
+    for i, (_, label, color) in enumerate(series_cfg):
+        fig.add_trace(go.Scatter(
+            x=init_xs[i], y=init_ys[i],
+            name=label,
+            line=dict(color=color, width=1.5),
+            hovertemplate=f'<b>{label}</b><br>%{{x|%Y-%m-%d}}: %{{y:.2f}}<extra></extra>',
+        ))
+
+    buttons = []
+    for lbl, start in periods:
+        xs, ys = _rebase(start)
+        buttons.append(dict(
+            label=lbl,
+            method='update',
+            args=[
+                {'x': xs, 'y': ys},
+                {'xaxis.range': [start.strftime('%Y-%m-%d'), max_date.strftime('%Y-%m-%d')]},
+            ],
+        ))
+
+    fig.update_layout(
+        **LAYOUT_BASE,
+        title=dict(text=title, font=dict(size=15, color=NAVY)),
+        xaxis=dict(**GRID, rangeslider=dict(visible=False)),
+        yaxis=dict(**GRID, title='Índice Base 100'),
+    )
+    return fig
+
+#____________________________________________________________________________
+# Monedas G10 · Base 100
+G10_CFG = [
+    ('G10 EUR',                 'EUR · Euro',              '#0074D9'),
+    ('G10 GBP',                 'GBP · Libra esterlina',   '#9b59b6'),
+    ('G10 JPY',                 'JPY · Yen japonés',       '#e74c3c'),
+    ('G10 CHF',                 'CHF · Franco suizo',      '#e67e22'),
+    ('G10 SEK',                 'SEK · Corona sueca',      '#1abc9c'),
+    ('G10 DKK',                 'DKK · Corona danesa',     TEAL),
+    ('Monedas Commodities NOK', 'NOK · Corona noruega',    '#2ecc71'),
+    ('Monedas Commodities AUD', 'AUD · Dólar australiano', '#3498db'),
+    ('Monedas Commodities CAD', 'CAD · Dólar canadiense',  GOLD),
+    ('Monedas Commodities NZD', 'NZD · Dólar neozelandés', '#f39c12'),
+]
+fig_g10 = fig_base100_dynamic(df, 'Fecha', G10_CFG, None)
+
+LATAM_CFG = [
+    ('CLP Cierre',         'CLP · Peso chileno',    NAVY),
+    ('Monedas LATAM MXN',  'MXN · Peso mexicano',   GOLD),
+    ('Monedas LATAM BRL',  'BRL · Real brasileño',  '#2ECC40'),
+    ('Monedas LATAM COP',  'COP · Peso colombiano', BLUE),
+    ('Monedas LATAM PEN',  'PEN · Sol peruano',     '#FF851B'),
+    ('Monedas LATAM ARS',  'ARS · Peso argentino',  MAROON),
+]
+fig_latam = fig_base100_dynamic(df, 'Fecha', LATAM_CFG, None)
+
+EM_CFG = [
+    ('Monedas Comparables RUBLO RUSO',       'RUB · Rublo ruso',        '#e74c3c'),
+    ('Monedas Comparables RAND SUDAFRICANO', 'ZAR · Rand sudafricano',  '#f39c12'),
+    ('Monedas Comparables RENMINBI CHINO',   'CNY · Renminbi chino',    '#c0392b'),
+    ('Monedas Comparables LIRA TURCA',       'TRY · Lira turca',        '#8e44ad'),
+    ('Monedas Comparables WON COREANO',      'KRW · Won coreano',       '#27ae60'),
+    ('Monedas Comparables RUPIA INDIA',      'INR · Rupia india',       '#2980b9'),
+    ('Monedas Comparables PESO FILIPINO',    'PHP · Peso filipino',     '#16a085'),
+    ('Monedas Comparables BAHT TAILANDÉS',   'THB · Baht tailandés',    '#d35400'),
+    ('Monedas Comparables RINGGIT MALAYO',   'MYR · Ringgit malayo',    '#1abc9c'),
+    ('Monedas Comparables RUPIA INDONESA',   'IDR · Rupia indonesia',   '#7f8c8d'),
+]
+fig_em = fig_base100_dynamic(df, 'Fecha', EM_CFG, None)
+
+DEV_CFG = [
+    ('Monedas Comparables FORINT HUNGARO',   'HUF · Forint húngaro',     '#2980b9'),
+    ('Monedas Comparables ZLOTY POLACO',     'PLN · Zloty polaco',        '#8e44ad'),
+    ('Monedas Comparables CORONA CHECA',     'CZK · Corona checa',        '#27ae60'),
+    ('Monedas Comparables DÓLAR HONKONÉS',   'HKD · Dólar honkonés',      '#e67e22'),
+    ('Monedas Comparables DÓLAR SINGAPUR ',  'SGD · Dólar singapurense',  '#c0392b'),
+    ('Monedas Comparables DÓLAR TAIWANES',   'TWD · Dólar taiwanés',      '#1abc9c'),
+    ('Monedas Comparables LEV BULGARO',      'BGN · Lev búlgaro',         '#d35400'),
+    ('Monedas Comparables LEU RUMANO',       'RON · Leu rumano',          '#7f8c8d'),
+]
+fig_dev = fig_base100_dynamic(df, 'Fecha', DEV_CFG, None)
+
+#=========================================================
+# RSI Cobre (14d) con niveles P70/P30 dinámicos
+rsi_cu = df[['Fecha', 'RSI RSI Cobre']].dropna(subset=['RSI RSI Cobre']).copy()
+_mn_cu, _mx_cu = rsi_cu['Fecha'].min(), rsi_cu['Fecha'].max()
+
+fig_rsi_cobre = go.Figure()
+fig_rsi_cobre.add_trace(go.Scatter(
+    x=rsi_cu['Fecha'], y=rsi_cu['RSI RSI Cobre'],
+    name='RSI Cobre (14d)', line=dict(color='#b5551b', width=1.8),
+    hovertemplate='<b>RSI Cobre</b><br>%{x|%Y-%m-%d}: %{y:.1f}<extra></extra>'
+))
+
+_p70_cu = np.percentile(rsi_cu["RSI RSI Cobre"], 70)
+_p30_cu = np.percentile(rsi_cu['RSI RSI Cobre'], 30)
+
+for _lvl, _nm, _col in [(70, 'Sobrecompra · 70', RED), (30,'Sobreventa · 30', TEAL)]:
+    fig_rsi_cobre.add_trace(go.Scatter(
+        x=[_mn_cu, _mx_cu], y=[_lvl, _lvl], name=_nm, mode='lines',
+        line=dict(color=_col, width=1.2, dash='dash'), hoverinfo='skip',
+    ))
+fig_rsi_cobre.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='RSI'),
+)
+
+# ── Cobre COMEX (HGA) vs Londres (LME) + spread ──────────────────────
+_cu_cols = ['Drivers Precio Cobre HGA', 'Drivers Precio Londres']
+cobre_ny = df[['Fecha'] + _cu_cols].dropna(subset=_cu_cols).copy()
+cobre_ny['HGA_usdlb']     = cobre_ny['Drivers Precio Cobre HGA'] / 100
+cobre_ny['Londres_usdlb'] = cobre_ny['Drivers Precio Londres'] / 2262.64
+cobre_ny['Spread_usdlb']  = cobre_ny['HGA_usdlb'] - cobre_ny['Londres_usdlb']
+
+fig_cobre_ny = make_subplots(specs=[[{"secondary_y": True}]])
+fig_cobre_ny.add_trace(go.Scatter(
+    x=cobre_ny['Fecha'], y=cobre_ny['HGA_usdlb'],
+    name='HGA (COMEX)', mode='lines',
+    line=dict(color='#b5551b', width=1.5),
+    hovertemplate='<b>COMEX</b><br>%{x|%Y-%m-%d}: %{y:.3f}<extra></extra>',
+), secondary_y=False)
+fig_cobre_ny.add_trace(go.Scatter(
+    x=cobre_ny['Fecha'], y=cobre_ny['Londres_usdlb'],
+    name='Londres (LME)', mode='lines',
+    line=dict(color=NAVY, width=1.5),
+    hovertemplate='<b>Londres</b><br>%{x|%Y-%m-%d}: %{y:.3f}<extra></extra>',
+), secondary_y=False)
+fig_cobre_ny.add_trace(go.Scatter(
+    x=cobre_ny['Fecha'], y=cobre_ny['Spread_usdlb'],
+    name='Spread HGA–Londres', mode='markers',
+    marker=dict(color=GOLD, size=4, opacity=0.8),
+    hovertemplate='<b>Spread</b><br>%{x|%Y-%m-%d}: %{y:.3f}<extra></extra>',
+), secondary_y=True)
+fig_cobre_ny.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='Cobre (USD/lb)'),
+    yaxis2=dict(**GRID, title='Spread (USD/lb)', overlaying='y', side='right'),
+)
+
+# ── Términos de intercambio GS vs CLP ─────────────────────────────────
+tot_gs_df = df[['Fecha',
+                'Términos de intercambio GS Terms of Trade',
+                'CLP Cierre']].dropna(subset=['Términos de intercambio GS Terms of Trade']).copy()
+
+fig_tot_gs = make_subplots(specs=[[{"secondary_y": True}]])
+fig_tot_gs.add_trace(go.Scatter(
+    x=tot_gs_df['Fecha'], y=tot_gs_df['Términos de intercambio GS Terms of Trade'],
+    name='ToT GS', line=dict(color=GOLD, width=1.5),
+), secondary_y=False)
+fig_tot_gs.add_trace(go.Scatter(
+    x=tot_gs_df['Fecha'], y=tot_gs_df['CLP Cierre'],
+    name='CLP', line=dict(color=NAVY, width=1.5),
+), secondary_y=True)
+fig_tot_gs.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='Términos de Intercambio GS'),
+    yaxis2=dict(**GRID, title='CLP', overlaying='y', side='right'),
+)
+
+# ── Términos de intercambio CT vs CLP ─────────────────────────────────
+tot_ct_df = df[['Fecha',
+                'Términos de intercambio CT Terms of Trade.',
+                'CLP Cierre']].dropna(subset=['Términos de intercambio CT Terms of Trade.']).copy()
+
+fig_tot_ct = make_subplots(specs=[[{"secondary_y": True}]])
+fig_tot_ct.add_trace(go.Scatter(
+    x=tot_ct_df['Fecha'], y=tot_ct_df['Términos de intercambio CT Terms of Trade.'],
+    name='ToT CT', line=dict(color=MAROON, width=1.5),
+), secondary_y=False)
+fig_tot_ct.add_trace(go.Scatter(
+    x=tot_ct_df['Fecha'], y=tot_ct_df['CLP Cierre'],
+    name='CLP', line=dict(color=NAVY, width=1.5),
+), secondary_y=True)
+fig_tot_ct.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='Términos de Intercambio CT'),
+    yaxis2=dict(**GRID, title='CLP', overlaying='y', side='right'),
+)
+
+# ── Puntas Forward (1M / 3M / 6M / 12M) ─────────────────────────────
+fwd_cfg = [
+    ('Puntos Forward 1M',  'Fwd 1M',  TEAL),
+    ('Puntos Forward 3M',  'Fwd 3M',  NAVY),
+    ('Puntos Forward 6M',  'Fwd 6M',  GOLD),
+    ('Puntos Forward 12M', 'Fwd 12M', MAROON),
+]
+fig_fwd = go.Figure()
+for _col, _nm, _color in fwd_cfg:
+    _s = df[['Fecha', _col]].dropna(subset=[_col])
+    fig_fwd.add_trace(go.Scatter(
+        x=_s['Fecha'], y=_s[_col], name=_nm,
+        line=dict(color=_color, width=1.5),
+        hovertemplate=f'<b>{_nm}</b><br>%{{x|%Y-%m-%d}}: %{{y:.2f}}<extra></extra>',
+    ))
+fig_fwd.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='Puntos forward'),
+)
+
+# ── Spread TPM US vs Chile a 1Y ───────────────────────────────────────
+_tpm_cols = ['Expectativas de TPM Expectativas de TPM US',
+             'Expectativas de TPM Expectativas de TPM CL']
+tpm_df = df[['Fecha'] + _tpm_cols].dropna(subset=_tpm_cols).copy()
+tpm_df['Spread_bp']  = (tpm_df[_tpm_cols[1]] - tpm_df[_tpm_cols[0]]) * 100
+tpm_df['Spread_avg'] = tpm_df['Spread_bp'].expanding().mean()
+
+fig_tpm = make_subplots(specs=[[{"secondary_y": True}]])
+fig_tpm.add_trace(go.Scatter(
+    x=tpm_df['Fecha'], y=tpm_df[_tpm_cols[1]],
+    name='TPM Chile 1Y', line=dict(color=NAVY, width=1.5),
+), secondary_y=False)
+fig_tpm.add_trace(go.Scatter(
+    x=tpm_df['Fecha'], y=tpm_df[_tpm_cols[0]],
+    name='TPM US 1Y', line=dict(color=MAROON, width=1.5),
+), secondary_y=False)
+fig_tpm.add_trace(go.Scatter(
+    x=tpm_df['Fecha'], y=tpm_df['Spread_bp'],
+    name='Spread CL–US (pb)', mode='markers',
+    marker=dict(color=GOLD, size=4, opacity=0.7),
+), secondary_y=True)
+fig_tpm.add_trace(go.Scatter(
+    x=tpm_df['Fecha'], y=tpm_df['Spread_avg'],
+    name='Promedio histórico', mode='lines',
+    line=dict(color=TEAL, width=1.5, dash='dash'),
+), secondary_y=True)
+fig_tpm.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='TPM esperado (%)'),
+    yaxis2=dict(**GRID, title='Spread (pb)', overlaying='y', side='right'),
+)
+
+# ── Tipo de Cambio Real (TCR) ─────────────────────────────────────────
+tcr_df = df[['Fecha', 'Tipo de cambio real CLP']].dropna(subset=['Tipo de cambio real CLP']).copy()
+
+fig_tcr = go.Figure()
+fig_tcr.add_trace(go.Scatter(
+    x=tcr_df['Fecha'], y=tcr_df['Tipo de cambio real CLP'],
+    name='TCR', line=dict(color=NAVY, width=1.8),
+    hovertemplate='<b>TCR</b><br>%{x|%Y-%m-%d}: %{y:.2f}<extra></extra>',
+))
+fig_tcr.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='Tipo de Cambio Real'),
+)
+
+# ── S/R Posición No Residentes (CLPBODM Index) ────────────────────────
+nr_sr = _last_year(df[['Fecha', 'No Residentes Posición OffShore']].dropna(subset=['No Residentes Posición OffShore']))
+nr_sr['CLPBODM Index'] = nr_sr['No Residentes Posición OffShore'] * -1
+p10_nr, p25_nr, p50_nr, p75_nr, p90_nr, p100_nr = np.percentile(nr_sr['CLPBODM Index'], [10, 25, 50, 75, 90, 100])
+max_dt_nr = nr_sr['Fecha'].max()
+min_dt_nr = nr_sr['Fecha'].min()
+
+figsr_nr = go.Figure()
+figsr_nr.add_trace(go.Scatter(x=nr_sr['Fecha'], y=nr_sr['CLPBODM Index'],
+                               name='CLPBODM Index', line=dict(color=GOLD, width=1.8)))
+figsr_nr.add_traces([
+    go.Scatter(x=[min_dt_nr, max_dt_nr], y=[p10_nr, p10_nr],   name=f'P10  · {p10_nr:,.0f}',  mode='lines', line=dict(color=PCT_P10,  width=1.3, dash='dash'), showlegend=False),
+    go.Scatter(x=[min_dt_nr, max_dt_nr], y=[p25_nr, p25_nr],   name=f'P25  · {p25_nr:,.0f}',  mode='lines', line=dict(color=PCT_P25,  width=1.3, dash='dot'), showlegend=False),
+    go.Scatter(x=[min_dt_nr, max_dt_nr], y=[p50_nr, p50_nr],   name=f'P50  · {p50_nr:,.0f}',  mode='lines', line=dict(color=PCT_P50,  width=1.8, dash='dash'), showlegend=False),
+    go.Scatter(x=[min_dt_nr, max_dt_nr], y=[p75_nr, p75_nr],   name=f'P75  · {p75_nr:,.0f}',  mode='lines', line=dict(color=PCT_P75,  width=1.3, dash='dot'), showlegend=False),
+    go.Scatter(x=[min_dt_nr, max_dt_nr], y=[p90_nr, p90_nr],   name=f'P90  · {p90_nr:,.0f}',  mode='lines', line=dict(color=PCT_P90,  width=1.3, dash='dash'), showlegend=False),
+    go.Scatter(x=[min_dt_nr, max_dt_nr], y=[p100_nr, p100_nr], name=f'P100 · {p100_nr:,.0f}', mode='lines', line=dict(color=PCT_P100, width=1.2, dash='longdash'), showlegend=False),
+])
+_add_pct_labels(figsr_nr, max_dt_nr, [
+    (p10_nr, PCT_P10, 'P10'), (p25_nr, PCT_P25, 'P25'), (p50_nr, PCT_P50, 'P50'),
+    (p75_nr, PCT_P75, 'P75'), (p90_nr, PCT_P90, 'P90'), (p100_nr, PCT_P100, 'P100'),
+])
+figsr_nr.update_layout(
+    **SR_LAYOUT,
+    xaxis=dict(**GRID, rangeslider=dict(visible=False)),
+    yaxis=dict(**GRID, title='Pos. No Residentes (Millones de dólares)', fixedrange=False)
+)
+
+# ── Punta FWD vs CLP ─────────────────────────────
+fwd = df[['Fecha','Puntos Forward 1M','CLP Cierre']].sort_values('Fecha', ascending = False)
+fwd
+fig_fwd = make_subplots(specs =[[{"secondary_y":True}]])
+fig_fwd.add_trace(go.Scatter(
+    x = fwd['Fecha'], y = fwd['CLP Cierre'],
+    name = 'CLP', line = dict(color = NAVY, width = 1.5)
+))
+fig_fwd.add_trace(go.Scatter(
+    x = fwd['Fecha'], y = fwd['Puntos Forward 1M'],
+    name = 'Punta FWD 1M', line = dict(color = GOLD, width = 1.2)
+),secondary_y=True).update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='CLP'),
+    yaxis2=dict(**GRID, title='Punta FWD', overlaying='y', side='right'),
+)
+
+
+# ── Spread TPM US vs Chile a 1Y ───────────────────────────────────────
+_tpm_cols = ['Expectativas de TPM Expectativas de TPM US',
+             'Expectativas de TPM Expectativas de TPM CL']
+tpm_df = df[['Fecha'] + _tpm_cols].dropna(subset=_tpm_cols).copy()
+tpm_df['Spread_bp']  = (tpm_df[_tpm_cols[1]] - tpm_df[_tpm_cols[0]]) * 100
+tpm_df['Spread_avg'] = tpm_df['Spread_bp'].expanding().mean()
+
+fig_tpm = make_subplots(specs=[[{"secondary_y": True}]])
+fig_tpm.add_trace(go.Scatter(
+    x=tpm_df['Fecha'], y=tpm_df[_tpm_cols[1]],
+    name='TPM Chile 1Y', line=dict(color=NAVY, width=1.5),
+), secondary_y=False)
+fig_tpm.add_trace(go.Scatter(
+    x=tpm_df['Fecha'], y=tpm_df[_tpm_cols[0]],
+    name='TPM US 1Y', line=dict(color=MAROON, width=1.5),
+), secondary_y=False)
+fig_tpm.add_trace(go.Scatter(
+    x=tpm_df['Fecha'], y=tpm_df['Spread_bp'],
+    name='Spread CL–US (pb)', mode='markers',
+    marker=dict(color=GOLD, size=4, opacity=0.7),
+), secondary_y=True)
+fig_tpm.add_trace(go.Scatter(
+    x=tpm_df['Fecha'], y=tpm_df['Spread_avg'],
+    name='Promedio histórico', mode='lines',
+    line=dict(color=TEAL, width=1.5, dash='dash'),
+), secondary_y=True)
+fig_tpm.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='TPM esperado (%)'),
+    yaxis2=dict(**GRID, title='Spread (pb)', overlaying='y', side='right'),
+)
+
+# ── Tipo de Cambio Real (TCR) ─────────────────────────────────────────
+tcr_df = df[['Fecha', 'Tipo de cambio real CLP']].dropna(subset=['Tipo de cambio real CLP']).copy()
+
+fig_tcr = go.Figure()
+fig_tcr.add_trace(go.Scatter(
+    x=tcr_df['Fecha'], y=tcr_df['Tipo de cambio real CLP'],
+    name='TCR', line=dict(color=NAVY, width=1.8),
+    hovertemplate='<b>TCR</b><br>%{x|%Y-%m-%d}: %{y:.2f}<extra></extra>',
+))
+fig_tcr.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='Tipo de Cambio Real'),
+)
+#─── Volatilidad CLP ─────────────────────────────────────────
+
+clp_intra['Variacion'] = clp_intra.groupby('Fecha')['TC'].diff()
+#Volatilidad
+clp_intra_vol = clp_intra.groupby('Fecha')['Variacion'].std().round(3).reset_index()
+clp_intra_vol.rename(columns = {'Variacion': 'Volatilidad'}, inplace = True)
+
+df_clpintra = clp_intra.merge(
+    clp_intra_vol,
+    on='Fecha',
+    how = 'left'
+)
+df_clpintra = df_clpintra.groupby('Fecha')['Volatilidad'].first().reset_index()
+
+clp = df.iloc[:,0:7].copy().sort_values('Fecha', ascending = False)
+clp_vol = clp.merge(
+    df_clpintra,
+    on = 'Fecha',
+    how = 'left'
+).dropna()
+
+clp_vol.sort_values('Fecha', ascending = True).dropna()
+clp_vol = clp_vol[clp_vol['Fecha'] >= pd.Timestamp('2026-01-01')]
+
+#Grafico
+fig_vol_clp = make_subplots(specs=[[{"secondary_y": True}]])
+fig_vol_clp.add_trace(go.Scatter(
+    x=clp_vol['Fecha'], y=clp_vol['CLP Cierre'],
+    name='CLP', line=dict(color=NAVY, width=1.5),
+    hovertemplate='<b>CLP</b><br>%{x|%Y-%m-%d}: %{y:.1f}<extra></extra>'
+), secondary_y=False).add_trace(go.Scatter(
+    x=clp_vol['Fecha'], y=clp_vol['Volatilidad']*100,
+    name='Volatilidad (%)', mode='lines',
+    hovertemplate='<b>Volatilidad (%)</b><br>%{x|%Y-%m-%d}: %{y:.1f}<extra></extra>',    line=dict(color=GOLD, width=1, dash=None)
+), secondary_y=True).update_layout(**LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='CLP'),
+    yaxis2=dict(**GRID, title='Volatilidad (%)', overlaying='y', side='right'))
+
+#__ Pos. NR vs CLP _________________________________________
+derivados = df[['Fecha','CLP Cierre', 'No Residentes Posición OffShore']].dropna().sort_values('Fecha', ascending = False)
+
+figderivados = make_subplots(specs =[[{"secondary_y":True}]])
+figderivados.add_trace(go.Scatter(
+    x = derivados['Fecha'], y = derivados['CLP Cierre'],
+    name = 'CLP', line = dict(color =NAVY, width = 1.5),
+    hovertemplate='<b>CLP (%)</b><br>%{x|%Y-%m-%d}: %{y:.1f}<extra></extra>',
+)).add_trace(go.Scatter(
+    x = derivados['Fecha'], y = derivados['No Residentes Posición OffShore']*-1,
+    name = 'CLPBODM Index', line = dict(color =GOLD, width = 1.5),
+    hovertemplate='<b>Pos. No Residentes (%)</b><br>%{x|%Y-%m-%d}: %{y:.1f}<extra></extra>',
+),secondary_y = True).update_layout(**LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='CLP'),
+    yaxis2=dict(**GRID, title='Millones de dólares', overlaying='y', side='right'))
+
+#____ Carry Trade ________________________________________________________
+figcarrytrade = go.Figure()
+figcarrytrade.add_trace(go.Bar(
+    x = carrytrade['País'], y = carrytrade['Value'].round(2),
+    marker = dict(color=['#2ca02c' if v >= 0 else '#d62728' for v in carrytrade['Value']]), 
+    text = carrytrade['Value'].round(2), textposition= 'outside',
+    hovertemplate = '%{x}<br>%{y}<extra></extra>'
+)).update_layout(**LAYOUT_BASE, yaxis = dict(range = [carrytrade['Value'].min()*1.25,carrytrade['Value'].max()*1.25]))
+
+#____ Variacion monedas 1 mes ________________________________________________________
+figvariacion_1m = go.Figure()
+figvariacion_1m.add_trace(go.Bar(
+    x = monedas1m['Moneda'], y = monedas1m['variacion_30d'],
+    marker = dict(color=['#2ca02c' if v >= 0 else '#d62728' for v in monedas1m['variacion_30d']])
+)).update_layout(**LAYOUT_BASE, xaxis= data_select)
+figvariacion_1m.add_annotation(
+    text = f"Variación entre {monedas1m['Fecha'].iloc[0]} y {monedas1m['Fecha'].iloc[0] - pd.Timedelta(days = 30)}",
+    xref = 'paper',
+    yref = 'paper',
+    x = 0,
+    y = 1.02,
+    xanchor = 'left',
+    yanchor = 'bottom',
+    showarrow = False,
+    font = dict(size = 10)
+)
+# ── Curva de contratos: Cobre COMEX (HGA) ────────────────────────────
+_hga = (
+    df[['Contrato HGA', 'Tenor HGA', 'Price HGA']]
+    .dropna()
+    .assign(**{'Tenor HGA': lambda x: pd.to_datetime(x['Tenor HGA'])})
+    .sort_values('Tenor HGA')
+    .drop_duplicates(subset=['Tenor HGA'])
+    .reset_index(drop=True)
+)
+
+fig_curva_hga = go.Figure()
+fig_curva_hga.add_trace(go.Scatter(
+    x=_hga['Tenor HGA'], y=_hga['Price HGA'],
+    mode='lines+markers',
+    name='HGA · COMEX',
+    line=dict(color='#b5551b', width=2),
+    marker=dict(color='#b5551b', size=5, symbol='circle'),
+    customdata=_hga['Contrato HGA'],
+    hovertemplate='<b>%{customdata}</b><br>Vto.: %{x|%b %Y}<br>Price: %{y:.2f} ¢/lb<extra></extra>',
+))
+fig_curva_hga.update_layout(
+    **LAYOUT_BASE,
+    xaxis=dict(**GRID, title='Vencimiento', tickformat='%b %Y'),
+    yaxis=dict(**GRID, title='¢/lb'),
+)
+
+# ── Curva de contratos: Cobre Londres (LMA) ──────────────────────────
+_lma = (
+    df[['Contrato Lma', 'Tenor Lma', 'Price Lma']]
+    .dropna()
+    .assign(**{'Tenor Lma': lambda x: pd.to_datetime(x['Tenor Lma'])})
+    .sort_values('Tenor Lma')
+    .drop_duplicates(subset=['Tenor Lma'])
+    .reset_index(drop=True)
+)
+
+fig_curva_lma = go.Figure()
+fig_curva_lma.add_trace(go.Scatter(
+    x=_lma['Tenor Lma'], y=_lma['Price Lma'],
+    mode='lines+markers',
+    name='LMA · Londres',
+    line=dict(color=NAVY, width=2),
+    marker=dict(color=NAVY, size=5, symbol='circle'),
+    customdata=_lma['Contrato Lma'],
+    hovertemplate='<b>%{customdata}</b><br>Vto.: %{x|%b %Y}<br>Price: %{y:,.2f} USD/t<extra></extra>',
+))
+fig_curva_lma.update_layout(
+    **LAYOUT_BASE,
+    xaxis=dict(**GRID, title='Vencimiento', tickformat='%b %Y'),
+    yaxis=dict(**GRID, title='USD/t'),
+)
+
+# ── Curva de contratos: Petróleo WTI (CL1) ───────────────────────────
+_cl1 = (
+    df[['Contrato CL1', 'Tenor CL1', 'Price CL1']]
+    .dropna()
+    .assign(**{'Tenor CL1': lambda x: pd.to_datetime(x['Tenor CL1'])})
+    .sort_values('Tenor CL1')
+    .drop_duplicates(subset=['Tenor CL1'])
+    .reset_index(drop=True)
+)
+
+fig_curva_cl1 = go.Figure()
+fig_curva_cl1.add_trace(go.Scatter(
+    x=_cl1['Tenor CL1'], y=_cl1['Price CL1'],
+    mode='lines+markers',
+    name='CL1 · WTI',
+    line=dict(color='#1a5276', width=2),
+    marker=dict(color='#1a5276', size=5, symbol='circle'),
+    customdata=_cl1['Contrato CL1'],
+    hovertemplate='<b>%{customdata}</b><br>Vto.: %{x|%b %Y}<br>Price: %{y:.2f} USD/bbl<extra></extra>',
+))
+fig_curva_cl1.update_layout(
+    **LAYOUT_BASE,
+    xaxis=dict(**GRID, title='Vencimiento', tickformat='%b %Y'),
+    yaxis=dict(**GRID, title='USD/bbl'),
+)
+#__ Gamma Proxy ___________________________________________________
+gammaproxy['label'] = (
+    gammaproxy['Strike_bucket'].astype(int).astype(str) +
+    ' ('+
+    gammaproxy['Strike_min'].astype(int).astype(str) + 
+    ' - '+
+    gammaproxy['Strike_max'].astype(int).astype(str) +
+    ')'
+)
+
+fig_gamma = go.Figure().add_trace(
+    go.Bar(
+        x = gammaproxy['gamma_proxy_mm'].round(2) , y=gammaproxy['label'], orientation = 'h',
+        marker = dict(color = NAVY), width = .7
+    )
+).update_layout(**LAYOUT_BASE, height = 600, yaxis = dict(type='category', categoryorder = 'array', categoryarray = gammaproxy.sort_values('Strike_bucket')['label']))
+
+# ── Inventarios COMEX + Precio HGA ───────────────────────────────────
+_inv_comex = df[['Fecha', 'Drivers Inventarios Comex', 'Drivers Precio Cobre HGA']].dropna()
+
+fig_inv_comex = make_subplots(specs=[[{"secondary_y": True}]])
+fig_inv_comex.add_trace(go.Bar(
+    x=_inv_comex['Fecha'], y=_inv_comex['Drivers Inventarios Comex'],
+    name='Inventarios COMEX',
+    marker=dict(color='rgba(181,85,27,0.45)', line=dict(width=0)),
+    hovertemplate='<b>Inventarios COMEX</b><br>%{x|%Y-%m-%d}: %{y:,.0f} t<extra></extra>',
+), secondary_y=False)
+fig_inv_comex.add_trace(go.Scatter(
+    x=_inv_comex['Fecha'], y=_inv_comex['Drivers Precio Cobre HGA'] / 100,
+    name='COMEX',
+    mode='lines',
+    line=dict(color='#b5551b', width=1.5),
+    hovertemplate='<b>COMEX</b><br>%{x|%Y-%m-%d}: %{y:.3f} USD/lb<extra></extra>',
+), secondary_y=True)
+fig_inv_comex.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='Inventarios (t)'),
+    yaxis2=dict(**GRID, title='Precio (USD/lb)', overlaying='y', side='right'),
+    bargap=0,
+)
+
+# ── Inventarios LME + Precio Londres ─────────────────────────────────
+_inv_lme = df[['Fecha', 'Drivers Inv. Cobre', 'Drivers Precio Londres']].dropna()
+
+fig_inv_lme = make_subplots(specs=[[{"secondary_y": True}]])
+fig_inv_lme.add_trace(go.Bar(
+    x=_inv_lme['Fecha'], y=_inv_lme['Drivers Inv. Cobre'],
+    name='Inventarios LME',
+    marker=dict(color='rgba(0,23,48,0.45)', line=dict(width=0)),
+    hovertemplate='<b>Inventarios LME</b><br>%{x|%Y-%m-%d}: %{y:,.0f} t<extra></extra>',
+), secondary_y=False)
+fig_inv_lme.add_trace(go.Scatter(
+    x=_inv_lme['Fecha'], y=_inv_lme['Drivers Precio Londres'] / 2262.64,
+    name='LME',
+    mode='lines',
+    line=dict(color=NAVY, width=1.5),
+    hovertemplate='<b>LME</b><br>%{x|%Y-%m-%d}: %{y:.3f} USD/lb<extra></extra>',
+), secondary_y=True)
+fig_inv_lme.update_layout(
+    **LAYOUT_BASE, xaxis=data_select,
+    yaxis=dict(**GRID, title='Inventarios (t)'),
+    yaxis2=dict(**GRID, title='Precio (USD/lb)', overlaying='y', side='right'),
+    bargap=0,
+)
+
+#____ Puntas fwd ___________________________________________________________
+fwd_cols = [c for c in df.columns if isinstance(c, str) and "Puntos Forward" in c]
+datafwd = df[['Fecha'] + fwd_cols].reset_index().sort_values('Fecha', ascending = False)
+fechapivot = df['Fecha'].max() - pd.Timedelta(days = 365)
+datafwd = datafwd[datafwd['Fecha'] >= fechapivot]
+
+figfwd = go.Figure()
+figfwd.add_trace(go.Scatter(
+    x = datafwd['Fecha'], y = datafwd['Puntos Forward 1M'],
+    name = 'Puntos FWD 1M', line =dict(color = NAVY)
+)).add_trace(go.Scatter(
+    x = datafwd['Fecha'], y = datafwd['Puntos Forward 3M'],
+    name = 'Puntos FWD 3M', line =dict(color = GOLD)
+)).add_trace(go.Scatter(
+    x = datafwd['Fecha'], y = datafwd['Puntos Forward 6M'],
+    name = 'Puntos FWD 6M', line =dict(color = RED)
+)).add_trace(go.Scatter(
+    x = datafwd['Fecha'], y = datafwd['Puntos Forward 12M'],
+    name = 'Puntos FWD 12M', line =dict(color = GRAY)
+)).update_layout(**LAYOUT_BASE, xaxis = dict(**GRID), yaxis = dict(**GRID))
+
+#___ Implicitas ___________________________________________________________
+imp_cols = [c for c in df.columns if isinstance(c, str) and "Implicita" in c]
+imp_cols
+dataimpl = df[['Fecha']+ imp_cols].reset_index().sort_values('Fecha', ascending = False)
+fechapivot = df['Fecha'].max() - pd.Timedelta(days = 365)
+dataimpl = dataimpl[dataimpl['Fecha'] >= fechapivot]
+
+fig_impl = go.Figure()
+fig_impl.add_trace(
+    go.Scatter(
+        x = dataimpl['Fecha'], y = dataimpl['Implicita Chile'], name = 'Implícita Chile',
+        line = dict(color = NAVY)
+    )
+).add_trace(
+    go.Scatter(
+        x = dataimpl['Fecha'], y = dataimpl['Implicita Brazil'], name = 'Implícita Brazil',
+        line = dict(color = GOLD)
+    )
+).add_trace(
+    go.Scatter(
+        x = dataimpl['Fecha'], y = dataimpl['Implicita Peru'], name = 'Implicita Peru',
+        line = dict(color = GRAY)
+    )
+).add_trace(
+    go.Scatter(
+        x = dataimpl['Fecha'], y = dataimpl['Implicita Mexico'], name = 'Implicita Mexico',
+        line = dict(color = TEAL)
+    )
+).add_trace(
+    go.Scatter(
+        x = dataimpl['Fecha'], y = dataimpl['Implicita Colombia'], name = 'Implicita Colombia',
+        line = dict(color = RED)
+    )
+).update_layout(**LAYOUT_BASE, xaxis = dict(**GRID), yaxis = dict(**GRID))
+
+#__ Fixing ________________________________________________________________________
+tot_fixing = fixing.groupby('Fixing', as_index = False)['Pos_neta'].sum()
+tot_fixing['NombreInformanteNorm'] = 'Total'
+tot_fixing['SectorContNorm'] = None
+tot_fixing = tot_fixing[['NombreInformanteNorm', 'SectorContNorm','Fixing','Pos_neta']]
+
+fixing = pd.concat([fixing, tot_fixing], ignore_index= True)
+fixing['Fixing'] = pd.to_datetime(fixing['Fixing'])
+fechafixing = pd.Timestamp.today().normalize()
+fixing_hoy = fixing[fixing['Fixing']==fechafixing]
+
+tot_agente = fixing_hoy.groupby('NombreInformanteNorm', as_index = False)['Pos_neta'].sum()
+orden = ['Total'] + [b for b in fixing_hoy['NombreInformanteNorm'].unique() if b != 'Total']
+
+#Colores para sector
+color_map = {
+    'AFP': '#2E86DE',
+    'Emp_real': '#1B2631',
+    'CB': '#8B0000',
+    'Bancos': '#7d3c98',
+    'CS': '#e84393',
+    'Emp_financiera': '#6c5ce7',
+    'FFMM': '#00CEc9',
+    'NR': '#C8A951',
+    'Otros': '#7A7A7A',
+    'BCCh': '#14284B',
+}
+colors = fixing_hoy['SectorContNorm'].fillna('Otros').map(color_map)
+fixing_plot = (
+fixing_hoy
+.groupby(['NombreInformanteNorm','SectorContNorm'], as_index = False)['Pos_neta']
+.sum()
+)
+
+fig2fixing = go.Figure()
+for sector, color in color_map.items():
+    df_sector = fixing_hoy[fixing_hoy['SectorContNorm'].fillna('Otros') == sector]
+
+    if len(df_sector) > 0 :
+        fig2fixing.add_trace(
+            go.Bar(
+                x = df_sector['NombreInformanteNorm'],
+                y = df_sector['Pos_neta'].round(0),
+                name = sector,
+                marker_color = color
+            )
+        )
+
+fig2fixing.add_trace(
+            go.Scatter(
+                x=tot_agente['NombreInformanteNorm'],
+                y = tot_agente['Pos_neta'].round(0),
+                mode = 'markers',
+                marker = dict(color = 'black', size = 6),
+                name = 'Total agente'
+            )
+        ).update_layout(
+            barmode = 'relative',
+            **LAYOUT_BASE, xaxis=dict(categoryorder= 'array', categoryarray = orden),
+            height = 600
+        )
+
+#__ Heatmap Gp _____________________________________________________________________
+y_order = sorted(heatmap['Strike_bucket'].unique())
+fig_heatmap = go.Figure().add_trace(
+    go.Heatmap(
+        x = heatmap['venc'], y = heatmap['Strike_bucket'], z = heatmap['gamma_proxy'],
+        xgap = 2, ygap = 2, colorscale= 'RdYlGn'
+    )
+).update_yaxes(type = 'category', categoryorder='array', categoryarray= y_order).update_xaxes(type = 'category').update_layout(**LAYOUT_BASE, xaxis = dict(**GRID), yaxis= dict(**GRID))
+
+
+def _polish_hover(fig: go.Figure) -> go.Figure:
+    """Uniforma el hover de los traces que no definieron hovertemplate propio.
+
+    La mayoría de las figuras solo personalizan el hover de 1-2 series clave;
+    el resto queda con el formato genérico de Plotly (fecha ISO larga, floats
+    sin redondear). Acá se les da un formato consistente con el resto del
+    dashboard (fecha corta, 2 decimales) sin pisar los hovertemplate ya
+    definidos a mano. El candlestick usa su propio hover OHLC y se excluye.
+    """
+    for trace in fig.data:
+        if trace.type == 'candlestick' or trace.hoverinfo == 'skip' or trace.hovertemplate:
+            continue
+        name = trace.name or ''
+        trace.update(hovertemplate=f"<b>{name}</b><br>%{{x|%Y-%m-%d}}: %{{y:,.2f}}<extra></extra>")
+    return fig
+
+
+for _fig in [figcandle, figclpbb, figma, figcobre_clp, figdxy_clp, figintra, figsr_clp,
+             figrsi, figdistclp, figsr_cobre, figsr_dxy, fig_vol1w, figvariacion, fig_g10,
+             fig_dev, fig_latam, fig_em, fig_rsi_dxy, fig_rsi_cobre, fig_cobre_ny,
+             fig_tot_gs, fig_tot_ct, fig_fwd, fig_tpm, fig_tcr, figsr_nr, fig_vol_clp,
+             figderivados, figcarrytrade, figvariacion_1m, fig_curva_lma, fig_curva_cl1,
+             fig_curva_hga, fig_gamma, fig_inv_comex, fig_inv_lme, figfwd, fig_impl,
+             fig2fixing, fig_heatmap]:
+    _polish_hover(_fig)
+
+# ═════════════════════════════════════════════════════════════════════
+# REGISTRO DE FIGURAS (Compilaralas a json para leerlas!)
+# Lista de figuras (el formato es "id", "figura.to_json")
+
+figures = {
+    "clp_candlestick":    json.loads(figcandle.to_json()),
+    "clp_bollinger":      json.loads(figclpbb.to_json()),
+    "clp_medias_moviles": json.loads(figma.to_json()),
+    "clp_cobre":          json.loads(figcobre_clp.to_json()),
+    "clp_dxy":            json.loads(figdxy_clp.to_json()),
+    "clp_intradia":       json.loads(figintra.to_json()),
+    "clp_sr":             json.loads(figsr_clp.to_json()),
+    "clp_rsi":            json.loads(figrsi.to_json()),
+    "clp_dist":           json.loads(figdistclp.to_json()),
+    "cobre_sr":           json.loads(figsr_cobre.to_json()),
+    "dxy_sr":             json.loads(figsr_dxy.to_json()),
+    "vol_1w":             json.loads(fig_vol1w.to_json()),
+    "variacion_dia":      json.loads(figvariacion.to_json()),
+    "fig_g10":            json.loads(fig_g10.to_json()),
+    "fig_comparables":    json.loads(fig_dev.to_json()),
+    "fig_latam":          json.loads(fig_latam.to_json()),
+    "fig_emerg":          json.loads(fig_em.to_json()),
+    "fig_rsi_dxy":        json.loads(fig_rsi_dxy.to_json()),
+    "rsi_cobre":          json.loads(fig_rsi_cobre.to_json()),
+    "cobre_ny_spread":    json.loads(fig_cobre_ny.to_json()),
+    "tot_gs":             json.loads(fig_tot_gs.to_json()),
+    "tot_ct":             json.loads(fig_tot_ct.to_json()),
+    "fwd_puntas":         json.loads(fig_fwd.to_json()),
+    "tpm_spread":         json.loads(fig_tpm.to_json()),
+    "tcr":                json.loads(fig_tcr.to_json()),
+    "pos_nr_sr":          json.loads(figsr_nr.to_json()),
+    "vol_clp":            json.loads(fig_vol_clp.to_json()),
+    "clp_nr":             json.loads(figderivados.to_json()),
+    "carry_trade":        json.loads(figcarrytrade.to_json()),
+    "variacion_1mes":     json.loads(figvariacion_1m.to_json()),
+    "contrato_lma":       json.loads(fig_curva_lma.to_json()),
+    "contrato_cl1":       json.loads(fig_curva_cl1.to_json()),
+    "contrato_hga":       json.loads(fig_curva_hga.to_json()),
+    "gamma_plot":         json.loads(fig_gamma.to_json()),
+    "inv_comex":          json.loads(fig_inv_comex.to_json()),
+    "inv_lme":            json.loads(fig_inv_lme.to_json()),
+    "fwd_puntas12m":      json.loads(figfwd.to_json()),
+    "implicitas":         json.loads(fig_impl.to_json()),
+    "fixing":             json.loads(fig2fixing.to_json()),
+    "heatmap_gp":         json.loads(fig_heatmap.to_json())
+}
+
+# ═════════════════════════════════════════════════════════════════════
+# TABLA DE MERCADO
+# ═════════════════════════════════════════════════════════════════════
+d = df.dropna(subset=["CLP Cierre"]).reset_index(drop=True)
+spread_spc_ois = (d["Misceláneos SPC 1Y"] - d["Misceláneos OIS 1Y"]) * 100
+
+# modo: "pct" = variación porcentual | "bp" = diff en bp | "pts" = diff en puntos
+series_config = [
+    ("Cobre",        "Comex · USD/lb",   d["Drivers Precio Cobre HGA"], 2, "pct"),
+    ("DXY",          "Índice dólar",      d["Drivers DXY "],             3, "pct"),
+    ("Dif. SPC–OIS", "Spread tasa · pb", spread_spc_ois,                1, "bp"),
+    ("Petróleo",     "Brent · USD/bbl",  d["Drivers Petróleo"],         2, "pct"),
+    ("Pto. Fwd 30D", "CLP · puntos",     d["Puntos Forward 1M"],        2, "pts"),
+]
+
+_DRIVER_CLP = {
+    "Cobre":        +1,
+    "DXY":          -1,
+    "Dif. SPC–OIS": +1,
+    "Petróleo":     -1,
+    "Pto. Fwd 30D":  0,
+}
+
+market_table = []
+for nombre, unidad, serie, dec, modo in series_config:
+    idx = serie.last_valid_index()
+    fmt = f"{{:.{dec}f}}"
+    ultimo = float(serie.iloc[idx]) if idx is not None else None
+
+    prev1_ok = idx is not None and idx >= 1 and not pd.isna(serie.iloc[idx - 1])
+    prev5_ok = idx is not None and idx >= 5 and not pd.isna(serie.iloc[idx - 5])
+
+    if modo == "pct":
+        vd_raw = (float(serie.iloc[idx]) / float(serie.iloc[idx - 1]) - 1) * 100 if prev1_ok else None
+        vs_raw = (float(serie.iloc[idx]) / float(serie.iloc[idx - 5]) - 1) * 100 if prev5_ok else None
+        fmt_v  = lambda v, d=dec: f"{v:+.{d}f}%"
+    else:
+        vd_raw = float(serie.iloc[idx]) - float(serie.iloc[idx - 1]) if prev1_ok else None
+        vs_raw = float(serie.iloc[idx]) - float(serie.iloc[idx - 5]) if prev5_ok else None
+        sfx    = " bp" if modo == "bp" else " pts"
+        fmt_v  = lambda v, d=dec, s=sfx: f"{v:+.{d}f}{s}"
+
+    clp_dir = _DRIVER_CLP.get(nombre, 0)
+
+    def _clp_cls(raw, _dir=clp_dir):
+        if raw is None: return ""
+        if _dir == 0: return "mar"
+        return "pos" if raw * _dir > 0 else "neg"
+
+    if vd_raw is not None and clp_dir != 0:
+        estado, estado_cls = ("↑ Aprecia", "pill-pos") if vd_raw * clp_dir > 0 else ("↓ Deprecia", "pill-neg")
+    elif vd_raw is not None:
+        estado, estado_cls = "Neutral", "pill-mar"
+    else:
+        estado, estado_cls = "—", ""
+
+    market_table.append({
+        "nombre":     nombre,
+        "unidad":     unidad,
+        "ultimo":     fmt.format(ultimo) if ultimo is not None else "—",
+        "var_dia":    fmt_v(vd_raw) if vd_raw is not None else "—",
+        "var_sem":    fmt_v(vs_raw) if vs_raw is not None else "—",
+        "estado":     estado,
+        "estado_cls": estado_cls,
+        "vd_cls":     _clp_cls(vd_raw),
+        "vs_cls":     _clp_cls(vs_raw),
+    })
+
+# ── CLP hero stat ─────────────────────────────────────────────────────
+_clp_s    = d
+_ci       = _clp_s["CLP Cierre"].last_valid_index()
+_clp_last = float(_clp_s["CLP Cierre"].iloc[_ci])
+_clp_vd   = (_clp_last / float(_clp_s["CLP Cierre"].iloc[_ci - 1]) - 1) * 100 \
+             if _ci >= 1 and not pd.isna(_clp_s["CLP Cierre"].iloc[_ci - 1]) else None
+_clp_vs   = (_clp_last / float(_clp_s["CLP Cierre"].iloc[_ci - 5]) - 1) * 100 \
+             if _ci >= 5 and not pd.isna(_clp_s["CLP Cierre"].iloc[_ci - 5]) else None
+
+clp_stat = {
+    "value":  f"{_clp_last:.2f}",
+    "fecha":  _clp_s["Fecha"].iloc[_ci].strftime("%d %b %Y"),
+    "vd_fmt": f"{_clp_vd:+.2f}%" if _clp_vd is not None else "—",
+    "vs_fmt": f"{_clp_vs:+.2f}%" if _clp_vs is not None else "—",
+    "vd_cls": ("neg" if _clp_vd > 0 else "pos") if _clp_vd is not None else "",
+    "vs_cls": ("neg" if _clp_vs > 0 else "pos") if _clp_vs is not None else "",
+}
+
+# ═════════════════════════════════════════════════════════════════════
+# TABLAS RESUMEN BAJO GRÁFICOS (candlestick y S/R)
+# ═════════════════════════════════════════════════════════════════════
+
+# Último día con máx/mín válidos para la tabla del candlestick.
+# Soporte/resistencia = P25/P75 del cierre en los últimos 3 meses.
+_last_day = candle.dropna(subset=['CLP Max', 'CLP minimo']).iloc[-1]
+
+candle_table = {
+    "headers": ["Indicador", "Valor"],
+    "rows": [
+        ["Máximo del día", f"{_last_day['CLP Max']:,.2f}"],
+        ["Mínimo del día", f"{_last_day['CLP minimo']:,.2f}"],
+        ["Soporte",        f"{soporte_3m:,.2f}"],
+        ["Resistencia",    f"{resistencia_3m:,.2f}"],
+    ],
+}
+
+
+def _sr_table(levels: list[tuple[str, float]], fmt: str) -> dict:
+    """Tabla descriptiva de percentiles S/R para no depender solo de la leyenda."""
+    return {
+        "headers": ["Percentil", "Nivel"],
+        "rows": [[p, format(v, fmt)] for p, v in levels],
+    }
+
+
+clp_sr_table   = _sr_table([("P10", p10_c),  ("P25", p25_c),  ("P50", p50_c),
+                            ("P75", p75_c),  ("P90", p90_c),  ("P100", p100_c)],  ",.0f")
+cobre_sr_table = _sr_table([("P10", p10_cu), ("P25", p25_cu), ("P50", p50_cu),
+                            ("P75", p75_cu), ("P90", p90_cu), ("P100", p100_cu)], ".2f")
+dxy_sr_table   = _sr_table([("P10", p10_dx), ("P25", p25_dx), ("P50", p50_dx),
+                            ("P75", p75_dx), ("P90", p90_dx), ("P100", p100_dx)], ".2f")
+nr_sr_table    = _sr_table([("P10", p10_nr), ("P25", p25_nr), ("P50", p50_nr),
+                            ("P75", p75_nr), ("P90", p90_nr), ("P100", p100_nr)], ",.0f")
+
+# ═════════════════════════════════════════════════════════════════════
+# NAVEGACIÓN
+
+# - cols: columnas base de la grilla
+# - hero: el primer gráfico con figura queda a ancho completo (destacado)
+nav_groups = [
+    {"label": "Resumen", "items": [
+        {"id": "portada", "label": "Drivers del día", "badge": "Overview", "cols": 2, "slots": [
+            {"label": "Variación Monedas en el día", "fig_id": "variacion_dia"},
+            {"label": "Monedas Intradía",           "fig_id": "clp_intradia"},
+            {"label": "Evolución tipo de cambio",  "fig_id": "clp_candlestick", "table": candle_table},
+        ]},
+    ]},
+    {"label": "Tipo de Cambio", "items": [
+        {"id": "clp_tecnico", "label": "CLP - Análisis", "badge": "LIVE", "cols": 2, "slots": [
+            {"label": "Medias Móviles",   "fig_id": "clp_medias_moviles"},
+            {"label": "Bollinger CLP",    "fig_id": "clp_bollinger"},
+            {"label": "RSI CLP",          "fig_id": "clp_rsi"},
+            {"label": "S/R CLP",          "fig_id": "clp_sr", "table": clp_sr_table},
+            {"label": "Volatilidad CLP",  "fig_id": "vol_clp"},
+            {"label": "Fixing de la banca","fig_id": "fixing"},
+            {"label": "Histograma CLP",   "fig_id": "clp_dist"},
+        ]},
+    ]},
+    {"label": "No Residentes", "items": [
+        {"id": "no_residentes", "label": "No Residentes", "badge": "LIVE", "cols": 2, "hero": True, "slots": [
+            {"label": "Derivados",     "fig_id": "clp_nr"},
+            {"label": "Vol 1W",        "fig_id": "vol_1w"},
+            {"label": "Punta forward", "fig_id": "fwd_puntas"},
+            {"label": "S/R NR",        "fig_id": "pos_nr_sr", "table": nr_sr_table},
+        ]},
+    ]},
+    {"label": "Monedas", "items": [
+        {"id": "monedas", "label": "Monedas & Carry", "badge": "LIVE", "cols": 2, "hero": True, "slots": [
+            {"label": "Monedas LATAM", "fig_id": "fig_latam"},
+            {"label": "Monedas Emergentes", "fig_id": "fig_emerg"},
+            {"label": "Monedas Commodities", "fig_id": "fig_comparables"},
+            {"label": "Monedas G10", "fig_id": "fig_g10"},
+            {"label": "Monedas vs USD 1 mes", "fig_id": "variacion_1mes"},
+            {"label": "Carry trade",       "fig_id": "carry_trade"},
+        ]},
+    ]},
+    {"label": "Drivers", "items": [
+        {"id": "cobre", "label": "Cobre", "badge": "LIVE", "cols": 2, "hero": True, "slots": [
+            {"label": "Cobre vs CLP", "fig_id": "clp_cobre"},
+            {"label": "S/R Cobre",    "fig_id": "cobre_sr", "table": cobre_sr_table},
+            {"label": "RSI Cobre",    "fig_id": "rsi_cobre"},
+            {"label": "Inventarios COMEX", "fig_id": "inv_comex"},
+            {"label": "Inventarios Londres", "fig_id": "inv_lme"},
+            {"label": "Spread COMEX-LME", "fig_id": "cobre_ny_spread"},
+        ]},
+        {"id": "dxy", "label": "Dólar - DXY", "badge": "LIVE", "cols": 2, "hero": True, "slots": [
+            {"label": "DXY vs CLP",   "fig_id": "clp_dxy"},
+            {"label": "S/R DXY",      "fig_id": "dxy_sr", "table": dxy_sr_table},
+            {"label": "RSI DXY",      "fig_id": "fig_rsi_dxy"},
+        ]},
+    ]},
+    {"label": "Expectativas", "items": [
+        {"id": "expectativas", "label": "Expectativas", "badge": "LIVE", "cols": 2, "slots": [
+            {"label": "Expectativas de TPM US - CL",               "fig_id": "tpm_spread"},
+            {"label": "Puntas FWD Chile",                          "fig_id": "fwd_puntas12m"},
+            {"label": "Curva de contratos: Cobre COMEX",           "fig_id": "contrato_hga"},
+            {"label": "Curva de contratos: Cobre Londres",         "fig_id": "contrato_lma"},
+            {"label": "Curva de contratos: Petróleo",              "fig_id": "contrato_cl1"},
+        ]},
+    ]},
+    {"label": "Otros", "items": [
+        {"id": "otros", "label": "Otros", "badge": "LIVE", "cols": 2, "slots": [
+            {"label": "Gamma Proxy",             "fig_id": "gamma_plot"},
+            {"label": "Heatmap Gamma Proxy",     "fig_id": "heatmap_gp"},
+            {"label": "Tasas implícitas",        "fig_id": "implicitas"},
+            {"label": "Terms Of Trade GS",       "fig_id": "tot_gs"},
+            {"label": "Terms Of Trade CT",       "fig_id": "tot_ct"},
+            {"label": "Tipo de Cambio Real",     "fig_id": "tcr"},
+        ]},
+    ]},
+]
+
+
+def _annotate_layout(groups: list, figs: dict) -> None:
+    """Anota cada slot para que la grilla de 2 columnas nunca deje celdas vacías.
+
+    Reglas (en orden):
+    - pending: slot cuyo fig_id no existe en el registro de figuras -> tarjeta
+      compacta a ancho completo, movida al final de la sección.
+    - hero: si la sección lo declara, el primer gráfico real queda a ancho completo.
+    - paridad: si la cantidad de gráficos restantes es impar, el último se
+      estira a las 2 columnas para cerrar la fila.
+    """
+    for group in groups:
+        for item in group["items"]:
+            live, pending = [], []
+            for slot in item["slots"]:
+                slot["pending"] = slot.get("fig_id") not in figs
+                (pending if slot["pending"] else live).append(slot)
+
+            rest = live
+            if item.get("hero") and live:
+                live[0]["wide"] = True
+                rest = live[1:]
+            if len(rest) % 2 == 1:
+                rest[-1]["wide"] = True
+
+            item["slots"] = live + pending
+
+
+_annotate_layout(nav_groups, figures)
+
+# ═════════════════════════════════════════════════════════════════════
+# RENDER HTML
+# ═════════════════════════════════════════════════════════════════════
+env = Environment(
+    loader=FileSystemLoader(str(TEMPLATE.parent)),
+    autoescape=False,
+    undefined=StrictUndefined,
+    trim_blocks=True,
+    lstrip_blocks=True,
+)
+
+tpl  = env.get_template(TEMPLATE.name)
+html = tpl.render(
+    title="Informe Cambiario AM · DOMA",
+    title_short="Informe Cambiario AM",
+    subtitle="Departamento de Operaciones Mercado Abierto",
+    nav_groups=nav_groups,
+    figures_json=json.dumps(figures, ensure_ascii=False),
+    market_table=market_table,
+    clp_stat=clp_stat,
+)
+OUTPUT_HTML.parent.mkdir(parents=True, exist_ok=True)
+OUTPUT_HTML.write_text(html, encoding="utf-8")
+print(f"[OK] {len(figures)} figura(s) - {len(market_table)} indicadores -> {OUTPUT_HTML}")
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser(description="Compila el dashboard Informe Cambiario AM.")
+    p.add_argument("--open", action="store_true", help="Abrir HTML en el navegador")
+    args = p.parse_args()
+    if args.open:
+        webbrowser.open(OUTPUT_HTML.resolve().as_uri())
+
+
+y el template:
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+/* ═══════════════════════════════════════════════════════════
+   INFORME CAMBIARIO AM — DOMA · Banco Central de Chile
+   Single-file dashboard shell (renderizado vía Jinja)
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  --bg:           #f5f3ee;
+  --bg-elev:      #fbfaf6;
+  --bg-card:      #ffffff;
+  --bg-soft:      #efece4;
+  --gold:         rgb(148, 104, 38);
+  --gold-deep:    rgb(122, 84, 28);
+  --gold-bright:  rgb(184, 138, 60);
+  --gold-dim:     rgba(148,104,38,0.50);
+  --gold-faint:   rgba(148,104,38,0.08);
+  --gold-veil:    rgba(148,104,38,0.04);
+  --navy:         rgb(0, 23, 48);
+  --navy-soft:    rgb(22, 44, 76);
+  --text:         rgb(12, 22, 42);
+  --text-dim:     rgba(12,22,42,0.62);
+  --text-faint:   rgba(12,22,42,0.36);
+  --border:       rgba(148,104,38,0.20);
+  --border-dim:   rgba(12,22,42,0.08);
+  --green:        rgb(30,120,50);
+  --red:          rgb(180,25,25);
+  --yellow:       rgb(155,108,0);
+  --sidebar-w:    232px;
+  --sidebar-w-collapsed: 64px;
+  --header-h:     60px;
+  --shadow-sm:    0 1px 3px rgba(0,23,48,0.05), 0 1px 2px rgba(0,23,48,0.03);
+  --shadow-md:    0 4px 14px rgba(0,23,48,0.07), 0 1px 4px rgba(0,23,48,0.04);
+  --shadow-lg:    0 12px 32px rgba(0,23,48,0.10), 0 4px 8px rgba(0,23,48,0.05);
+  --ease:         cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out:  cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  font-family: 'Barlow', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100%;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background:
+    radial-gradient(1200px 600px at 100% -200px, rgba(148,104,38,0.05), transparent 60%),
+    radial-gradient(900px 500px at -200px 110%, rgba(0,23,48,0.04), transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── HEADER ───────────────────────────────────────────────── */
+#header {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: var(--header-h);
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 28px 0 calc(var(--sidebar-w) + 28px);
+  z-index: 100;
+  box-shadow: var(--shadow-sm);
+  transition: padding 0.32s var(--ease);
+}
+body.sidebar-collapsed #header { padding-left: calc(var(--sidebar-w-collapsed) + 28px); }
+
+.header-left  { display: flex; align-items: baseline; gap: 14px; min-width: 0; }
+.header-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--navy);
+}
+.header-sep { color: var(--gold-dim); font-size: 13px; }
+.header-subtitle {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+}
+.header-right { display: flex; align-items: center; gap: 14px; }
+#header-date {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── BOTONES HEADER ──────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1.4px solid var(--gold-dim);
+  color: var(--gold);
+  font-family: 'Barlow', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 7px 14px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease),
+              color 0.18s var(--ease), transform 0.18s var(--ease);
+  user-select: none;
+}
+.btn:hover {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(148,104,38,0.25);
+}
+.btn:active { transform: translateY(0); }
+.btn svg { width: 12px; height: 12px; flex-shrink: 0; stroke: currentColor; }
+
+.btn-ghost {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background 0.18s var(--ease), color 0.18s var(--ease);
+}
+.btn-ghost:hover { background: var(--gold-faint); color: var(--gold); }
+.btn-ghost svg { width: 16px; height: 16px; }
+
+/* ── SIDEBAR ──────────────────────────────────────────────── */
+#sidebar {
+  position: fixed;
+  top: 0; left: 0;
+  width: var(--sidebar-w);
+  height: 100vh;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfaf6 100%);
+  border-right: 1px solid var(--border);
+  padding-top: calc(var(--header-h) + 18px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 99;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-sm);
+  transition: width 0.32s var(--ease);
+}
+body.sidebar-collapsed #sidebar { width: var(--sidebar-w-collapsed); }
+
+.sidebar-logo {
+  padding: 0 22px 18px;
+  border-bottom: 0.5px solid var(--border-dim);
+  margin-bottom: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.sidebar-logo-text {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1.25;
+}
+.sidebar-logo-sub {
+  font-size: 9.5px;
+  color: var(--text-faint);
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  margin-top: 4px;
+  font-weight: 600;
+}
+body.sidebar-collapsed .sidebar-logo-text,
+body.sidebar-collapsed .sidebar-logo-sub,
+body.sidebar-collapsed .nav-section-label,
+body.sidebar-collapsed .nav-item-label { opacity: 0; pointer-events: none; }
+
+.sidebar-toggle {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+}
+body.sidebar-collapsed .sidebar-toggle { right: 14px; }
+
+.nav-section { margin-bottom: 6px; }
+.nav-section-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 10px 22px 4px;
+  transition: opacity 0.2s var(--ease);
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
+  border-left: 2px solid transparent;
+  user-select: none;
+  position: relative;
+  white-space: nowrap;
+}
+.nav-item:hover { color: var(--navy); background: var(--gold-veil); }
+.nav-item.active {
+  color: var(--gold-deep);
+  border-left-color: var(--gold);
+  background: linear-gradient(90deg, var(--gold-faint), transparent);
+  font-weight: 600;
+}
+.nav-item.active::after {
+  content: '';
+  position: absolute;
+  right: 14px; top: 50%;
+  width: 4px; height: 4px;
+  background: var(--gold);
+  border-radius: 50%;
+  transform: translateY(-50%);
+  box-shadow: 0 0 0 3px var(--gold-faint);
+}
+body.sidebar-collapsed .nav-item.active::after { display: none; }
+.nav-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+  flex-shrink: 0;
+  transition: transform 0.2s var(--ease);
+}
+.nav-item:hover .nav-dot { transform: scale(1.3); }
+.nav-item-label { transition: opacity 0.2s var(--ease); }
+
+/* ── MAIN ─────────────────────────────────────────────────── */
+#main {
+  margin-left: var(--sidebar-w);
+  margin-top: var(--header-h);
+  height: calc(100vh - var(--header-h));
+  overflow-y: auto;
+  padding: 30px 38px 70px;
+  position: relative;
+  z-index: 1;
+  transition: margin-left 0.32s var(--ease);
+}
+body.sidebar-collapsed #main { margin-left: var(--sidebar-w-collapsed); }
+
+/* ── SCROLLSPY SECTIONS ───────────────────────────────────── */
+.section {
+  display: block;
+  width: 100%;
+  max-width: 1480px;
+  margin: 0 auto;
+  scroll-margin-top: 18px;
+}
+.section + .section {
+  margin-top: 64px;
+  padding-top: 42px;
+  border-top: 1px solid var(--border-dim);
+}
+
+/* stagger child cards: animan una sola vez cuando la sección entra en viewport */
+.section .chart-card,
+.section .stat-card,
+.section .banner-wrap {
+  opacity: 0;
+}
+.section.revealed .chart-card,
+.section.revealed .stat-card,
+.section.revealed .banner-wrap {
+  animation: cardIn 0.5s var(--ease) both;
+}
+.section.revealed .chart-card:nth-child(1) { animation-delay: 0.04s; }
+.section.revealed .chart-card:nth-child(2) { animation-delay: 0.08s; }
+.section.revealed .chart-card:nth-child(3) { animation-delay: 0.12s; }
+.section.revealed .chart-card:nth-child(4) { animation-delay: 0.16s; }
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── SECTION HEADER ───────────────────────────────────────── */
+.section-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 26px;
+  padding-bottom: 14px;
+  border-bottom: 0.5px solid var(--border);
+  position: relative;
+}
+.section-header::after {
+  content: '';
+  position: absolute;
+  left: 0; bottom: -0.5px;
+  width: 60px; height: 2px;
+  background: var(--gold);
+}
+.section-title-block { display: flex; flex-direction: column; gap: 4px; }
+.section-eyebrow {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.section-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--navy);
+  line-height: 1;
+}
+.section-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1.4px solid var(--gold-dim);
+  padding: 4px 10px;
+  border-radius: 2px;
+  background: var(--gold-veil);
+}
+
+/* ── CHART GRID ───────────────────────────────────────────── */
+.charts-grid          { display: grid; gap: 18px; }
+.charts-grid.cols-1   { grid-template-columns: 1fr; }
+.charts-grid.cols-2   { grid-template-columns: 1fr 1fr; }
+.charts-grid.cols-3   { grid-template-columns: repeat(3, 1fr); }
+.charts-grid.cols-2-1 { grid-template-columns: 2fr 1fr; }
+/* Tarjeta destacada o cierre de fila impar: ocupa todo el ancho.
+   El flag lo calcula _annotate_layout() en el .py para que la grilla
+   nunca deje celdas vacías. */
+.chart-card.wide      { grid-column: 1 / -1; }
+
+.chart-card {
+  background: #ffffff;
+  border: 0.5px solid var(--border-dim);
+  border-top: 2.5px solid var(--gold);
+  border-radius: 0 0 4px 4px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 420px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.25s var(--ease), transform 0.25s var(--ease);
+  position: relative;
+  overflow: hidden;
+}
+.chart-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2.5px;
+  background: linear-gradient(90deg, var(--gold-bright), var(--gold), var(--gold-deep));
+  opacity: 0;
+  transition: opacity 0.3s var(--ease);
+}
+.chart-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+.chart-card:hover::before { opacity: 1; }
+.chart-card.tall  { min-height: 600px; }
+.chart-card.short { min-height: 220px; }
+
+/* ── TARJETA PENDIENTE (slot sin figura conectada) ────────── */
+.chart-card.pending {
+  grid-column: 1 / -1;
+  min-height: 0;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 18px;
+  background:
+    linear-gradient(var(--bg-elev), var(--bg-elev)) padding-box,
+    repeating-linear-gradient(45deg, transparent 0 12px, rgba(148,104,38,0.05) 12px 13px);
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  box-shadow: none;
+}
+.chart-card.pending:hover { transform: none; box-shadow: none; border-color: var(--gold-dim); }
+.chart-card.pending::before { display: none; }
+.pending-icon {
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--gold-dim);
+  border-radius: 50%;
+  color: var(--gold);
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.6);
+}
+.pending-icon svg { width: 14px; height: 14px; stroke: currentColor; }
+.pending-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.pending-label {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gold-deep);
+}
+.pending-sub {
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+.pending-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gold);
+  border: 1px dashed var(--gold-dim);
+  padding: 3px 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* Tabla resumen bajo el gráfico (candlestick y S/R) */
+.slot-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+.slot-table th {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gold);
+  padding: 0 0 6px 0;
+  border-bottom: 0.5px solid var(--border);
+  text-align: left;
+}
+.slot-table th:not(:first-child) { padding-left: 16px; }
+.slot-table td {
+  padding: 6px 0;
+  border-bottom: 0.5px solid var(--border-dim);
+  vertical-align: middle;
+  font-size: 11px;
+  color: var(--text);
+}
+.slot-table td:not(:first-child) { padding-left: 16px; }
+.slot-table tr:last-child td { border-bottom: none; }
+.slot-table tr:hover td { background: var(--gold-veil); }
+.slot-table .slot-table-name {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--navy);
+}
+.slot-table .slot-table-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--navy);
+}
+.slot-table .slot-table-desc {
+  font-size: 9.5px;
+  color: var(--text-faint);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.chart-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--navy);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.chart-title-left { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.chart-title-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.chart-meta {
+  font-size: 10px;
+  color: var(--text-faint);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── CAPTURE BUTTON (por gráfico) ──
+   Botón con label siempre visible para que la acción de copiar
+   al portapapeles sea evidente sin descubrirla por hover. */
+.btn-capture {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  color: var(--gold-deep);
+  font-family: 'Barlow', sans-serif;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease),
+              border-color 0.15s var(--ease), transform 0.15s var(--ease);
+  flex-shrink: 0;
+}
+.btn-capture:hover {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(148,104,38,0.22);
+}
+.btn-capture:active { transform: translateY(0); }
+.btn-capture svg { width: 12px; height: 12px; stroke: currentColor; }
+.btn-capture.copied {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
+
+/* ── CHART TOOLBAR (período + slider en una franja compacta) ── */
+.chart-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  background: var(--bg-elev);
+  border: 0.5px solid var(--border-dim);
+  border-radius: 3px;
+}
+.chart-toolbar .period-bar { margin-bottom: 0; }
+.chart-toolbar .date-slider-wrap { flex: 1; min-width: 200px; padding: 0; }
+
+/* ── CHART AREA + EMPTY STATE ────────────────────────────── */
+.chart-area {
+  flex: 1;
+  background:
+    linear-gradient(var(--bg-soft), var(--bg-soft)) padding-box,
+    repeating-linear-gradient(
+      45deg,
+      transparent 0 12px,
+      rgba(148,104,38,0.05) 12px 13px
+    );
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  min-height: 370px;
+  transition: border-color 0.2s var(--ease);
+}
+.chart-area:hover { border-color: var(--gold-dim); }
+.chart-area.has-plot {
+  background: #ffffff;
+  border: 0.5px solid var(--border-dim);
+  padding: 4px;
+}
+.plotly-target { width: 100%; height: 100%; min-height: 380px; }
+.chart-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px;
+  text-align: center;
+  z-index: 1;
+}
+.chart-placeholder-icon {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--gold-dim);
+  border-radius: 50%;
+  color: var(--gold);
+  margin-bottom: 4px;
+  background: rgba(255,255,255,0.6);
+}
+.chart-placeholder-icon svg { width: 16px; height: 16px; stroke: currentColor; }
+.chart-placeholder-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gold-deep);
+}
+.chart-placeholder-sub {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── BANNER ───────────────────────────────────────────────── */
+.banner-wrap {
+  background: linear-gradient(135deg, #ffffff 0%, var(--bg-elev) 100%);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--gold);
+  padding: 18px 24px;
+  margin-bottom: 26px;
+  border-radius: 0 4px 4px 0;
+  box-shadow: var(--shadow-sm);
+}
+.banner-top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+  border-bottom: 0.5px solid var(--border);
+  padding-bottom: 10px;
+}
+.banner-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.banner-date-tag {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── STAT CARDS ───────────────────────────────────────────── */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.stat-card {
+  background: #ffffff;
+  border: 0.5px solid var(--border-dim);
+  border-radius: 3px;
+  padding: 14px 16px;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.2s var(--ease), box-shadow 0.2s var(--ease);
+  position: relative;
+}
+.stat-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.stat-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.stat-value {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--navy);
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.stat-change { font-size: 11px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+.mar { color: var(--yellow); }
+
+/* ── PILLS ────────────────────────────────────────────────── */
+.pill {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 3px 9px; border-radius: 2px;
+  font-size: 11px; font-weight: 700;
+}
+.pill-pos { background: rgba(30,120,50,0.10); color: rgb(22,100,40); border: 1px solid rgba(30,120,50,0.30); }
+.pill-mar { background: rgba(155,108,0,0.10); color: rgb(130,90,0);  border: 1px solid rgba(155,108,0,0.30); }
+.pill-neg { background: rgba(180,25,25,0.10); color: rgb(160,20,20); border: 1px solid rgba(180,25,25,0.30); }
+
+/* ── TABS ─────────────────────────────────────────────────── */
+.tab-bar {
+  display: flex;
+  margin-bottom: 22px;
+  border-bottom: 1px solid var(--border-dim);
+  gap: 2px;
+}
+.tab-btn {
+  font-family: 'Barlow', sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 10px 18px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none; border: none;
+  border-bottom: 2px solid transparent;
+  transition: color 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+.tab-btn:hover { color: var(--navy); }
+.tab-btn.active { color: var(--gold-deep); border-bottom-color: var(--gold); }
+.tab-content { display: none; }
+.tab-content.active { display: block; animation: sectionIn 0.3s var(--ease) both; }
+
+/* ── SCROLLBAR ────────────────────────────────────────────── */
+#main::-webkit-scrollbar      { width: 6px; }
+#main::-webkit-scrollbar-track   { background: transparent; }
+#main::-webkit-scrollbar-thumb   { background: rgba(148,104,38,0.22); border-radius: 3px; }
+#main::-webkit-scrollbar-thumb:hover { background: rgba(148,104,38,0.40); }
+#sidebar::-webkit-scrollbar      { width: 4px; }
+#sidebar::-webkit-scrollbar-thumb { background: rgba(148,104,38,0.18); border-radius: 2px; }
+
+/* ── OVERLAY (export feedback) ────────────────────────────── */
+#copy-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(244,243,239,0.86);
+  z-index: 999;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+#copy-overlay.show { display: flex; animation: fadeIn 0.18s var(--ease); }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.copy-spinner {
+  width: 38px; height: 38px;
+  border: 2.5px solid rgba(148,104,38,0.18);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.copy-msg {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gold-deep);
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+}
+
+/* ── TOAST ────────────────────────────────────────────────── */
+#toast {
+  position: fixed;
+  bottom: 28px; left: 50%;
+  transform: translateX(-50%) translateY(10px);
+  background: var(--navy);
+  color: #fff;
+  padding: 11px 22px;
+  border-radius: 3px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  z-index: 1000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s var(--ease), transform 0.22s var(--ease);
+  box-shadow: var(--shadow-lg);
+  border-left: 3px solid var(--gold);
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.error { border-left-color: var(--red); }
+
+/* ── CLP HERO CARD (portada) ───────────────────────────── */
+.clp-hero-card {
+  background: linear-gradient(135deg, var(--navy) 0%, var(--navy-soft) 100%);
+  border-radius: 4px;
+  padding: 22px 28px 20px;
+  margin-bottom: 18px;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.clp-hero-left { display: flex; flex-direction: column; gap: 6px; }
+.clp-hero-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold-bright);
+}
+.clp-hero-value {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1;
+  color: #ffffff;
+  letter-spacing: 0.01em;
+}
+.clp-hero-unit {
+  font-size: 16px;
+  font-weight: 400;
+  color: rgba(255,255,255,0.40);
+  margin-left: 6px;
+}
+.clp-hero-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: rgba(255,255,255,0.30);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.clp-hero-right {
+  display: flex;
+  gap: 28px;
+  padding-bottom: 4px;
+}
+.clp-hero-stat { display: flex; flex-direction: column; gap: 3px; align-items: flex-end; }
+.clp-hero-stat-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.38);
+}
+.clp-hero-stat-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 15px;
+  font-weight: 600;
+}
+/* En fondo oscuro ajustamos brillo de pos/neg */
+.clp-hero-card .pos { color: #4ade80; }
+.clp-hero-card .neg { color: #f87171; }
+
+/* ── PERIOD BAR (selector global por sección) ─────────── */
+.period-bar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.period-bar-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-right: 6px;
+}
+.period-btn {
+  font-family: 'Barlow', sans-serif;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 4px 12px;
+  cursor: pointer;
+  border-radius: 2px;
+  background: none;
+  border: 1px solid transparent;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease),
+              border-color 0.15s var(--ease);
+  user-select: none;
+}
+.period-btn:hover {
+  color: var(--navy);
+  background: var(--gold-veil);
+  border-color: var(--border-dim);
+}
+.period-btn.active {
+  color: var(--gold-deep);
+  background: var(--gold-faint);
+  border-color: var(--gold-dim);
+}
+
+/* ── EDITORIAL / COMENTARIO (Escenario Internacional · Ámbito Local · Perspectiva Cambiaria) ──
+   Texto libre editable en el navegador, sin persistencia: se resetea al recargar o
+   recompilar el HTML. Negrita/cursiva/subrayado vía atajos nativos del navegador
+   (Ctrl+B / Ctrl+I / Ctrl+U) sobre el contenteditable, sin botonera visible. */
+.editorial-card {
+  background: #ffffff;
+  border: 0.5px solid var(--border-dim);
+  border-top: 2.5px solid var(--gold);
+  border-radius: 0 0 4px 4px;
+  padding: 16px 20px 20px;
+  margin-bottom: 18px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.25s var(--ease);
+}
+.editorial-card:hover { box-shadow: var(--shadow-md); }
+.editorial-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 0.5px solid var(--border-dim);
+}
+.editorial-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.editorial-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.editorial-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--navy);
+  padding-bottom: 7px;
+  border-bottom: 1.5px solid var(--gold-dim);
+}
+.editorial-editable {
+  min-height: 90px;
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+}
+.editorial-editable:focus { border: 1px solid var(--gold-dim); background: #ffffff; }
+.editorial-editable:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-faint);
+  font-style: italic;
+}
+.editorial-editable b, .editorial-editable strong { color: var(--navy); }
+
+/* ── MARKET TABLE (portada) ─────────────────────────────── */
+.market-table-card {
+  background: #ffffff;
+  border: 0.5px solid var(--border-dim);
+  border-top: 2.5px solid var(--gold);
+  border-radius: 0 0 4px 4px;
+  padding: 16px 20px;
+  margin-bottom: 18px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.25s var(--ease);
+}
+.market-table-card:hover { box-shadow: var(--shadow-md); }
+.market-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 0.5px solid var(--border-dim);
+}
+.market-table-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--navy);
+}
+.market-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.market-table th {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gold);
+  padding: 0 0 8px 0;
+  border-bottom: 0.5px solid var(--border);
+  text-align: left;
+}
+.market-table th:not(:first-child) { text-align: right; padding-left: 16px; }
+.market-table td {
+  padding: 10px 0;
+  border-bottom: 0.5px solid var(--border-dim);
+  vertical-align: middle;
+}
+.market-table tr:last-child td { border-bottom: none; }
+.market-table tr:hover td { background: var(--gold-veil); }
+.market-table td:not(:first-child) { text-align: right; padding-left: 16px; }
+/* Acento izquierdo por impacto CLP */
+.market-table td:first-child { padding-left: 10px; }
+.mkt-row-pos td:first-child { border-left: 3px solid var(--green); }
+.mkt-row-neg td:first-child { border-left: 3px solid var(--red); }
+.mkt-row-neu td:first-child { border-left: 3px solid var(--gold-dim); }
+.mkt-name {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--navy);
+  line-height: 1.1;
+}
+.mkt-sub {
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+.mkt-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+.mkt-last {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--navy);
+  letter-spacing: 0.01em;
+}
+.mkt-empty {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+}
+/* Pill para pill-mar (neutral) */
+.pill-mar { background: rgba(155,108,0,0.10); color: rgb(130,90,0); border: 1px solid rgba(155,108,0,0.30); }
+
+/* ── RESPONSIVE ───────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .charts-grid.cols-3, .charts-grid.cols-2-1 { grid-template-columns: 1fr 1fr; }
+  .stats-row { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 720px) {
+  .charts-grid.cols-2, .charts-grid.cols-3, .charts-grid.cols-2-1 { grid-template-columns: 1fr; }
+  .stats-row { grid-template-columns: 1fr 1fr; }
+  :root { --sidebar-w: 64px; }
+  .sidebar-logo-text, .sidebar-logo-sub, .nav-section-label, .nav-item-label { display: none; }
+}
+
+/* ── DATE RANGE SLIDER (JS custom) ──────────────────────────── */
+.date-slider-wrap {
+  padding: 0 2px 4px;
+  user-select: none;
+}
+.date-slider-track {
+  position: relative;
+  height: 20px;
+  display: flex;
+  align-items: center;
+}
+.date-slider-bg {
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  background: var(--border-dim);
+  border-radius: 2px;
+  pointer-events: none;
+}
+.date-slider-fill {
+  position: absolute;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  background: linear-gradient(90deg, var(--gold-bright), var(--gold));
+  border-radius: 2px;
+  pointer-events: none;
+  left: 0; width: 100%;
+}
+.date-slider-input {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  outline: none;
+  pointer-events: none;
+}
+.date-slider-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: var(--gold);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,23,48,0.18), 0 0 0 2px rgba(148,104,38,0.10);
+  pointer-events: all;
+  cursor: grab;
+  transition: transform 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+.date-slider-input::-webkit-slider-thumb:hover {
+  transform: scale(1.22);
+  box-shadow: 0 2px 8px rgba(148,104,38,0.30), 0 0 0 4px rgba(148,104,38,0.12);
+}
+.date-slider-input:active::-webkit-slider-thumb { cursor: grabbing; }
+.date-slider-input::-moz-range-thumb {
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: var(--gold);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,23,48,0.18);
+  pointer-events: all;
+  cursor: grab;
+}
+.date-slider-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+}
+.date-slider-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--gold);
+  letter-spacing: 0.05em;
+  font-weight: 500;
+}
+</style>
+</head>
+<body>
+
+<!-- ── COPY OVERLAY ── -->
+<div id="copy-overlay">
+  <div class="copy-spinner"></div>
+  <span class="copy-msg" id="copy-msg-text">Procesando imagen…</span>
+</div>
+
+<!-- ── TOAST ── -->
+<div id="toast"></div>
+
+<!-- ── HEADER ── -->
+<header id="header">
+  <div class="header-left">
+    <span class="header-title">{{ title_short }}</span>
+    <span class="header-sep">·</span>
+    <span class="header-subtitle">{{ subtitle }}</span>
+  </div>
+  <div class="header-right">
+    <span id="header-date"></span>
+
+    <button class="btn" id="btn-export">
+      <svg viewBox="0 0 16 16" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 2v8M5 7l3 3 3-3M2 12v2h12v-2"/>
+      </svg>
+      Exportar
+    </button>
+  </div>
+</header>
+
+<!-- ── SIDEBAR ── -->
+<nav id="sidebar">
+  <button class="btn-ghost sidebar-toggle" id="sidebar-toggle" aria-label="Colapsar sidebar">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10 4l-4 4 4 4"/>
+    </svg>
+  </button>
+
+  <div class="sidebar-logo">
+    <div class="sidebar-logo-text">Banco Central<br>de Chile</div>
+    <div class="sidebar-logo-sub">DOMA</div>
+  </div>
+
+  {% for group in nav_groups %}
+  <div class="nav-section">
+    <div class="nav-section-label">{{ group.label }}</div>
+    {% for item in group['items'] %}
+    <div class="nav-item{% if loop.first and loop.index0 == 0 and group == nav_groups[0] %} active{% endif %}" data-section="{{ item.id }}">
+      <span class="nav-dot"></span>
+      <span class="nav-item-label">{{ item.label }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</nav>
+
+<!-- ── MAIN ── -->
+<main id="main">
+  {% for group in nav_groups %}
+    {% for item in group['items'] %}
+    <section id="sec-{{ item.id }}" class="section{% if loop.first and loop.index0 == 0 and group == nav_groups[0] %} active{% endif %}">
+      <div class="section-header">
+        <div class="section-title-block">
+          <span class="section-eyebrow">{{ group.label }}</span>
+          <h1 class="section-title">{{ item.label }}</h1>
+        </div>
+        <span class="section-badge">{{ item.badge|default('Pendiente') }}</span>
+      </div>
+
+      {% if item.id == 'portada' %}
+      <!-- Análisis y Perspectiva (comentario editorial) -->
+      <div class="editorial-card">
+        <div class="editorial-header">
+          <span class="market-table-title">Análisis y Perspectiva</span>
+        </div>
+        <div class="editorial-grid">
+          <div class="editorial-section">
+            <div class="editorial-title">Escenario Internacional</div>
+            <div class="editorial-editable" contenteditable="true" data-placeholder="Escribe aquí…"></div>
+          </div>
+          <div class="editorial-section">
+            <div class="editorial-title">Ámbito Local</div>
+            <div class="editorial-editable" contenteditable="true" data-placeholder="Escribe aquí…"></div>
+          </div>
+          <div class="editorial-section">
+            <div class="editorial-title">Perspectiva Cambiaria</div>
+            <div class="editorial-editable" contenteditable="true" data-placeholder="Escribe aquí…"></div>
+          </div>
+        </div>
+      </div>
+      <!-- Hero CLP -->
+      <div class="clp-hero-card">
+        <div class="clp-hero-left">
+          <div class="clp-hero-label">CLP Cierre<span class="clp-hero-unit">CLP/USD</span></div>
+          <div class="clp-hero-value">{{ clp_stat.value }}</div>
+          <div class="clp-hero-date">{{ clp_stat.fecha }}</div>
+        </div>
+        <div class="clp-hero-right">
+          <div class="clp-hero-stat">
+            <span class="clp-hero-stat-label">Variación día</span>
+            <span class="clp-hero-stat-val {{ clp_stat.vd_cls }}">{{ clp_stat.vd_fmt }}</span>
+          </div>
+          <div class="clp-hero-stat">
+            <span class="clp-hero-stat-label">Variación semana</span>
+            <span class="clp-hero-stat-val {{ clp_stat.vs_cls }}">{{ clp_stat.vs_fmt }}</span>
+          </div>
+        </div>
+      </div>
+      <!-- Snapshot de Mercado -->
+      <div class="market-table-card">
+        <div class="market-table-header">
+          <span class="market-table-title">Snapshot de Mercado · Drivers</span>
+          <span class="chart-meta" id="market-table-ts"></span>
+        </div>
+        <table class="market-table">
+          <thead>
+            <tr>
+              <th>Indicador</th>
+              <th>Último</th>
+              <th>Var. Día</th>
+              <th>Var. Semana</th>
+              <th>Imp. CLP</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for row in market_table %}
+            {% set row_cls = 'mkt-row-pos' if row.estado_cls == 'pill-pos' else ('mkt-row-neg' if row.estado_cls == 'pill-neg' else 'mkt-row-neu') %}
+            <tr class="{{ row_cls }}">
+              <td><div class="mkt-name">{{ row.nombre }}</div><div class="mkt-sub">{{ row.unidad }}</div></td>
+              <td>
+                {% if row.ultimo != '—' %}<span class="mkt-last">{{ row.ultimo }}</span>
+                {% else %}<span class="mkt-empty">—</span>{% endif %}
+              </td>
+              <td>
+                {% if row.var_dia != '—' %}<span class="mkt-val {{ row.vd_cls }}">{{ row.var_dia }}</span>
+                {% else %}<span class="mkt-empty">—</span>{% endif %}
+              </td>
+              <td>
+                {% if row.var_sem != '—' %}<span class="mkt-val {{ row.vs_cls }}">{{ row.var_sem }}</span>
+                {% else %}<span class="mkt-empty">—</span>{% endif %}
+              </td>
+              <td>
+                {% if row.estado_cls %}<span class="pill {{ row.estado_cls }}">{{ row.estado }}</span>
+                {% else %}<span class="mkt-empty">{{ row.estado }}</span>{% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5"><span class="mkt-empty">Sin datos · ejecutar CambiarioAM.py</span></td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+
+      <div class="charts-grid cols-{{ item.cols|default(2) }}">
+        {% for slot in item.slots %}
+        {% if slot.get('pending') %}
+        <div class="chart-card pending">
+          <div class="pending-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3v18h18"/>
+              <path d="M7 14l4-4 4 3 5-7"/>
+            </svg>
+          </div>
+          <div class="pending-text">
+            <span class="pending-label">{{ slot.label }}</span>
+            <span class="pending-sub">Conectar pipeline{% if slot.fig_id %} · {{ slot.fig_id }}{% endif %}</span>
+          </div>
+          <span class="pending-badge">Pendiente</span>
+        </div>
+        {% else %}
+        <div class="chart-card tall{% if slot.get('wide') %} wide{% endif %}">
+          <div class="chart-title">
+            <div class="chart-title-left">
+              <span>{{ slot.label }}</span>
+            </div>
+            <div class="chart-title-right">
+              <button class="btn-capture" title="Copiar gráfico al portapapeles (PNG)" onclick="captureCard(this)">
+                <svg viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="9" height="9" rx="1"/>
+                  <path d="M6 3V2a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-1"/>
+                </svg>
+                <span class="btn-capture-label">Copiar</span>
+              </button>
+            </div>
+          </div>
+          {% if slot.fig_id not in ['clp_intradia','variacion_dia','clp_dist', 'carry_trade', 'variacion_1mes', 'vol_clp' , 'fixing', 'contrato_hga', 'contrato_lma', 'contrato_cl1', 'gamma_plot', 'heatmap_gp'] %}
+          <div class="chart-toolbar">
+            <div class="period-bar" data-target="{{ slot.fig_id }}">
+              <button class="period-btn active" data-period="all">Todo</button>
+            </div>
+            <div class="date-slider-wrap" data-target="{{ slot.fig_id }}">
+              <div class="date-slider-track">
+                <div class="date-slider-bg"></div>
+                <div class="date-slider-fill"></div>
+                <input class="date-slider-input date-slider-start" type="range" min="0" max="1000" value="0">
+                <input class="date-slider-input date-slider-end"   type="range" min="0" max="1000" value="1000">
+              </div>
+              <div class="date-slider-labels">
+                <span class="date-slider-label date-slider-label-start"></span>
+                <span class="date-slider-label date-slider-label-end"></span>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+          <div class="chart-area has-plot">
+            <div class="plotly-target" data-fig-id="{{ slot.fig_id }}"{% if slot.get('rebase') %} data-rebase="true"{% endif %}></div>
+          </div>
+          {% if slot.get('table') %}
+          <table class="slot-table">
+            <thead>
+              <tr>{% for h in slot.table.headers %}<th>{{ h }}</th>{% endfor %}</tr>
+            </thead>
+            <tbody>
+            {% for row in slot.table.rows %}
+              <tr>
+                {% for cell in row %}
+                <td class="{{ 'slot-table-name' if loop.first else 'slot-table-val' }}">{{ cell }}</td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+  {% endfor %}
+</main>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+  INFORME CAMBIARIO AM — Script
+  ═══════════════════════════════════════════════════════════ */
+
+/* Registro de figuras Plotly inyectado por CambiarioAM.py */
+window.__FIGS__ = {{figures_json|safe}};
+
+/* ── FECHA ── */
+(function() {
+  const now = new Date();
+  const fmtLong = { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' };
+  const el = document.getElementById('header-date');
+  if (el) {
+    const s = now.toLocaleDateString('es-CL', fmtLong);
+    el.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+  }
+  const ts = document.getElementById('market-table-ts');
+  if (ts) {
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    ts.textContent = `Actualizado · ${hh}:${mm}`;
+  }
+})();
+
+/* ── TOAST ── */
+function showToast(msg, isError) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.toggle('error', !!isError);
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+/* ── SCROLLSPY: navegación por scroll ──
+   Todas las secciones quedan apiladas dentro de #main (scrolleable). El click
+   en el sidebar hace scroll suave hasta la sección; el estado "active" del
+   nav lo determina un IntersectionObserver según qué sección está visible.
+*/
+const mainEl  = document.getElementById('main');
+const sections = document.querySelectorAll('.section');
+const navItems = document.querySelectorAll('.nav-item');
+
+function setActiveNav(secId) {
+  navItems.forEach(n => n.classList.toggle('active', n.dataset.section === secId));
+}
+
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    const target = document.getElementById('sec-' + item.dataset.section);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+});
+
+/* Resalta en el sidebar la sección que ocupa la franja superior del viewport */
+const navObserver = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) setActiveNav(entry.target.id.replace('sec-', ''));
+  });
+}, {
+  root: mainEl,
+  rootMargin: '-45% 0px -50% 0px',
+  threshold: 0
+});
+sections.forEach(sec => navObserver.observe(sec));
+
+/* ── PLOTLY LAZY RENDER ──
+   Plotly mide su contenedor al construir, así que renderizamos cada sección
+   recién antes de que entre en viewport (scrollspy), no toda de una vez.
+*/
+const __PLOTTED__ = new Set();
+
+/* ── HELPERS DE PERÍODO / SLIDER / Y-SYNC ─────────────────────────── */
+
+function _hasY2(el) {
+  return !!(el.data && el.data.some(function(t) { return t.yaxis === 'y2'; }));
+}
+
+/* Calcula el rango de fechas real del chart a partir de sus datos */
+function _getChartDateBounds(el) {
+  if (!el.data) return null;
+  var tMin = Infinity, tMax = -Infinity;
+  for (var i = 0; i < el.data.length; i++) {
+    var xs = el.data[i].x;
+    if (!Array.isArray(xs)) continue;
+    for (var j = 0; j < xs.length; j++) {
+      if (!xs[j]) continue;
+      var t = new Date(xs[j]).getTime();
+      if (!isNaN(t)) { if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+    }
+  }
+  return (tMin === Infinity) ? null : { min: tMin, max: tMax };
+}
+
+/* Inicializa el slider dual de fechas y lo vincula al chart */
+function _initDateSlider(wrap, el) {
+  var bounds = _getChartDateBounds(el);
+  if (!bounds || bounds.max <= bounds.min) { wrap.style.display = 'none'; return; }
+
+  var inp0  = wrap.querySelector('.date-slider-start');
+  var inp1  = wrap.querySelector('.date-slider-end');
+  var fill  = wrap.querySelector('.date-slider-fill');
+  var lbl0  = wrap.querySelector('.date-slider-label-start');
+  var lbl1  = wrap.querySelector('.date-slider-label-end');
+  var STEPS = 1000;
+  var span  = bounds.max - bounds.min;
+
+  function valToTs(v)  { return bounds.min + (v / STEPS) * span; }
+  function tsToVal(ts) { return Math.max(0, Math.min(STEPS, Math.round(((ts - bounds.min) / span) * STEPS))); }
+  function fmtTs(ts) {
+    return new Date(ts).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: '2-digit' });
+  }
+
+  function updateUI() {
+    var v0 = +inp0.value, v1 = +inp1.value;
+    var lo = Math.min(v0, v1), hi = Math.max(v0, v1);
+    fill.style.left  = (lo  / STEPS * 100) + '%';
+    fill.style.width = ((hi - lo) / STEPS * 100) + '%';
+    lbl0.textContent = fmtTs(valToTs(lo));
+    lbl1.textContent = fmtTs(valToTs(hi));
+  }
+
+  function applyToChart() {
+    var v0 = +inp0.value, v1 = +inp1.value;
+    var lo = Math.min(v0, v1), hi = Math.max(v0, v1);
+    var s0 = new Date(valToTs(lo)).toISOString().slice(0, 10);
+    var s1 = new Date(valToTs(hi)).toISOString().slice(0, 10);
+    var upd = { 'xaxis.range': [s0, s1], 'xaxis.autorange': false, 'yaxis.autorange': true };
+    if (_hasY2(el)) upd['yaxis2.autorange'] = true;
+    Plotly.relayout(el, upd);
+    /* Desactiva los botones de período al usar el slider manualmente */
+    var bar = document.querySelector('.period-bar[data-target="' + el.dataset.figId + '"]');
+    if (bar) bar.querySelectorAll('.period-btn').forEach(function(b) { b.classList.remove('active'); });
+  }
+
+  inp0.addEventListener('input', function() { updateUI(); applyToChart(); });
+  inp1.addEventListener('input', function() { updateUI(); applyToChart(); });
+
+  inp0.value = 0; inp1.value = STEPS;
+  updateUI();
+
+  /* Sincroniza el slider cuando se activa un botón de período */
+  el._syncSlider = function(startStr, endStr) {
+    inp0.value = startStr ? tsToVal(new Date(startStr).getTime()) : 0;
+    inp1.value = endStr   ? tsToVal(new Date(endStr).getTime())   : STEPS;
+    updateUI();
+  };
+}
+
+/* Aísla visualmente la serie bajo el cursor: la atenúa el resto de los traces
+   (líneas, bandas, barras) mientras se hace hover y las restaura al salir.
+   Con hovermode:'closest' el tooltip ya muestra solo la serie más cercana;
+   esto agrega el refuerzo visual para que sea igual de claro en el gráfico. */
+function _initHoverIsolate(el) {
+  if (!el.data || el.data.length < 2) return; // 1 trace (ej. candlestick): nada que aislar
+  var baseOpacities = el.data.map(function(t) { return (t.opacity == null) ? 1 : t.opacity; });
+  var dimming = false;
+
+  el.on('plotly_hover', function(ev) {
+    if (!ev.points || !ev.points.length) return;
+    var hoveredIdx = ev.points[0].curveNumber;
+    dimming = true;
+    Plotly.restyle(el, {
+      opacity: el.data.map(function(_, i) { return i === hoveredIdx ? 1 : 0.10; }),
+    });
+  });
+
+  el.on('plotly_unhover', function() {
+    if (!dimming) return;
+    dimming = false;
+    Plotly.restyle(el, { opacity: baseOpacities });
+  });
+}
+
+/* Llamar una vez por chart tras Plotly.newPlot */
+function _postRender(el) {
+  var sliderWrap = document.querySelector('.date-slider-wrap[data-target="' + el.dataset.figId + '"]');
+  if (sliderWrap) _initDateSlider(sliderWrap, el);
+
+  _initHoverIsolate(el);
+
+  /* Sincroniza eje Y cuando cambia el rango X (zoom, etc.) */
+  var _yTimer = null;
+  el.on('plotly_relayout', function(ev) {
+    var keys    = Object.keys(ev);
+    var xChange = keys.some(function(k) { return k.startsWith('xaxis.range') || k === 'xaxis.autorange'; });
+    var yChange = keys.some(function(k) { return k.startsWith('yaxis'); });
+    if (xChange && !yChange) {
+      clearTimeout(_yTimer);
+      _yTimer = setTimeout(function() {
+        var upd = { 'yaxis.autorange': true };
+        if (_hasY2(el)) upd['yaxis2.autorange'] = true;
+        Plotly.relayout(el, upd);
+      }, 80);
+    }
+  });
+}
+
+/* Aplica un período al chart y sincroniza el slider */
+function applyPeriodToEl(el, period) {
+  if (!el || !el.data) return;
+  if (el.dataset.rebase === 'true') { rebaseChart(el, period); return; }
+  var startDate = _periodStartDate(period);
+  var startStr  = startDate ? startDate.toISOString().slice(0, 10) : null;
+  var endStr    = new Date().toISOString().slice(0, 10);
+  var upd = startStr
+    ? { 'xaxis.range': [startStr, endStr], 'xaxis.autorange': false, 'yaxis.autorange': true }
+    : { 'xaxis.autorange': true, 'yaxis.autorange': true };
+  if (_hasY2(el)) upd['yaxis2.autorange'] = true;
+  Plotly.relayout(el, upd);
+  if (el._syncSlider) el._syncSlider(startStr, startStr ? endStr : null);
+}
+
+function renderSection(secId) {
+  if (!window.Plotly) return;
+  const sec = document.getElementById('sec-' + secId);
+  if (!sec) return;
+
+  const newlyPlotted = [];
+  sec.querySelectorAll('.plotly-target').forEach(el => {
+    const id = el.dataset.figId;
+    if (!id) return;
+    const fig = window.__FIGS__[id];
+    if (!fig) return;
+    if (__PLOTTED__.has(id)) {
+      Plotly.Plots.resize(el);
+      return;
+    }
+    Plotly.newPlot(el, fig.data, fig.layout, {
+      responsive: true,
+      displayModeBar: 'hover',
+      displaylogo: false,
+      modeBarButtonsToRemove: ['lasso2d', 'select2d', 'autoScale2d']
+    });
+    __PLOTTED__.add(id);
+    newlyPlotted.push(el);
+  });
+
+  // Post-render: slider + y-sync + período activo
+  newlyPlotted.forEach(el => {
+    _postRender(el);
+    const figId = el.dataset.figId;
+    const bar   = document.querySelector(`.period-bar[data-target="${figId}"]`);
+    if (!bar) return;
+    const active = bar.querySelector('.period-btn.active');
+    if (!active || active.dataset.period === 'all') return;
+    requestAnimationFrame(() => applyPeriodToEl(el, active.dataset.period));
+  });
+}
+
+/* Render y reveal por sección a medida que entran en el viewport */
+const renderObserver = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (!entry.isIntersecting) return;
+    const secId = entry.target.id.replace('sec-', '');
+    entry.target.classList.add('revealed');
+    renderSection(secId);
+    renderObserver.unobserve(entry.target);
+  });
+}, {
+  root: mainEl,
+  rootMargin: '250px 0px 250px 0px',
+  threshold: 0.01
+});
+sections.forEach(sec => renderObserver.observe(sec));
+
+/* Resize global ante cambios de tamaño del sidebar/viewport */
+window.addEventListener('resize', () => {
+  document.querySelectorAll('.plotly-target').forEach(el => {
+    if (el._fullLayout) Plotly.Plots.resize(el);
+  });
+});
+
+/* ── TABS (si llegan a usarse en una sección) ── */
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tabId = btn.dataset.tab;
+    const bar = btn.closest('.tab-bar');
+    const parent = btn.closest('.section');
+    bar.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    parent.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    const tab = document.getElementById(tabId);
+    if (tab) tab.classList.add('active');
+  });
+});
+
+/* ── SIDEBAR TOGGLE ── */
+const sidebarToggle = document.getElementById('sidebar-toggle');
+sidebarToggle.addEventListener('click', () => {
+  document.body.classList.toggle('sidebar-collapsed');
+});
+
+/* ── EXPORT (botón directo) ── */
+const btnExport = document.getElementById('btn-export');
+btnExport.addEventListener('click', () => exportAction('copy'));
+
+/* ── CAPTURE HELPERS ── */
+const overlay    = document.getElementById('copy-overlay');
+const overlayMsg = document.getElementById('copy-msg-text');
+
+function canvasToBlob(canvas) {
+  return new Promise((res, rej) =>
+    canvas.toBlob(b => b ? res(b) : rej(new Error('blob fallido')), 'image/png')
+  );
+}
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+function timestamp() {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+async function captureNode(node, scale = 2) {
+  return html2canvas(node, {
+    scale, backgroundColor: '#f5f3ee', logging: false, useCORS: true,
+    windowWidth: node.scrollWidth, windowHeight: node.scrollHeight,
+  });
+}
+
+/* ── CAPTURA POR GRÁFICO INDIVIDUAL → portapapeles ──
+   Problema: .chart-card y .chart-area tienen overflow:hidden, lo que puede
+   recortar el SVG de Plotly en la captura. Solución: quitar overflow
+   temporalmente, capturar con dimensiones reales y restaurar.
+*/
+async function captureCard(btn) {
+  const card  = btn.closest('.chart-card');
+  const label = card.querySelector('.chart-title-left > span').textContent.trim();
+
+  overlayMsg.textContent = 'Copiando gráfico…';
+  overlay.classList.add('show');
+
+  // 1) Guardar y neutralizar overflow que recorta
+  const savedCard  = card.style.overflow;
+  const area       = card.querySelector('.chart-area');
+  const savedArea  = area ? area.style.overflow : null;
+  card.style.overflow = 'visible';
+  if (area) area.style.overflow = 'visible';
+
+  try {
+    // 2) Usar scrollHeight para capturar contenido completo aunque desborde
+    const canvas = await html2canvas(card, {
+      scale: 2,
+      backgroundColor: '#ffffff',
+      logging: false,
+      useCORS: true,
+      allowTaint: false,
+      width:  card.offsetWidth,
+      height: card.scrollHeight,
+      windowWidth:  document.documentElement.scrollWidth,
+      windowHeight: document.documentElement.scrollHeight,
+    });
+
+    // 3) Copiar al portapapeles
+    const blob = await canvasToBlob(canvas);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    showToast(`"${label}" copiado al portapapeles`);
+    // Feedback en el propio botón: "Copiar" -> "Copiado" por 1.8s
+    const lbl = btn.querySelector('.btn-capture-label');
+    if (lbl && !btn._copiedTimer) {
+      btn.classList.add('copied');
+      lbl.textContent = 'Copiado';
+      btn._copiedTimer = setTimeout(() => {
+        btn.classList.remove('copied');
+        lbl.textContent = 'Copiar';
+        btn._copiedTimer = null;
+      }, 1800);
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('Error al copiar · ' + (err.message || err), true);
+  } finally {
+    // 4) Restaurar overflow siempre
+    card.style.overflow = savedCard;
+    if (area) area.style.overflow = savedArea;
+    overlay.classList.remove('show');
+  }
+}
+
+/* ── EXPORT ACTIONS ── */
+async function exportAction(action) {
+  // Target: el charts-grid de la sección activa (según scrollspy) para recorte preciso
+  const activeNav = document.querySelector('.nav-item.active');
+  const sec    = activeNav && document.getElementById('sec-' + activeNav.dataset.section);
+  const target = sec && (sec.querySelector('.charts-grid') || sec);
+  if (!target) return;
+
+  overlayMsg.textContent = 'Copiando al portapapeles…';
+  overlay.classList.add('show');
+
+  // Neutralizar overflow:hidden para que html2canvas capture los SVG de Plotly completos
+  const clippedEls    = Array.from(target.querySelectorAll('.chart-card, .chart-area'));
+  const savedOverflows = clippedEls.map(el => el.style.overflow);
+  clippedEls.forEach(el => (el.style.overflow = 'visible'));
+
+  try {
+    // Calcular altura hasta la última tarjeta con gráfico real (excluye placeholders vacíos)
+    const liveCards = Array.from(target.querySelectorAll('.chart-card')).filter(c => c.querySelector('.plotly-target'));
+    const gridTop   = target.getBoundingClientRect().top + window.scrollY;
+    let captureH    = target.scrollHeight;
+    if (liveCards.length > 0) {
+      const lastRect = liveCards[liveCards.length - 1].getBoundingClientRect();
+      captureH = Math.ceil(lastRect.bottom + window.scrollY - gridTop) + 12;
+    }
+
+    const canvas = await html2canvas(target, {
+      scale: 2,
+      backgroundColor: '#f5f3ee',
+      logging: false,
+      useCORS: true,
+      allowTaint: false,
+      width:  target.scrollWidth,
+      height: captureH,
+      windowWidth:  document.documentElement.scrollWidth,
+      windowHeight: document.documentElement.scrollHeight,
+    });
+    const blob = await canvasToBlob(canvas);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    showToast('Imagen copiada al portapapeles');
+  } catch (err) {
+    console.error(err);
+    showToast('Error al exportar · ' + (err.message || err), true);
+  } finally {
+    clippedEls.forEach((el, i) => (el.style.overflow = savedOverflows[i]));
+    overlay.classList.remove('show');
+  }
+}
+
+/* ── PERÍODO GLOBAL ──
+   Aplica el período seleccionado a TODOS los gráficos de la sección activa.
+   - Charts con data-rebase="true": reindexan a base 100 desde el inicio del período.
+   - Resto: solo ajustan xaxis.range.
+*/
+
+function _periodStartDate(period) {
+  const now = new Date();
+  if (period === '1m')  { const d = new Date(now); d.setMonth(d.getMonth() - 1); return d; }
+  if (period === '3m')  { const d = new Date(now); d.setMonth(d.getMonth() - 3); return d; }
+  if (period === '6m')  { const d = new Date(now); d.setMonth(d.getMonth() - 6); return d; }
+  if (period === 'ytd') { return new Date(now.getFullYear(), 0, 1); }
+  if (period === '1y')  { const d = new Date(now); d.setFullYear(d.getFullYear() - 1); return d; }
+  return null; // 'all'
+}
+
+function rebaseChart(el, period) {
+  if (!el || !el.data) return;
+  const startDate = _periodStartDate(period);
+  const startStr  = startDate ? startDate.toISOString().slice(0, 10) : null;
+  const endStr    = new Date().toISOString().slice(0, 10);
+
+  const newYs = el.data.map(trace => {
+    const raw = trace.customdata;
+    const xs  = trace.x;
+    let baseIdx = 0;
+    if (startStr) {
+      for (let j = 0; j < xs.length; j++) {
+        if ((xs[j] || '').slice(0, 10) >= startStr) { baseIdx = j; break; }
+      }
+    }
+    const baseVal = raw[baseIdx];
+    if (!baseVal) return raw.map(() => null);
+    return raw.map(v => v != null ? +(v / baseVal * 100).toFixed(3) : null);
+  });
+
+  Plotly.restyle(el, { y: newYs });
+  const rebaseUpd = startStr
+    ? { 'xaxis.range': [startStr, endStr], 'xaxis.autorange': false, 'yaxis.autorange': true }
+    : { 'xaxis.autorange': true, 'yaxis.autorange': true };
+  Plotly.relayout(el, rebaseUpd);
+}
+
+function applyGlobalPeriod(secId, period) {
+  const sec = document.getElementById('sec-' + secId);
+  if (!sec) return;
+  sec.querySelectorAll('.plotly-target').forEach(el => applyPeriodToEl(el, period));
+}
+
+document.querySelectorAll('.period-bar').forEach(bar => {
+  bar.querySelectorAll('.period-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      bar.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const figEl = document.querySelector(`[data-fig-id="${bar.dataset.target}"]`);
+      applyPeriodToEl(figEl, btn.dataset.period);
+    });
+  });
+});
+
+/* ── KEYBOARD SHORTCUTS ── */
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'p' && e.shiftKey) {
+    e.preventDefault();
+    exportAction('copy');
+  }
+  if (e.key === '[' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    document.body.classList.toggle('sidebar-collapsed');
+  }
+});
+</script>
+</body>
+</html>

@@ -63,7 +63,7 @@ from banks_rag.application.reporting.report_spec import (
 )
 
 # Parquet maestro: stock DCV por fecha x tramo x instrumento x agente x moneda.
-_SRC = "variacion_stock_todos"
+_SRC = "variacion_instrumento_todos_plazo"
 _UNIT = "US$ Mill."
 
 # Secciones (banners del correo, literales y en orden).
@@ -170,8 +170,8 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     *_agent_blocks("Fondos de Pensiones y AFC", "AFP"),
     *_agent_blocks("Fondos Mutuos", "FFMM"),
     *_agent_blocks("Compañías de Seguros", "CS"),
-    *_skip_agent_blocks("Mandantes y Depósitos de Valores", _NO_SECTOR),
-    *_skip_agent_blocks("Corredores de Bolsa y Bolsa de Valores", _NO_SECTOR),
+    *_agent_blocks("Mandantes", "Mandantes"),
+    *_agent_blocks("Corredores de Bolsa", "CB"),
     *_agent_blocks("Otros", "Otros"),
 )
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -1032,6 +1032,27 @@ class PlotData:
     # explícitas las fechas consideradas. El bloque del informe la muestra debajo
     # del título. Vacío = el eje X ya es temporal (la fecha se ve en el gráfico).
     date_note: str = ""
+    # ``True`` (default) → el eje Y de las series temporales incluye el 0, que es
+    # lo correcto para FLUJOS y STOCKS: la magnitud se lee contra la nada.
+    #
+    # ``False`` → el eje se ajusta al rango del dato. Es lo que necesitan los
+    # NIVELES que nunca se acercan a cero (un tipo de cambio en 930, un índice
+    # base 100, un RSI entre 30 y 70): forzarles la base 0 aplasta toda la serie
+    # contra el borde superior y el movimiento —que es justamente lo que hay que
+    # leer— deja de verse. Solo lo miran los renderers de línea y doble eje; las
+    # barras y el área apilada siempre parten de 0, porque ahí la base ES el dato.
+    zero_base: bool = True
+    # Estilo por serie: ``{label: color_hex}`` fuerza el color de esa serie por
+    # encima de la paleta cíclica por índice; ``muted`` marca labels que se dibujan
+    # finas y en gris de solo contexto. Réplica del resaltado MA50/MA200 del
+    # informe cambiario original — sin esto, un gráfico con 5-6 medias móviles del
+    # mismo grosor y color aleatorio no deja ver cuál es la que importa (el cruce
+    # dorado/de la muerte). Vacío (default) = comportamiento histórico: paleta
+    # cíclica por orden de ``series``. Solo lo consultan los renderers de línea y
+    # doble eje del EJE IZQUIERDO; el eje derecho ya tiene su propio estilo fijo
+    # (área gris tenue).
+    emphasis: dict[str, str] = field(default_factory=dict)
+    muted: tuple[str, ...] = ()
 
     def is_empty(self) -> bool:
         return not self.series or all(len(s.points) < 1 for s in self.series)

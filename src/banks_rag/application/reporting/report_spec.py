@@ -41,7 +41,10 @@ class ReportBlock:
       (resuelto en ``series_transforms``). ``params`` la parametriza
       (p.ej. ``{"funds": ["Tipo 1", "Tipo 2"]}``).
     - ``chart``: familia de gráfico objetivo (ChartKind).
-    - ``text_slot``: id estable del slot de texto que acompaña al bloque.
+    - ``text_slot``: id estable del párrafo que el bloque hace redactar. El HTML
+      NO lo dibuja bajo el gráfico: el texto editable va una vez por TÓPICO
+      (``curated_report.section_slot_ids``) y los párrafos de la sección se
+      concatenan ahí (``curated_report.section_text_slots``).
     - ``status``: STATUS_MVP / STATUS_EXP / STATUS_SKIP.
     - ``scale``: factor que se aplica a los valores de la serie antes de
       graficar (1.0 = sin cambio). Sirve para corregir la unidad de un parquet
@@ -83,6 +86,15 @@ class ReportBlock:
     # ``spec_date_filters``), así prosa y gráfico hablan siempre del mismo período.
     date_from: str = ""
     date_to: str = ""
+    # Solo aplica con ``FamilyReportSpec.layout == "grid"``: el bloque ocupa la FILA
+    # COMPLETA en vez de media. Réplica del ``hero`` del dashboard original, donde
+    # la pieza que abre una sección (y la tabla-resumen de la portada) va a ancho
+    # completo y el resto se acomoda de a dos.
+    #
+    # No hace falta marcarlo para cerrar una fila impar: el renderer ya ensancha
+    # la ÚLTIMA tarjeta cuando las que quedan en automático son impares (misma
+    # regla de paridad del original), así ninguna queda huérfana a media fila.
+    full_width: bool = False
 
 
 @dataclass(frozen=True)
@@ -102,6 +114,27 @@ class FamilyReportSpec:
     # parquet con menor fecha). Útil cuando los datasets de la familia tienen cortes
     # heterogéneos y forzar un corte común muestra datos viejos (caso afp).
     share_weekly_cutoff: bool = True
+    # "stack" (default) → comportamiento histórico: un bloque por fila, ancho
+    # completo, exactamente como hoy en ffmm/nr/afp/fx/dcv. Cambiar esto NO afecta
+    # a ninguna familia existente porque ninguna lo declara.
+    #
+    # "grid" → los bloques de cada sección se acomodan en una grilla de 2 columnas
+    # (gráfico junto a gráfico, estilo dashboard) en vez de apilarse. Un bloque
+    # ``no_text`` que sigue INMEDIATAMENTE a su gráfico y comparte ``source_id``
+    # se funde en la MISMA tarjeta, pegado justo debajo — es el patrón "tabla de
+    # percentiles bajo el gráfico S/R" / "resumen bajo la vela" del informe
+    # cambiario. Si una sección termina con un número impar de tarjetas, la
+    # ÚLTIMA ocupa el ancho completo (misma regla del dashboard original que
+    # inspiró el layout: el ítem que sobra no se queda huérfano a media fila).
+    layout: str = "stack"
+    # Secciones que usan grilla de 2 columnas AUNQUE ``layout`` sea "stack" — para
+    # cuando solo UNA parte de un informe por lo demás apilado (ej. "Allocation y
+    # patrimonio" en afp) se beneficia del layout de dashboard, sin pasar el
+    # informe ENTERO a grilla. Una sección queda en grilla si está acá O si
+    # ``layout == "grid"`` (cambiarioam sigue sin declarar esto: su "grid" ya
+    # cubre las 8 secciones por la condición OR). Vacío = sin cambio para
+    # ninguna familia existente.
+    grid_sections: frozenset[str] = frozenset()
 
     def sections(self) -> list[str]:
         """Secciones en orden de aparición (sin repetir)."""

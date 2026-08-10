@@ -5,6 +5,10 @@ Lee un JSON {dataset_id: párrafo} producido por ``parquet_report.py
 --paragraphs-out`` y rellena los ``<div data-text-slot="…">`` vacíos del HTML
 curado generado por ``build_family_report.py``.
 
+El informe curado tiene UN slot de texto por TÓPICO (el banner de sección), no uno
+por gráfico: los párrafos de todos los datasets de una misma sección se concatenan
+en el orden del spec dentro de ese slot (ver ``section_text_slots``).
+
 Uso típico (H100, después de correr parquet_report.py):
 
     python scripts/parquet_report.py --segment ffmm \\
@@ -39,7 +43,9 @@ from banks_rag.application.reporting import make_editable_html  # noqa: E402
 from banks_rag.application.reporting.curated_report import (  # noqa: E402
     fill_synthesis_slot,
     fill_text_slots,
+    section_text_slots,
 )
+from banks_rag.application.reporting.specs import get_spec  # noqa: E402
 
 # Clave reservada en el JSON de párrafos: la síntesis ejecutiva (no es un dataset).
 _SYNTHESIS_KEY = "__sintesis__"
@@ -83,20 +89,24 @@ def main() -> None:
     synthesis = paragraphs.pop(_SYNTHESIS_KEY, "")
 
     family = args.family or _infer_family(html_content)
-    slots = {f"{family}:{did}": p for did, p in paragraphs.items()} if family else paragraphs
+    spec = get_spec(family) if family else None
+    if spec is not None:
+        # El informe curado tiene UN slot por tópico (banner de sección): los
+        # párrafos de los datasets de esa sección se concatenan en el orden del spec.
+        slots = section_text_slots(spec, paragraphs)
+    else:
+        # HTML que no viene de un spec (informe descriptivo): slot por dataset.
+        slots = {f"{family}:{did}": p for did, p in paragraphs.items()} if family else paragraphs
 
     patched = fill_text_slots(html_content, slots)
     patched = fill_synthesis_slot(patched, synthesis)
 
-    filled = sum(
-        1 for did in paragraphs
-        if f'data-text-slot="{family}:{did}"' in html_content
-    ) if family else len(paragraphs)
+    filled = sum(1 for slot in slots if f'data-text-slot="{slot}"' in html_content)
 
     out_path = pathlib.Path(args.out) if args.out else curated_path
     out_path.write_text(patched, encoding="utf-8")
     synth_note = " + síntesis" if synthesis.strip() else ""
-    print(f"OK {out_path}  ({filled} slots rellenos de {len(paragraphs)} párrafos{synth_note})")
+    print(f"OK {out_path}  ({filled} tópicos rellenos de {len(paragraphs)} párrafos{synth_note})")
 
     # Versión editable (misma que "Guardar editable" del chartbuilder): se abre en
     # el navegador, se escribe encima (gráficos + texto ya puestos) y se guarda a

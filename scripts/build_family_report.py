@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
 """Construye el informe CURADO de una familia (réplica de un informe real del BCCh).
-
+<br><br>
 Python puro, SIN modelo de lenguaje: los gráficos se dibujan leyendo los parquets
 directo; el texto queda en slots vacíos para llenarse después (con el LLM, en el
 H100). MVP: dibuja los gráficos que el renderer ya soporta (multi-línea /
 composición); el resto queda como placeholder marcado con su tipo pendiente.
-
+<br><br>
 Uso:
     python scripts/build_family_report.py --family ffmm
     python scripts/build_family_report.py            # lista familias disponibles
     python scripts/build_family_report.py --all      # construye todas
-
-Salida: **una carpeta por familia**, ``data/parquet_reports/curated/<familia>/<familia>_<fecha>.html``.
-Cada informe se acumula por fecha, así que sin subcarpeta las cuatro familias
-mezclaban sus corridas en el mismo directorio y había que leer el prefijo del
-archivo para saber cuál era cuál.
-
-Además, una versión EDITABLE junto a esa (``<familia>_<fecha>_editable.html``):
-panel flotante 💾 Guardar / 📄 Versión final para escribir el texto A MANO en el
-navegador (sin pasar por parquet_report.py/fill_report_texts.py) y guardar
-(--no-editable para omitirla).
+<br><br>
+Salida: **un directorio por familia y variante**, resuelto vía ``--out``/``--out-editable``
+(ambos admiten el placeholder ``{familia}``). Default:
+    <raíz>/{familia}/no_editable/<familia>_<fecha>.html
+    <raíz>/{familia}/Editable/<familia>_<fecha>_editable.html
+Cada informe se acumula por fecha. La versión EDITABLE trae panel flotante
+💾 Guardar / 📄 Versión final para escribir el texto A MANO en el navegador
+(sin pasar por parquet_report.py/fill_report_texts.py); ``--no-editable`` la omite.
 """
 
 from __future__ import annotations
@@ -42,8 +40,30 @@ from banks_rag.application.reporting import (  # noqa: E402
 from banks_rag.application.reporting.specs import available_families, get_spec  # noqa: E402
 
 
-def build_one(family: str, out_root: pathlib.Path, *, editable: bool) -> bool:
-    """Construye una familia en ``<out_root>/<familia>/``. ``False`` si no hay spec."""
+def _resolve_out_dir(template: str, family: str) -> pathlib.Path:
+    """Resuelve el directorio final para ``family``.
+
+    Si el template trae ``{familia}`` se formatea directo (permite separar
+    editable/no-editable en árboles distintos, ej. ``.../<familia>/Editable``).
+    Si no lo trae, se mantiene el comportamiento viejo: se asume una carpeta
+    RAÍZ y se le agrega ``<familia>/`` como subcarpeta.
+    """
+    if "{familia}" in template:
+        return pathlib.Path(template.format(familia=family))
+    return pathlib.Path(template) / family
+
+
+def build_one(
+    family: str,
+    out_dir: pathlib.Path,
+    editable_dir: pathlib.Path | None,
+    *,
+    editable: bool,
+) -> bool:
+    """Construye una familia: HTML final en ``out_dir``, editable en ``editable_dir``.
+
+    ``False`` si no hay spec para la familia.
+    """
     spec = get_spec(family)
     if spec is None:
         return False
@@ -51,19 +71,18 @@ def build_one(family: str, out_root: pathlib.Path, *, editable: bool) -> bool:
     report = build_curated_report(spec)
     html = render_curated_html(report)
 
-    # Una carpeta POR FAMILIA: cada informe se acumula por fecha y sin subcarpeta
-    # las cuatro familias mezclaban sus corridas en el mismo directorio.
-    out = out_root / spec.family
-    out.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{spec.family}_{datetime.date.today().isoformat()}"
-    dst = out / f"{stem}.html"
+    dst = out_dir / f"{stem}.html"
     dst.write_text(html, encoding="utf-8")
     print(f"OK {spec.title} -> {dst}  ({report.summary()})")
 
     # Versión editable (misma que "Guardar editable" del chartbuilder): útil ACÁ
     # sobre todo si se va a escribir el texto a mano, sin pasar por el LLM.
     if editable:
-        ed_dst = out / f"{stem}_editable.html"
+        assert editable_dir is not None
+        editable_dir.mkdir(parents=True, exist_ok=True)
+        ed_dst = editable_dir / f"{stem}_editable.html"
         ed_dst.write_text(make_editable_html(html), encoding="utf-8")
         print(f"OK editable -> {ed_dst}  (contenteditable + panel 💾 Guardar / 📄 Versión final)")
     return True
@@ -73,8 +92,16 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Informe curado por familia (gráficos desde parquets, sin LLM).")
     ap.add_argument("--family", default=None, help="Familia a construir (ej. ffmm). Sin valor: lista las disponibles.")
     ap.add_argument("--all", action="store_true", help="Construye TODAS las familias disponibles.")
-    ap.add_argument("--out", default="data/parquet_reports/curated",
-                    help="Carpeta RAÍZ de salida; cada familia escribe en su subcarpeta <familia>/.")
+    ap.add_argument(
+        "--out",
+        default="T:/GMN/DACE/Practicantes/Leandro/Informes Generados Con IA/{familia}/no_editable",
+        help="Carpeta de salida del HTML final (no editable). Admite '{familia}' como placeholder.",
+    )
+    ap.add_argument(
+        "--out-editable",
+        default="T:/GMN/DACE/Practicantes/Leandro/Informes Generados Con IA/{familia}/Editable",
+        help="Carpeta de salida del HTML editable. Admite '{familia}' como placeholder (--no-editable la omite).",
+    )
     ap.add_argument("--verbose", action="store_true", help="Log a nivel INFO.")
     ap.add_argument(
         "--no-editable", action="store_true",
@@ -92,13 +119,13 @@ def main() -> None:
         print("Familias disponibles:", ", ".join(families) or "(ninguna)")
         return
 
-    out_root = pathlib.Path(args.out)
     targets = families if args.all else [args.family]
     for fam in targets:
-        if not build_one(fam, out_root, editable=not args.no_editable):
+        out_dir = _resolve_out_dir(args.out, fam)
+        editable_dir = None if args.no_editable else _resolve_out_dir(args.out_editable, fam)
+        if not build_one(fam, out_dir, editable_dir, editable=not args.no_editable):
             print(f"No hay spec curado para {fam!r}. Disponibles: {', '.join(families)}")
             raise SystemExit(1)
-
 
 if __name__ == "__main__":
     main()

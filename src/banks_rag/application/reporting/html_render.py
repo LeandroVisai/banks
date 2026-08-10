@@ -169,8 +169,8 @@ _HTML_SHELL = """<!DOCTYPE html>
   <div class="page">
     <div class="hero">
       <h1>__TITLE__</h1>
-      <div class="subtitle">__SUBTITLE__</div>
     </div>
+    <div class="subtitle">__SUBTITLE__</div>
     <div class="content">
 __BODY__
     </div>

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Convierte un informe HTML a un correo ``.eml`` autocontenido.
-
+<br><br>
 Dos modos:
-
+<br><br>
 **Pass-through (por defecto)** — el correo lleva TU informe editado tal cual. Se toma
 el HTML (el que editaste a mano / con el chartbuilder), se lo deja "plano" y se arma el
 ``.eml`` con ESE cuerpo. NO reconstruye nada: los gráficos que insertaste (PNG del
 chartbuilder) y tu texto pasan al correo. Pasos:
-
+<br><br>
   - **Quita el chrome de edición** (panel 💾/📄 + ``contenteditable``) y el **Plotly
     interactivo** (deja solo los PNG).
   - **Inline CSS**: el CSS del ``<head>`` (clases de ``html_render.py``) se vuelca a
@@ -22,19 +22,19 @@ chartbuilder) y tu texto pasan al correo. Pasos:
   - Las salidas se agrupan **por familia** (``eml/fx/``, ``plano/fx/``…), igual que
     ``build_family_report.py``. Un HTML que no sea de una familia (el informe
     descriptivo ``reporte_…``) queda en la raíz.
-
+<br><br>
 **Reconstruir desde spec (``--from-spec``, legado)** — para los informes CURADOS
 (``build_family_report.py``): re-renderiza cada gráfico a PNG con matplotlib desde el
 parquet (la familia se infiere del nombre ``<familia>_<fecha>.html``) y arma un cuerpo
 email-safe con tablas. Cambia el formato de los gráficos respecto del HTML original.
-
+<br><br>
 Uso:
     python scripts/reports_to_eml.py --src data/parquet_reports/html          # pass-through (default)
     python scripts/reports_to_eml.py --src reporte_final.html                 # un solo archivo
     python scripts/reports_to_eml.py --src data/parquet_reports/curated/fx            # una familia
     python scripts/reports_to_eml.py --from-spec --src data/parquet_reports/curated   # legado curado (recursivo)
     python scripts/reports_to_eml.py --to analista@bcch.cl --from informes@bcch.cl
-
+<br><br>
 ``.msg`` (formato propietario de Outlook) requiere Outlook COM; este script emite el
 estándar ``.eml``, que Outlook abre sin problemas.
 """
@@ -68,6 +68,7 @@ if _SRC.is_dir() and str(_SRC) not in sys.path:
 from banks_rag.application.reporting import (  # noqa: E402
     build_curated_report,
     rasterize_inline_svgs,
+    section_slot_ids,
     strip_editable_chrome,
 )
 from banks_rag.application.reporting.parquet_facts import HtmlTable  # noqa: E402
@@ -81,7 +82,6 @@ _OVERLAY = "#c8102e"
 _BANNER = "#4a5a72"
 _BLUE = "#0b3766"
 
-
 # ── Re-render de gráficos a PNG (matplotlib) ─────────────────────────────────
 
 def _as_date(x: str):
@@ -89,7 +89,6 @@ def _as_date(x: str):
         return dt.date.fromisoformat(str(x)[:10])
     except (TypeError, ValueError):
         return None
-
 
 def _fmt_axis(v: float, _pos=None) -> str:
     a = abs(v)
@@ -101,7 +100,6 @@ def _fmt_axis(v: float, _pos=None) -> str:
         return f"{v:.0f}"
     return f"{v:.1f}"
 
-
 def _cats_in_order(series) -> list[str]:
     seen: list[str] = []
     for s in series:
@@ -110,13 +108,11 @@ def _cats_in_order(series) -> list[str]:
                 seen.append(c)
     return seen
 
-
 def _split_overlay(plot):
     ov = set(plot.overlay or ())
     base = [s for s in plot.series if s.label not in ov]
     over = [s for s in plot.series if s.label in ov]
     return base, over
-
 
 def _style(ax, unit: str) -> None:
     ax.yaxis.set_major_formatter(plt.FuncFormatter(_fmt_axis))
@@ -128,7 +124,6 @@ def _style(ax, unit: str) -> None:
     if unit:
         ax.set_ylabel(unit, fontsize=8, color="#777")
 
-
 def _draw_lines(ax, series, unit: str) -> None:
     for i, s in enumerate(series):
         pts = [(_as_date(x), v) for x, v in s.points if _as_date(x)]
@@ -139,7 +134,6 @@ def _draw_lines(ax, series, unit: str) -> None:
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d-%b-%y"))
     ax.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=5))
     _style(ax, unit)
-
 
 def _draw_dual(ax, plot, right_axis, right_unit: str) -> None:
     right = set(right_axis or ())
@@ -164,7 +158,6 @@ def _draw_dual(ax, plot, right_axis, right_unit: str) -> None:
     h2, l2 = ax2.get_legend_handles_labels()
     if h1 or h2:
         ax.legend(h1 + h2, l1 + l2, fontsize=7, loc="upper left", frameon=False, ncol=2)
-
 
 def _draw_stacked_area(ax, series, overlays, unit: str) -> None:
     dates = sorted({_as_date(x) for s in series for x, _ in s.points if _as_date(x)})
@@ -194,7 +187,6 @@ def _draw_stacked_area(ax, series, overlays, unit: str) -> None:
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d-%b-%y"))
     ax.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=5))
     _style(ax, unit)
-
 
 def _draw_grouped(ax, series, overlays, *, stacked: bool, unit: str) -> None:
     cats = _cats_in_order(series + overlays)
@@ -233,7 +225,6 @@ def _draw_grouped(ax, series, overlays, *, stacked: bool, unit: str) -> None:
     ax.set_xticklabels(cats, fontsize=8, rotation=35 if long else 0, ha="right" if long else "center")
     _style(ax, unit)
 
-
 def _draw_snapshot(ax, series, *, pie: bool, unit: str) -> None:
     s = series[0] if series else None
     if not s or not s.points:
@@ -255,7 +246,6 @@ def _draw_snapshot(ax, series, *, pie: bool, unit: str) -> None:
     long = any(len(str(c)) > 8 for c in cats)
     ax.set_xticklabels(cats, fontsize=8, rotation=35 if long else 0, ha="right" if long else "center")
     _style(ax, unit)
-
 
 def plot_to_png(plot, chart: str, *, right_axis=None, right_unit: str = "") -> bytes | None:
     """``PlotData`` → PNG (bytes) replicando el tipo de gráfico del informe."""
@@ -285,13 +275,11 @@ def plot_to_png(plot, chart: str, *, right_axis=None, right_unit: str = "") -> b
     finally:
         plt.close(fig)
 
-
 # ── Parseo del texto ya inyectado en el HTML curado ──────────────────────────
 
 _RE_SLOT_OPEN = re.compile(r'<div class="section-text"[^>]*data-text-slot="([^"]+)"[^>]*>')
 _RE_SYNTH_OPEN = re.compile(r'<div[^>]*class="synthesis-body"[^>]*data-synthesis-body[^>]*>')
 _RE_DIV_TAG = re.compile(r'<div\b[^>]*>|</div>')
-
 
 def _balanced_div_content(html: str, open_end: int) -> str:
     """Contenido de un ``<div>`` cuya etiqueta de apertura termina en ``open_end``,
@@ -305,7 +293,6 @@ def _balanced_div_content(html: str, open_end: int) -> str:
             return html[open_end:m.start()]
     return html[open_end:]  # div sin cerrar (HTML malformado): resto del documento
 
-
 def parse_text(html: str) -> tuple[str, dict[str, str]]:
     """``(síntesis_html, {slot: párrafo_html})`` del HTML curado relleno."""
     slots = {
@@ -315,7 +302,6 @@ def parse_text(html: str) -> tuple[str, dict[str, str]]:
     m = _RE_SYNTH_OPEN.search(html)
     synthesis = _balanced_div_content(html, m.end()).strip() if m else ""
     return synthesis, slots
-
 
 # ── Imágenes pegadas por el usuario (data: URI) → adjunto cid: ───────────────
 # Outlook (motor Word) no renderiza <img src="data:..."> en el cuerpo del correo;
@@ -331,6 +317,42 @@ _RE_DATA_IMG = re.compile(
 # reproducir ese layout en 2+ columnas en vez de apilarlas a ancho completo.
 _RE_IMG_RUN = re.compile(r"(?:" + _RE_DATA_IMG.pattern + r"\s*){2,}", re.I)
 
+def _trim_pasted_whitespace(subtype: str, data: bytes, *, pad: int = 14) -> tuple[str, bytes]:
+    """Recorta el margen de fondo horneado en una captura de pantalla pegada a
+    mano (cada una recortada a ojo, con un margen distinto). Sin esto, dos
+    gráficos puestos lado a lado se ven con "aire" y bordes desparejos aunque el
+    CSS que los envuelve sea idéntico — la diferencia está en los píxeles.
+<br><br>
+    Detecta el fondo por la esquina superior izquierda y recorta al bounding box
+    de lo que difiere de ese fondo (con tolerancia a ruido JPEG/antialiasing),
+    dejando ``pad`` px de aire. Si no hay nada que recortar (o falta Pillow, o la
+    imagen no se puede abrir) devuelve los bytes tal cual — nunca revienta el
+    correo por esto."""
+    try:
+        from PIL import Image, ImageChops
+    except ImportError:
+        return subtype, data
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+    except Exception:
+        return subtype, data
+    rgb = img.convert("RGB")
+    bg = Image.new("RGB", rgb.size, rgb.getpixel((0, 0)))
+    diff = ImageChops.add(ImageChops.difference(rgb, bg), ImageChops.difference(rgb, bg), 2.0, -24)
+    bbox = diff.getbbox()
+    if bbox is None:
+        return subtype, data  # imagen ~uniforme: nada que recortar
+    left, top, right, bottom = bbox
+    left = max(0, left - pad)
+    top = max(0, top - pad)
+    right = min(img.width, right + pad)
+    bottom = min(img.height, bottom + pad)
+    if (left, top, right, bottom) == (0, 0, img.width, img.height):
+        return subtype, data  # ya estaba ajustada
+    out = io.BytesIO()
+    img.crop((left, top, right, bottom)).save(out, format="PNG")
+    return "png", out.getvalue()
 
 def _decode_cid(mime: str, b64: str, images: dict[str, tuple[str, bytes]]) -> str | None:
     """Decodifica una imagen pegada y la registra en ``images``; devuelve su cid."""
@@ -339,10 +361,10 @@ def _decode_cid(mime: str, b64: str, images: dict[str, tuple[str, bytes]]) -> st
         data = base64.b64decode(b64)
     except (binascii.Error, ValueError):
         return None
+    subtype, data = _trim_pasted_whitespace(subtype, data)
     cid = f"pasted{uuid.uuid4().hex[:8]}@banks"
     images[cid] = (subtype, data)
     return cid
-
 
 def _cidify_images(html: str, images: dict[str, tuple[str, bytes]]) -> str:
     """Reemplaza ``<img src="data:...">`` por ``cid:`` y registra los bytes en
@@ -370,10 +392,9 @@ def _cidify_images(html: str, images: dict[str, tuple[str, bytes]]) -> str:
     html = _RE_IMG_RUN.sub(repl_run, html)
     return _RE_DATA_IMG.sub(repl_single, html)
 
-
 def _uncidify_images(html: str, images: dict[str, tuple[str, bytes]]) -> str:
     """``cid:`` → ``data:`` URI: vuelve autocontenido el HTML del cuerpo del correo.
-
+<br><br>
     Es el inverso de ``_cidify_images``/``_cidify_charts``. Se aplica al MISMO HTML
     que viaja en el correo, así el archivo que queda en disco es exactamente lo que
     ve quien lo recibe —solo que abrible directo en el navegador, sin las partes
@@ -383,6 +404,25 @@ def _uncidify_images(html: str, images: dict[str, tuple[str, bytes]]) -> str:
         html = html.replace(f"cid:{cid}", f"data:image/{subtype};base64,{b64}")
     return html
 
+# El navegador deja un "renglón fantasma" (<div>/<p> con solo <br> o espacios)
+# como resto de posicionar el cursor tras pegar una imagen o un salto de línea en
+# un área contenteditable. Sin colapsarlos, cada pegado suma un hueco vertical de
+# más — la causa más común de espaciado "desproporcionado" alrededor de fotos
+# pegadas a mano. Iterativo (no recursivo): un <div> puede quedar vacío recién
+# tras limpiar SU hijo vacío (<div><div><br></div></div>).
+# SOLO sin atributos (o con ``style=`` nomás): un contenedor funcional real
+# (``<div id="chart-tip" role="tooltip">``, un ``data-text-slot`` vacío) SIEMPRE
+# trae un id/clase/data-*, así que nunca matchea — no es basura de pegado.
+_RE_EMPTY_BLOCK = re.compile(r'<(div|p)(?:\s+style="[^"]*")?>(?:\s|&nbsp;|<br\s*/?>)*</\1>', re.I)
+
+def strip_paste_ghost_lines(html: str) -> str:
+    """Colapsa ``<div>``/``<p>`` vacíos (solo espacios/``<br>``) dejados por el
+    navegador al pegar contenido en el editor. No toca bloques con contenido real."""
+    prev = None
+    while prev != html:
+        prev = html
+        html = _RE_EMPTY_BLOCK.sub("", html)
+    return html
 
 def _img_tag(cid: str, *, width: str) -> str:
     return (
@@ -390,60 +430,31 @@ def _img_tag(cid: str, *, width: str) -> str:
         f'style="width:{width};max-width:100%;height:auto;display:block;margin:6px auto">'
     )
 
-
 # ── Gráficos SVG del informe curado → PNG inline (cid:) ──────────────────────
 # Outlook no renderiza SVG: sin esto los gráficos del informe curado (svg_chart.py,
 # SVG inline) desaparecen del cuerpo del correo. Se rasteriza el SVG TAL CUAL está
 # en el HTML (no se redibuja desde los datos), así el correo lleva exactamente el
 # gráfico revisado en el navegador.
 
-_RE_LEFTOVER_SVG = re.compile(r"<svg\b[^>]*>.*?</svg>", re.S | re.I)
-
-# Lo que ve el destinatario si un gráfico no se pudo rasterizar. Feo a propósito:
-# un hueco marcado es recuperable, texto de ejes derramado en el correo no.
-_SVG_FAILED_CARD = (
-    '<div style="border:1px dashed #c04a2a;background:#fff6f3;color:#9a3412;padding:18px;'
-    'text-align:center;font-size:13px;margin:6px auto">'
-    "Gráfico no disponible en el cuerpo del correo — abrir el HTML adjunto</div>"
-)
-
-
-def _cidify_charts(html: str, images: dict[str, tuple[str, bytes]]) -> tuple[str, int, int]:
-    """``<svg>`` inline → ``<img src="cid:…">`` con el PNG registrado en ``images``.
-
-    Ningún ``<svg>`` puede sobrevivir a esta función: el motor Word de Outlook no
-    renderiza SVG y, en vez de ignorarlo, **derrama el texto de los ``<text>``**
-    (ticks, categorías, leyenda) como párrafo en el cuerpo del correo. Los que no
-    se logren rasterizar se sustituyen por un recuadro de error visible.
-
-    Devuelve ``(html, n_rasterizados, n_fallidos)``.
-    """
+def _cidify_charts(html: str, images: dict[str, tuple[str, bytes]]) -> tuple[str, int]:
+    """``<svg>`` inline → ``<img src="cid:…">`` con el PNG registrado en ``images``."""
 
     def emit(png: bytes, width: int, _height: int) -> str:
         cid = f"chart{uuid.uuid4().hex[:8]}@banks"
         images[cid] = ("png", png)
-        # SIN width:100%: el motor Word ignora max-width, así que un porcentaje estira
-        # el PNG al ancho del panel de lectura (borroso). El atributo width lo fija a
-        # su tamaño natural y max-width lo mantiene fluido en los clientes web.
         return (
             f'<img src="cid:{cid}" width="{width}" alt="" '
-            f'style="max-width:100%;height:auto;display:block;margin:6px auto">'
+            f'style="width:100%;max-width:{width}px;height:auto;display:block;margin:6px auto">'
         )
-
-    html, n_ok = rasterize_inline_svgs(html, emit)
-    html, n_failed = _RE_LEFTOVER_SVG.subn(_SVG_FAILED_CARD, html)
-    return html, n_ok, n_failed
-
+    return rasterize_inline_svgs(html, emit)
 
 # ── Ensamblado del cuerpo email-safe (inline styles + tablas) ────────────────
 
 def _esc(s: str) -> str:
     return _html.escape(s or "", quote=True)
 
-
 def _row(inner: str) -> str:
     return f'<tr><td style="padding:0 18px">{inner}</td></tr>'
-
 
 def build_email_html(report, synthesis: str, text_by_slot: dict[str, str],
                      cids: dict[int, str]) -> str:
@@ -463,12 +474,13 @@ def build_email_html(report, synthesis: str, text_by_slot: dict[str, str],
     ]
     if synthesis:
         parts.append(_row(
-            f'<div style="border:1px solid #d8dee8;border-left:5px solid {_BLUE};'
+            f'<div style="border:1px solid #d8dee8;'
             f'background:#f6f8fb;padding:10px 14px;margin:10px 0;font-size:13px">'
             f'<div style="color:{_BLUE};font-weight:bold;font-size:15px;margin-bottom:4px">'
             f'Síntesis</div>{synthesis}</div>'
         ))
-
+    # Un texto por TÓPICO (bajo el banner de sección), igual que el HTML curado.
+    slot_ids = section_slot_ids(spec)
     seen_section = None
     for i, cb in enumerate(report.blocks):
         b = cb.block
@@ -478,6 +490,11 @@ def build_email_html(report, synthesis: str, text_by_slot: dict[str, str],
                 f'<div style="background:{_BANNER};color:#fff;text-align:center;font-size:16px;'
                 f'font-weight:bold;padding:7px 12px;margin:22px -18px 6px">{_esc(b.section)}</div>'
             ))
+            topic_text = text_by_slot.get(slot_ids.get(b.section, ""), "")
+            if topic_text:
+                parts.append(_row(
+                    f'<div style="font-size:14px;margin:8px 0 12px">{topic_text}</div>'
+                ))
         parts.append(_row(
             f'<div style="color:{_BLUE};font-size:15px;font-weight:bold;margin:12px 0 2px">{_esc(b.title)}</div>'
         ))
@@ -491,9 +508,6 @@ def build_email_html(report, synthesis: str, text_by_slot: dict[str, str],
                 f'border:1px solid #d8dee8;padding:2px 8px;margin:3px 0;display:inline-block">'
                 f'📅 {_esc(cb.date_note)}</div>'
             ))
-        slot = b.text_slot
-        if slot and text_by_slot.get(slot):
-            parts.append(_row(f'<div style="font-size:14px;margin:6px 0 8px">{text_by_slot[slot]}</div>'))
         # Gráfico: PNG inline (cid) o, si es tabla heatmap, el HTML inline tal cual.
         if cb.render_kind == "chart" and isinstance(cb.plot, HtmlTable):
             parts.append(_row(f'<div style="margin:6px 0">{cb.plot.html}</div>'))
@@ -519,13 +533,12 @@ def build_email_html(report, synthesis: str, text_by_slot: dict[str, str],
         '<body style="margin:0;padding:0">' + "".join(parts) + "</body></html>"
     )
 
-
 # ── Ensamblado del .eml ──────────────────────────────────────────────────────
 
 def build_eml(*, subject: str, sender: str, to: str, html_body: str,
               images: dict[str, tuple[str, bytes]], attach_name: str, attach_html: str) -> bytes:
     """Arma el ``.eml`` con la estructura MIME que Outlook incrusta bien:
-
+<br><br>
         multipart/mixed
           multipart/related          ← los cid: son HERMANOS del cuerpo
             multipart/alternative
@@ -533,7 +546,7 @@ def build_eml(*, subject: str, sender: str, to: str, html_body: str,
               text/html
             image/png … (inline)
           text/html (adjunto: el informe navegable)
-
+<br><br>
     El orden importa: si el ``multipart/related`` va DENTRO del ``alternative``
     (imágenes anidadas bajo la parte HTML), Outlook no las resuelve como parte del
     cuerpo y las lista como **datos adjuntos** — que es el síntoma que se veía."""
@@ -574,7 +587,6 @@ def build_eml(*, subject: str, sender: str, to: str, html_body: str,
     # CRLF (RFC 5322): sin esto el .eml sale con LF y Outlook descodifica mal el cuerpo.
     return msg.as_bytes(policy=_SMTP_POLICY)
 
-
 # ── Orquestación ─────────────────────────────────────────────────────────────
 
 def _family_from_name(path: pathlib.Path) -> str | None:
@@ -588,21 +600,34 @@ def _family_from_name(path: pathlib.Path) -> str | None:
             return fam
     return None
 
+def _resolve_family_dir(template: str | pathlib.Path, fam: str | None) -> pathlib.Path:
+    """Resuelve el directorio de salida para la familia ``fam`` (``None`` si el
+    archivo no es de una familia reconocida, ej. el informe descriptivo).
 
-def _family_dir(path: pathlib.Path, root: pathlib.Path) -> pathlib.Path:
-    """``<root>/<familia>/`` para los informes curados; ``root`` a secas para los
-    que no son de una familia — así el flujo del informe descriptivo sigue plano."""
-    fam = _family_from_name(path)
-    return root / fam if fam else root
+    Si ``template`` trae ``{familia}`` se formatea directo — permite mandar el
+    ``.eml`` y el plano a árboles totalmente distintos, ej.
+    ``.../<familia>/Correo`` vs. ``.../<familia>/`` (mismo mecanismo que
+    ``build_family_report.py``). Si no lo trae, se mantiene el comportamiento
+    viejo: se asume una carpeta RAÍZ y se le agrega ``<familia>/`` como
+    subcarpeta. Sin familia (informe descriptivo), el placeholder se limpia y
+    el archivo queda plano en la raíz del template.
+    """
+    template = str(template)
+    if "{familia}" in template:
+        # Sin familia, "{familia}" se sustituye por "" y pathlib colapsa el
+        # segmento vacío solo (".../IA//Correo" -> ".../IA/Correo").
+        return pathlib.Path(template.format(familia=fam or ""))
+    return pathlib.Path(template) / fam if fam else pathlib.Path(template)
 
-
-def process_file_from_spec(path: pathlib.Path, out_dir: pathlib.Path, *, sender: str, to: str,
+def process_file_from_spec(path: pathlib.Path, out_dir: str | pathlib.Path, *, sender: str, to: str,
                            subject_prefix: str) -> str:
     fam = _family_from_name(path)
     if fam is None:
         return f"SKIP {path.name} (familia no reconocida; conocidas: {', '.join(available_families())})"
     html = path.read_text(encoding="utf-8")
     synthesis, text_by_slot = parse_text(html)
+    synthesis = strip_paste_ghost_lines(synthesis)
+    text_by_slot = {slot: strip_paste_ghost_lines(text) for slot, text in text_by_slot.items()}
     report = build_curated_report(get_spec(fam))
 
     images: dict[str, tuple[str, bytes]] = {}
@@ -610,7 +635,6 @@ def process_file_from_spec(path: pathlib.Path, out_dir: pathlib.Path, *, sender:
     # data: URI → adjunto cid: (Outlook no renderiza data: URIs en el cuerpo).
     synthesis = _cidify_images(synthesis, images)
     text_by_slot = {slot: _cidify_images(text, images) for slot, text in text_by_slot.items()}
-
     cids: dict[int, str] = {}
     for i, cb in enumerate(report.blocks):
         if cb.render_kind != "chart" or cb.plot is None or isinstance(cb.plot, HtmlTable):
@@ -624,28 +648,25 @@ def process_file_from_spec(path: pathlib.Path, out_dir: pathlib.Path, *, sender:
             cid = f"chart{i}.{uuid.uuid4().hex[:8]}@banks"
             images[cid] = ("png", png)
             cids[i] = cid
-
+            
     body = build_email_html(report, synthesis, text_by_slot, cids)
     subject = f"{subject_prefix}{report.spec.title} — {path.stem.split('_', 1)[-1]}".strip()
     eml = build_eml(
         subject=subject, sender=sender, to=to, html_body=body, images=images,
         attach_name=path.name, attach_html=path.read_text(encoding="utf-8"),
     )
-    eml_out = _family_dir(path, out_dir)
+    eml_out = _resolve_family_dir(out_dir, fam)
     eml_out.mkdir(parents=True, exist_ok=True)
     out = eml_out / f"{path.stem}.eml"
     out.write_bytes(eml)
     return f"OK   {path.name} -> {out}  ({len(images)} gráficos PNG, adjunto el HTML interactivo)"
 
-
 # ── Modo pass-through: TU HTML editado → correo (sin reconstruir) ─────────────
-
 # Plotly interactivo del reporte (lo inserta el chartbuilder en modo "interactivo").
 # Para el correo se quita: solo entran los gráficos PNG (data: URI → cid:).
 _RE_PLOTLY_LIB = re.compile(r'<script id="cb-plotly-lib"[^>]*>.*?</script>', re.S)
 _RE_CB_FIGURE = re.compile(r'<figure class="report-chart cb-inserted".*?</figure>', re.S)
 _RE_NEWPLOT_SCRIPT = re.compile(r"<script\b(?:(?!</script>)[\s\S])*?Plotly\.newPlot(?:(?!</script>)[\s\S])*?</script>")
-
 
 def strip_interactive_plotly(html: str) -> tuple[str, int]:
     """Deja el informe "plano": quita la librería Plotly vendorizada, las figuras
@@ -666,13 +687,11 @@ def strip_interactive_plotly(html: str) -> tuple[str, int]:
     html = _RE_NEWPLOT_SCRIPT.sub("", html)
     return html, removed
 
-
 # Mapa clase/etiqueta → estilo inline. Outlook ignora el <style> del <head>; esto
 # vuelca ese CSS a cada elemento. Hay DOS plantillas con clases distintas (y algunas
 # homónimas con estilos distintos, p.ej. .subtitle), así que las reglas van separadas
 # y se elige el set según el documento. ACOPLADO a esas plantillas: si cambian sus
 # clases/estilos, actualizar aquí.
-
 # curated_report.py — informe CURADO por familia (build_family_report.py).
 _CURATED_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r'<div class="page">'), "max-width:1200px;margin:18px auto 40px"),
@@ -680,7 +699,7 @@ _CURATED_RULES: list[tuple[re.Pattern[str], str]] = [
      "background:#4a5a72;color:#fff;text-align:center;font-size:24px;font-weight:800;padding:12px 16px"),
     (re.compile(r'<div class="subtitle">'), "text-align:center;color:#777;font-size:12px;margin:8px 0 4px"),
     (re.compile(r'<div class="report-synthesis">'),
-     "border:1px solid #d8dee8;border-left:5px solid #0b3766;background:#f6f8fb;padding:12px 18px;margin:14px 0 8px"),
+     "border:1px solid #d8dee8;background:#f6f8fb;padding:12px 18px;margin:14px 0 8px"),
     (re.compile(r'<div class="synthesis-title">'), "color:#0b3766;font-size:16px;font-weight:800;margin:0 0 6px"),
     (re.compile(r'<div class="synthesis-body"[^>]*>'), "color:#1f1f1f;font-size:13px"),
     (re.compile(r'<div class="section-banner">'),
@@ -727,7 +746,6 @@ _COMMON_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"<em>"), "font-style:italic"),
 ]
 
-
 def inline_report_css(html: str) -> str:
     """Vuelca el CSS de la plantilla a estilos inline (Outlook-safe). Detecta si el
     HTML es el informe curado o el descriptivo y aplica su set de reglas. No toca
@@ -744,59 +762,29 @@ def inline_report_css(html: str) -> str:
         html = rx.sub(_add(style), html)
     return html
 
-
 # Restos de interactividad que no sirven en un correo (todo cliente descarta el JS):
 # el <script> del tooltip del informe curado y su contenedor vacío #chart-tip. Solo
 # se quitan del CUERPO del correo; el HTML plano adjunto los conserva para el navegador.
 _RE_ANY_SCRIPT = re.compile(r"<script\b[^>]*>.*?</script>", re.S | re.I)
 _RE_CHART_TIP = re.compile(r'<div id="chart-tip"[^>]*>\s*</div>', re.S | re.I)
 
-
 def strip_body_scripts(html: str) -> str:
     """Quita ``<script>`` y el contenedor del tooltip (peso muerto en el correo)."""
     return _RE_CHART_TIP.sub("", _RE_ANY_SCRIPT.sub("", html))
 
-
-# ── Envoltorio de ancho (Outlook) ────────────────────────────────────────────
-# El motor Word NO soporta max-width ni `margin:auto`, así que el `.page` del informe
-# (max-width:1200px; margin:18px auto) no acota nada: el contenido queda pegado a los
-# bordes del panel de lectura. Lo único que Word respeta para el layout son TABLAS con
-# atributos, así que el cuerpo se envuelve en una tabla fluida con padding en su celda.
-# Fluida (width="100%") a propósito: una tabla de ancho fijo más ancha que el panel se
-# recorta sin scroll, y las tablas de datos del informe ya son anchas.
-_RE_BODY_OPEN = re.compile(r"<body\b[^>]*>", re.I)
-_RE_BODY_CLOSE = re.compile(r"</body>", re.I)
-
-_SHELL_OPEN = (
-    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-    'style="border-collapse:collapse"><tr><td style="padding:18px 24px 40px">'
-)
-_SHELL_CLOSE = "</td></tr></table>"
-
-
-def wrap_outlook_shell(html: str) -> str:
-    """Envuelve el contenido del ``<body>`` en la tabla de layout que Word sí respeta."""
-    if not (_RE_BODY_OPEN.search(html) and _RE_BODY_CLOSE.search(html)):
-        return _SHELL_OPEN + html + _SHELL_CLOSE  # fragmento sin <body>
-    html = _RE_BODY_OPEN.sub(lambda m: m.group(0) + _SHELL_OPEN, html, count=1)
-    return _RE_BODY_CLOSE.sub(_SHELL_CLOSE + "</body>", html, count=1)
-
-
 _RE_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.S | re.I)
 _RE_H1 = re.compile(r"<h1[^>]*>(.*?)</h1>", re.S | re.I)
-
 
 def _extract_title(html: str) -> str:
     m = _RE_TITLE.search(html) or _RE_H1.search(html)
     return re.sub(r"<[^>]+>", "", m.group(1)).strip() if m else ""
 
-
-def process_file_passthrough(path: pathlib.Path, out_dir: pathlib.Path, *, sender: str, to: str,
-                             subject_prefix: str, plain_dir: pathlib.Path) -> str:
+def process_file_passthrough(path: pathlib.Path, out_dir: str | pathlib.Path, *, sender: str, to: str,
+                             subject_prefix: str, plain_dir: str | pathlib.Path) -> str:
     """Correo con TU HTML editado tal cual + copia PLANA del informe.
-
+<br><br>
     Tres artefactos, cada uno con su rol:
-
+<br><br>
     - **adjunto del correo**: tu HTML final SIN tocar (SVG vectorial + tooltips), con
       su nombre de archivo — se abre en el navegador con fidelidad total.
     - **cuerpo del correo**: el mismo informe pasado a plano (SVG → PNG ``cid:``, sin
@@ -804,21 +792,23 @@ def process_file_passthrough(path: pathlib.Path, out_dir: pathlib.Path, *, sende
     - **copia en ``--plain-dir``**: ese MISMO cuerpo pero autocontenido (``cid:`` →
       ``data:``), así se abre solo y muestra exactamente lo que llega al correo.
     """
+    fam = _family_from_name(path)
     raw = path.read_text(encoding="utf-8")
     clean = strip_editable_chrome(raw)          # fuera panel 💾/📄 + contenteditable
     plain, n_inter = strip_interactive_plotly(clean)  # fuera Plotly interactivo (queda PNG)
 
     images: dict[str, tuple[str, bytes]] = {}
     body = _cidify_images(plain, images)        # data: (PNG + fotos pegadas) → cid:
-    body, n_svg, n_svg_fail = _cidify_charts(body, images)  # <svg> curado → PNG cid:
+    body, n_svg = _cidify_charts(body, images)  # <svg> del informe curado → PNG cid:
     body = strip_body_scripts(body)             # JS del tooltip: inútil en un correo
+    body = strip_paste_ghost_lines(body)        # renglones fantasma del pegado a mano (solo CUERPO,
+                                                 # el adjunto -attach_html=plain- no se toca)
     body = inline_report_css(body)              # CSS del <head> → inline (Outlook)
-    body = wrap_outlook_shell(body)             # márgenes: Word ignora max-width
 
     # Copia PLANA (sin interacción) agrupada por familia, igual que build_family_report.py.
-    plano_out = _family_dir(path, plain_dir)
+    plano_out = _resolve_family_dir(plain_dir, fam)
     plano_out.mkdir(parents=True, exist_ok=True)
-    plano_path = plano_out / f"{path.stem}.plano.html"
+    plano_path = plano_out / f"{path.stem}.html"
     plano_path.write_text(_uncidify_images(body, images), encoding="utf-8")
 
     title = _extract_title(plain) or path.stem
@@ -829,32 +819,33 @@ def process_file_passthrough(path: pathlib.Path, out_dir: pathlib.Path, *, sende
         # recibe el correo espera abrir el informe que editaste, no la copia plana.
         attach_name=path.name, attach_html=plain,
     )
-    eml_out = _family_dir(path, out_dir)
+    eml_out = _resolve_family_dir(out_dir, fam)
     eml_out.mkdir(parents=True, exist_ok=True)
     out = eml_out / f"{path.stem}.eml"
     out.write_bytes(eml)
     warn = f" · OJO {n_inter} gráfico(s) interactivo(s) omitido(s): reinsértalos en modo PNG" if n_inter else ""
-    if n_svg_fail:
-        # Rasterizar es lo que hace visible el gráfico en Outlook: si falla, el correo
-        # sale con huecos. Casi siempre es PyMuPDF ausente en el intérprete que corre
-        # el script (`pip install PyMuPDF`), no un SVG malo.
-        warn += (f" · FALLO {n_svg_fail} gráfico(s) NO rasterizado(s) → hueco en el correo; "
-                 f"revisa que PyMuPDF esté instalado en este intérprete")
     return (f"OK   {path.name} -> {out}  ({len(images)} imágenes inline, "
             f"{n_svg} desde SVG · plano -> {plano_path}){warn}")
-
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Informe HTML → correo .eml (pass-through de tu HTML editado).")
     ap.add_argument("--src", default="data/parquet_reports/html",
                     help="Archivo HTML o carpeta con los HTML a convertir (default: la salida de parquet_report.py).")
-    ap.add_argument("--out", default="data/parquet_reports/eml",
-                    help="Carpeta RAÍZ de los .eml; los informes de familia van a <out>/<familia>/.")
-    ap.add_argument("--plain-dir", default="data/parquet_reports/plano",
-                    help="Carpeta RAÍZ del HTML PLANO (sin interacción: gráficos como PNG "
-                         "embebido, sin JS). También se agrupa por familia.")
-    ap.add_argument("--to", default="destinatario@ejemplo.cl", help="Destinatario del correo.")
-    ap.add_argument("--from", dest="sender", default="informes@ejemplo.cl", help="Remitente.")
+    ap.add_argument(
+        "--out",
+        default="T:/GMN/DACE/Practicantes/Leandro/Informes Generados Con IA/{familia}/Correo",
+        help="Carpeta de salida de los .eml. Admite '{familia}' como placeholder; sin él, "
+             "se asume RAÍZ y se le agrega <familia>/.",
+    )
+    ap.add_argument(
+        "--plain-dir",
+        default=r"T:\GMN\DACE-DOMA\0- Traspaso servidores datascience\Outputs\Repo_GOEM\reports\historia",
+        help="Carpeta de salida del HTML PLANO (sin interacción: gráficos como PNG embebido, "
+             "sin JS). Admite '{familia}' como placeholder igual que --out; sin él, se agrupa "
+             "por familia en subcarpetas (comportamiento actual).",
+    )
+    ap.add_argument("--to", default="lvenegas.ext@bcentral.cl", help="Destinatario del correo.")
+    ap.add_argument("--from", dest="sender", default="lvenegas.ext@bcentral.cl", help="Remitente.")
     ap.add_argument("--subject-prefix", default="", help="Prefijo del asunto (ej. '[BCCh] ').")
     ap.add_argument("--glob", default="*.html", help="Patrón de archivos si --src es carpeta.")
     ap.add_argument("--from-spec", action="store_true",
@@ -863,8 +854,8 @@ def main() -> None:
     args = ap.parse_args()
 
     src = pathlib.Path(args.src)
-    out_dir = pathlib.Path(args.out)
-    plain_dir = pathlib.Path(args.plain_dir)
+    out_dir = args.out          # str: se resuelve por archivo (_resolve_family_dir), no acá.
+    plain_dir = args.plain_dir  # ídem.
     # rglob: los informes curados viven en una subcarpeta POR FAMILIA
     # (curated/ffmm/, curated/fx/, …). En una carpeta plana se comporta igual que glob.
     files = [src] if src.is_file() else sorted(src.rglob(args.glob))
@@ -881,7 +872,6 @@ def main() -> None:
                                                subject_prefix=args.subject_prefix, plain_dir=plain_dir))
         except Exception as exc:
             print(f"ERR  {f.name}: {exc}")
-
 
 if __name__ == "__main__":
     main()

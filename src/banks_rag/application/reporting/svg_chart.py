@@ -24,8 +24,10 @@ preliminar). ``family == "table"`` devuelve ``None`` → mini-tabla HTML.
 from __future__ import annotations
 
 import html
+import itertools
 import json as _json
 import math
+import re
 from datetime import date
 
 from .parquet_facts import PlotData, PlotSeries
@@ -64,6 +66,16 @@ _W = 760
 _H = 320
 _MARGIN = {"top": 30, "right": 18, "bottom": 70, "left": 76}
 
+# viewBox de un bloque que ocupa la FILA COMPLETA de la grilla (layout "grid":
+# ver ``curated_report._wide_block_ids``). Los márgenes/tamaños de fuente del
+# renderer son PÍXELES ABSOLUTOS del viewBox, no relativos — así que si un
+# gráfico ancho siguiera usando el viewBox normal (_W x _H), el navegador lo
+# ESTIRA al doblar su ancho en pantalla y todo (ejes, leyenda, título, grosor de
+# línea) se ve "con zoom". Doblar el viewBox mantiene el factor de escala
+# CSS≈constante entre un bloque normal y uno ancho, así el tamaño VISUAL de esos
+# elementos es el mismo en los dos — solo cambia cuánto se ve del eje X.
+_W_WIDE = _W * 2
+
 
 # ── Formato es-CL ────────────────────────────────────────────────────────────
 
@@ -79,11 +91,22 @@ def _fmt_num(value: float) -> str:
 
 
 def _fmt_date(iso: str) -> str:
-    """``YYYY-MM-DD`` → ``DD-MM-YY`` (formato chileno compacto para ticks)."""
+    """``YYYY-MM-DD`` → ``DD-MM-YY`` (formato chileno compacto para ticks).
+
+    Si la marca trae HORA distinta de medianoche (serie intradía) el tick la
+    muestra: ``DD-MM HH:MM``. Sin esto, un gráfico de una sola jornada repetía la
+    misma fecha en los cinco ticks y no se leía a qué hora ocurrió nada.
+
+    Medianoche EXACTA se trata como fecha sin hora a propósito: un parquet diario
+    con la fecha guardada como TIMESTAMP llega como ``...T00:00:00`` y no tiene
+    sentido rotular cada día con un "00:00"."""
     try:
         d = date.fromisoformat(iso[:10])
     except ValueError:
         return html.escape(iso[:10])
+    hh, mm = iso[11:13], iso[14:16]
+    if hh.isdigit() and mm.isdigit() and (hh, mm) != ("00", "00"):
+        return f"{d.day:02d}-{d.month:02d} {hh}:{mm}"
     return f"{d.day:02d}-{d.month:02d}-{str(d.year)[2:]}"
 
 
@@ -93,11 +116,26 @@ def _esc(text: str) -> str:
 
 # ── Geometría ────────────────────────────────────────────────────────────────
 
-def _date_ord(iso: str) -> int | None:
+def _date_ord(iso: str) -> float | None:
+    """Fecha ISO → ordinal para el eje X. Devuelve un FLOAT porque el eje admite
+    resolución intradía: ``2026-08-07T11:30`` cae a mitad de camino entre el 7 y
+    el 8. Sin esto, un gráfico intradía (CLP/DXY/cobre minuto a minuto) apilaba
+    todos los puntos de un día sobre la misma abscisa y salía como una barra
+    vertical. Las series diarias siguen dando un ordinal entero, igual que antes."""
     try:
-        return date.fromisoformat(iso[:10]).toordinal()
+        d = date.fromisoformat(iso[:10]).toordinal()
     except ValueError:
         return None
+    hh, mm = iso[11:13], iso[14:16]
+    if hh.isdigit() and mm.isdigit():
+        return d + (int(hh) * 60 + int(mm)) / 1440.0
+    return float(d)
+
+
+def _ord_iso(o: float) -> str:
+    """Ordinal (posiblemente fraccional) → fecha ISO. Solo se usa como respaldo
+    cuando el ordinal no está en ``iso_by_ord``; la parte intradía se descarta."""
+    return date.fromordinal(int(o)).isoformat()
 
 
 # ── Ejes "lindos": números redondos y base 0 ────────────────────────────────
@@ -150,15 +188,20 @@ def _nice_ticks(
 
 _MAX_TIP_PTS = 40  # puntos-objetivo de hover por serie (controla el peso del SVG)
 
+# Ancho aproximado de un carácter a font-size 10 (la tipografía de las etiquetas
+# de categoría). Sirve para decidir si una etiqueta CABE horizontal o hay que
+# rotarla; es una estimación, no hace falta medir la fuente real.
+_CAT_LABEL_CHAR_W = 5.6
+
 
 def _val_unit(v: float, unit: str) -> str:
     return f"{_fmt_num(v)} {unit}" if unit else _fmt_num(v)
 
 
 def _build_pts_json(
-    parsed: "list[tuple[PlotSeries, list[tuple[int, float]]]]",
-    px_fn: "Callable[[int], float]",
-    iso_by_ord: "dict[int, str]",
+    parsed: "list[tuple[PlotSeries, list[tuple[float, float]]]]",
+    px_fn: "Callable[[float], float]",
+    iso_by_ord: "dict[float, str]",
     unit: str,
     *,
     py_fn: "Callable[[float], float] | None" = None,
@@ -174,7 +217,7 @@ def _build_pts_json(
     for i, (s, pts) in enumerate(parsed):
         color = colors[i] if colors and i < len(colors) else _PALETTE[i % len(_PALETTE)]
         for o, v in pts:
-            iso = iso_by_ord.get(o) or date.fromordinal(o).isoformat()
+            iso = iso_by_ord.get(o) or _ord_iso(o)
             k = _fmt_date(iso)
             x = px_fn(o)
             if k not in by_date:
@@ -225,6 +268,7 @@ _CHART_NATIVE_KIND: dict[str, str] = {
     "area": "timeseries",
     "stacked_area": "timeseries",
     "dual_axis": "timeseries",
+    "candlestick": "timeseries",
     "grouped_bar": "grouped",
     "stacked_bar": "grouped",
     "bar_time": "grouped",
@@ -232,6 +276,7 @@ _CHART_NATIVE_KIND: dict[str, str] = {
     "pie": "snapshot",
     "hist_range": "range",
     "point": "scatter",
+    "heatmap_table": "heatmap",
 }
 
 
@@ -243,14 +288,15 @@ def renders_natively(plot_kind: str, chart: str | None) -> bool:
 
 def render_plot_svg(
     plot: PlotData, *, chart: str | None = None, width: int = _W, height: int = _H,
-    right_axis: list[str] | None = None, right_unit: str = "",
+    right_axis: list[str] | None = None, right_unit: str = "", right_style: str = "",
     x_label: str = "", y_label: str = "",
 ) -> str | None:
     """``PlotData`` → SVG inline (str) del tipo ``chart`` (o el natural del kind si
     ``chart`` no aplica). ``None`` si ``family == 'table'`` (→ mini-tabla).
 
     ``right_axis`` (labels de series) + ``right_unit`` activan el doble eje Y para
-    ``chart='dual_axis'`` (esas series van contra un eje derecho independiente).
+    ``chart='dual_axis'`` (esas series van contra un eje derecho independiente);
+    ``right_style`` elige cómo se dibujan (``"area"`` por defecto, ``"line"``).
     ``x_label``/``y_label`` rotulan los ejes del scatter (``kind='scatter'``);
     vacío → usa ``plot.unit`` en ambos ejes."""
     if plot.is_empty() or plot.family == "table":
@@ -266,9 +312,13 @@ def render_plot_svg(
         return _render_range_band(plot, width, height)
     if plot.kind == "scatter":
         return _render_scatter_labeled(plot, width, height, x_label=x_label, y_label=y_label)
+    if plot.kind == "heatmap":
+        return _render_heatmap(plot, width, height)
     # timeseries
+    if target == "candlestick":
+        return _render_candlestick(plot, width, height)
     if target == "dual_axis":
-        return _render_dual_axis(plot, width, height, right_axis, right_unit)
+        return _render_dual_axis(plot, width, height, right_axis, right_unit, right_style)
     if target in ("area", "stacked_area"):
         return _render_stacked_area(plot, width, height)
     return _render_timeseries(plot, width, height)
@@ -287,6 +337,17 @@ def _svg_open(width: int, height: int, title: str, extra_attrs: str = "") -> lis
     ]
 
 
+def _series_style(plot: PlotData, idx: int, label: str) -> tuple[str, float]:
+    """``(color, stroke_width)`` de una serie del EJE IZQUIERDO: ``plot.emphasis``
+    fuerza un color puntual (p.ej. MA50 en oro), ``plot.muted`` la deja fina y
+    gris; sin ninguno de los dos, la paleta cíclica de siempre por índice."""
+    if label in plot.emphasis:
+        return plot.emphasis[label], 2.4
+    if label in plot.muted:
+        return "#9aa2b1", 0.9
+    return _PALETTE[idx % len(_PALETTE)], 1.8
+
+
 def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
     left, right = _MARGIN["left"], _MARGIN["right"]
     top, bottom = _MARGIN["top"], _MARGIN["bottom"]
@@ -294,12 +355,12 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
     plot_h = height - top - bottom
 
     # Dominios: X por fecha (ordinal), Y por valor, sobre TODAS las series.
-    xs: list[int] = []
+    xs: list[float] = []
     ys: list[float] = []
-    parsed: list[tuple[PlotSeries, list[tuple[int, float]]]] = []
-    iso_by_ord: dict[int, str] = {}
+    parsed: list[tuple[PlotSeries, list[tuple[float, float]]]] = []
+    iso_by_ord: dict[float, str] = {}
     for s in plot.series:
-        pts: list[tuple[int, float]] = []
+        pts: list[tuple[float, float]] = []
         for iso, v in s.points:
             o = _date_ord(iso)
             if o is None:
@@ -314,17 +375,19 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
         return _no_axis_message(plot, width, height)
 
     xmin, xmax = min(xs), max(xs)
-    ticks, ymin, ymax = _nice_ticks(min(ys), max(ys))
+    ticks, ymin, ymax = _nice_ticks(min(ys), max(ys), include_zero=plot.zero_base)
     if ymax == ymin:
         ymax = ymin + 1.0
 
-    def px(o: int) -> float:
+    def px(o: float) -> float:
         return left + (plot_w / 2 if xmax == xmin else plot_w * (o - xmin) / (xmax - xmin))
 
     def py(v: float) -> float:
         return top + plot_h * (1 - (v - ymin) / (ymax - ymin))
 
-    pts_json = _build_pts_json(parsed, px, iso_by_ord, plot.unit, py_fn=py)
+    styles = [_series_style(plot, i, s.label) for i, (s, _pts) in enumerate(parsed)]
+    pts_json = _build_pts_json(parsed, px, iso_by_ord, plot.unit, py_fn=py,
+                               colors=[c for c, _w in styles])
     out = _svg_open(width, height, f"{plot.dataset_id} — serie temporal",
                     f' data-pts="{_esc(pts_json)}"')
 
@@ -346,7 +409,7 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
         chosen = sorted({tick_ords[round(i * step)] for i in range(n_ticks)})
         for j, o in enumerate(chosen):
             x = px(o)
-            label = _fmt_date(iso_by_ord.get(o, date.fromordinal(o).isoformat()))
+            label = _fmt_date(iso_by_ord.get(o, _ord_iso(o)))
             # Anclar extremos hacia adentro para que la etiqueta no se salga del viewBox.
             anchor = "start" if j == 0 else ("end" if j == len(chosen) - 1 else "middle")
             out.append(f'<line x1="{x:.1f}" y1="{top + plot_h}" x2="{x:.1f}" y2="{top + plot_h + 4}" stroke="#999" stroke-width="1"/>')
@@ -362,17 +425,17 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
     # porque el overlay encima captura todos los eventos del mouse).
     legend: list[tuple[str, str]] = []
     for i, (s, pts) in enumerate(parsed):
-        color = _PALETTE[i % len(_PALETTE)]
+        color, width = styles[i]
         if len(pts) == 1:
             o, v = pts[0]
-            iso = iso_by_ord.get(o) or date.fromordinal(o).isoformat()
+            iso = iso_by_ord.get(o) or _ord_iso(o)
             out.append(f'<circle cx="{px(o):.1f}" cy="{py(v):.1f}" r="3" fill="{color}" data-si="{i}"/>')
         else:
             coords = " ".join(f"{px(o):.1f},{py(v):.1f}" for o, v in pts)
-            out.append(f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="1.8" data-si="{i}"/>')
+            out.append(f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="{width}" data-si="{i}"/>')
         for k in _subsample(pts):
             o, v = pts[k]
-            iso = iso_by_ord.get(o) or date.fromordinal(o).isoformat()
+            iso = iso_by_ord.get(o) or _ord_iso(o)
             out.append(
                 f'<circle cx="{px(o):.1f}" cy="{py(v):.1f}" r="4.5" fill="{color}" '
                 f'fill-opacity="0" pointer-events="none" data-si="{i}"'
@@ -394,17 +457,121 @@ def _render_timeseries(plot: PlotData, width: int, height: int) -> str:
     return "\n".join(out)
 
 
+# ── Candlestick (OHLC) ───────────────────────────────────────────────────────
+#
+# Etiquetas EXACTAS que identifican las cuatro patas de la vela dentro de un
+# ``PlotData`` de kind "timeseries". Es la misma convención que ya usa el rango
+# histórico ("Mínimo"/"Máximo"/"Promedio"/"Hoy"): el dataclass no cambia, la
+# semántica va en el label, y cualquier serie extra (p.ej. el monto transado) se
+# ignora en vez de romper el gráfico.
+_OHLC_LABELS = ("Apertura", "Máximo", "Mínimo", "Cierre")
+
+_CANDLE_UP = "#0a8a5f"    # cierre >= apertura
+_CANDLE_DOWN = "#c8102e"  # cierre <  apertura
+
+
+def _render_candlestick(plot: PlotData, width: int, height: int) -> str:
+    """Vela japonesa diaria: mecha entre mínimo y máximo, cuerpo entre apertura y
+    cierre, verde si la sesión cerró al alza y roja si cerró a la baja.
+
+    Requiere las cuatro series ``_OHLC_LABELS``; si falta alguna cae al render de
+    línea (la serie igual se ve, marcada como vista preliminar por el caller)."""
+    by_label = {s.label: dict(s.points) for s in plot.series}
+    if not all(lab in by_label for lab in _OHLC_LABELS):
+        return _render_timeseries(plot, width, height)
+    op, hi, lo, cl = (by_label[lab] for lab in _OHLC_LABELS)
+
+    # Solo los días con las cuatro patas: una vela a medias no se puede dibujar.
+    isos = sorted(d for d in cl if d in op and d in hi and d in lo and _date_ord(d) is not None)
+    if not isos:
+        return _no_axis_message(plot, width, height)
+
+    left, right = 76, 18
+    top, bottom = 30, 70
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+
+    ords = [_date_ord(d) for d in isos]
+    xmin, xmax = min(ords), max(ords)
+    # Base 0 forzada a False: el dominio útil de un tipo de cambio es su rango, no
+    # el 0 (una vela sobre un eje que arranca en 0 queda plana e ilegible).
+    ticks, ymin, ymax = _nice_ticks(min(lo[d] for d in isos), max(hi[d] for d in isos),
+                                    include_zero=False)
+    if ymax == ymin:
+        ymax = ymin + 1.0
+
+    def px(o: float) -> float:
+        return left + (plot_w / 2 if xmax == xmin else plot_w * (o - xmin) / (xmax - xmin))
+
+    def py(v: float) -> float:
+        return top + plot_h * (1 - (v - ymin) / (ymax - ymin))
+
+    # Ancho del cuerpo: el paso entre velas menos un canal, acotado para que ni
+    # tres velas salgan como bloques ni doscientas se toquen entre sí.
+    step = plot_w / max(1, len(isos) - 1) if len(isos) > 1 else plot_w
+    body_w = max(1.5, min(11.0, step * 0.62))
+
+    out = _svg_open(width, height, f"{plot.dataset_id} — velas OHLC")
+    for tick in ticks:
+        y = py(tick)
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{width - right}" y2="{y:.1f}" stroke="#eee" stroke-width="1"/>')
+        out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="11" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
+    if plot.unit:
+        out.append(f'<text x="{left - 8}" y="{top - 10}" font-size="11" fill="#777" text-anchor="end">{_esc(plot.unit)}</text>')
+
+    for d, o in zip(isos, ords, strict=True):
+        x = px(o)
+        up = cl[d] >= op[d]
+        color = _CANDLE_UP if up else _CANDLE_DOWN
+        y_hi, y_lo = py(hi[d]), py(lo[d])
+        y_top, y_bot = py(max(op[d], cl[d])), py(min(op[d], cl[d]))
+        tip = (f"A {_fmt_num(op[d])} · M {_fmt_num(hi[d])} · "
+               f"m {_fmt_num(lo[d])} · C {_fmt_num(cl[d])}")
+        attrs = _tip_attrs(color, s="USD/CLP", k=_fmt_date(d), v=tip)
+        out.append(f'<line x1="{x:.1f}" y1="{y_hi:.1f}" x2="{x:.1f}" y2="{y_lo:.1f}" stroke="{color}" stroke-width="1"/>')
+        # Cuerpo: alto mínimo de 1px para que un día sin recorrido (apertura =
+        # cierre) siga siendo visible como el doji que es.
+        out.append(
+            f'<rect x="{x - body_w / 2:.1f}" y="{y_top:.1f}" width="{body_w:.1f}" '
+            f'height="{max(1.0, y_bot - y_top):.1f}" fill="{color}"{attrs}/>'
+        )
+
+    # Ticks de fecha (hasta 5, equiespaciados sobre las velas dibujadas).
+    n_ticks = min(5, len(isos))
+    step_t = (len(isos) - 1) / max(1, n_ticks - 1)
+    chosen = sorted({round(i * step_t) for i in range(n_ticks)})
+    for j, k in enumerate(chosen):
+        x = px(ords[k])
+        anchor = "start" if j == 0 else ("end" if j == len(chosen) - 1 else "middle")
+        out.append(f'<text x="{x:.1f}" y="{top + plot_h + 18}" font-size="11" fill="#555" text-anchor="{anchor}">{_esc(_fmt_date(isos[k]))}</text>')
+
+    out.append(_legend_row([("Cierre al alza", _CANDLE_UP), ("Cierre a la baja", _CANDLE_DOWN)],
+                           left, top + plot_h + 40, plot_w))
+    out.append("</svg>")
+    return "\n".join(out)
+
+
 def _render_dual_axis(
     plot: PlotData, width: int, height: int,
-    right_labels: list[str] | None, right_unit: str = "",
+    right_labels: list[str] | None, right_unit: str = "", right_style: str = "",
 ) -> str:
     """Serie temporal con DOBLE eje Y: las series cuyo label esté en
-    ``right_labels`` se escalan contra un eje derecho independiente (y se dibujan
-    como área tenue, estilo "AUM" del informe BCCh); el resto va contra el eje
-    izquierdo como líneas. X compartido. Replica los gráficos con eje secundario
-    sin separar el gráfico en dos.
+    ``right_labels`` se escalan contra un eje derecho independiente; el resto va
+    contra el eje izquierdo como líneas. X compartido. Replica los gráficos con
+    eje secundario sin separar el gráfico en dos.
+
+    ``right_style`` decide cómo se dibuja la serie del eje derecho:
+
+    - ``"area"`` (default) → área gris tenue, estilo "AUM" del informe BCCh. Es
+      lo correcto cuando esa serie es un VOLUMEN de fondo (monto transado,
+      inventarios) que contextualiza a la principal sin competir con ella.
+    - ``"line"`` → línea con su color de paleta, igual que las del eje izquierdo.
+      Es lo correcto cuando las dos series son magnitudes COMPARABLES que se leen
+      a la par (CLP contra cobre, contra DXY, contra su propia posición offshore):
+      pintar una de área sugiere una jerarquía que no existe.
 
     Si no hay ninguna serie para el eje derecho, cae al render de línea normal."""
+    right_as_line = (right_style or "area").strip().lower() == "line"
     right_set = set(right_labels or [])
     has_right = any(s.label in right_set for s in plot.series)
     if not has_right:
@@ -416,13 +583,13 @@ def _render_dual_axis(
     plot_h = height - top - bottom
 
     # Parseo común (ord, valor) por serie, conservando el índice original (color).
-    parsed: list[tuple[int, PlotSeries, list[tuple[int, float]], bool]] = []
-    xs: list[int] = []
-    iso_by_ord: dict[int, str] = {}
+    parsed: list[tuple[int, PlotSeries, list[tuple[float, float]], bool]] = []
+    xs: list[float] = []
+    iso_by_ord: dict[float, str] = {}
     lys: list[float] = []
     rys: list[float] = []
     for i, s in enumerate(plot.series):
-        pts: list[tuple[int, float]] = []
+        pts: list[tuple[float, float]] = []
         for iso, v in s.points:
             o = _date_ord(iso)
             if o is None:
@@ -439,10 +606,10 @@ def _render_dual_axis(
         return _render_timeseries(plot, width, height)
 
     xmin, xmax = min(xs), max(xs)
-    lticks, llo, lhi = _nice_ticks(min(lys), max(lys))
-    rticks, rlo, rhi = _nice_ticks(min(rys), max(rys))
+    lticks, llo, lhi = _nice_ticks(min(lys), max(lys), include_zero=plot.zero_base)
+    rticks, rlo, rhi = _nice_ticks(min(rys), max(rys), include_zero=plot.zero_base)
 
-    def px(o: int) -> float:
+    def px(o: float) -> float:
         return left + (plot_w / 2 if xmax == xmin else plot_w * (o - xmin) / (xmax - xmin))
 
     def ply(v: float) -> float:
@@ -454,11 +621,12 @@ def _render_dual_axis(
     # JSON del hover unificado: cada serie con su propio eje (y por serie).
     by_date: dict[str, dict] = {}
     for idx, s, pts, is_right in parsed:
-        color = "#b9c0cc" if is_right else _PALETTE[idx % len(_PALETTE)]
+        color = ("#b9c0cc" if is_right and not right_as_line
+                 else _series_style(plot, idx, s.label)[0])
         unit = right_unit if is_right else plot.unit
         yfn = pry if is_right else ply
         for o, v in pts:
-            iso = iso_by_ord.get(o) or date.fromordinal(o).isoformat()
+            iso = iso_by_ord.get(o) or _ord_iso(o)
             k = _fmt_date(iso)
             ent = by_date.setdefault(k, {"k": k, "x": round(px(o), 1), "vals": []})
             ent["vals"].append({"s": s.label, "c": color, "v": _val_unit(v, unit),
@@ -489,7 +657,7 @@ def _render_dual_axis(
         chosen = sorted({tick_ords[round(i * step)] for i in range(n_ticks)})
         for j, o in enumerate(chosen):
             x = px(o)
-            label = _fmt_date(iso_by_ord.get(o, date.fromordinal(o).isoformat()))
+            label = _fmt_date(iso_by_ord.get(o, _ord_iso(o)))
             anchor = "start" if j == 0 else ("end" if j == len(chosen) - 1 else "middle")
             out.append(f'<text x="{x:.1f}" y="{top + plot_h + 18}" font-size="11" fill="#555" text-anchor="{anchor}">{_esc(label)}</text>')
 
@@ -501,16 +669,21 @@ def _render_dual_axis(
     legend: list[tuple[int, str, str]] = []
     # Primero las áreas del eje derecho (al fondo), luego las líneas del izquierdo.
     for idx, s, pts, is_right in sorted(parsed, key=lambda t: not t[3]):
-        if is_right:
+        if is_right and not right_as_line:
             base = top + plot_h
             up = " ".join(f"{px(o):.1f},{pry(v):.1f}" for o, v in pts)
             dn = f"{px(pts[-1][0]):.1f},{base:.1f} {px(pts[0][0]):.1f},{base:.1f}"
             out.append(f'<polygon points="{up} {dn}" fill="#c8ccd4" fill-opacity="0.55" stroke="none" data-si="{idx}"/>')
             legend.append((idx, f"{s.label} (eje der.)", "#b9c0cc"))
+        elif is_right:
+            color, stroke_w = _series_style(plot, idx, s.label)
+            coords = " ".join(f"{px(o):.1f},{pry(v):.1f}" for o, v in pts)
+            out.append(f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="{stroke_w}" data-si="{idx}"/>')
+            legend.append((idx, f"{s.label} (eje der.)", color))
         else:
-            color = _PALETTE[idx % len(_PALETTE)]
+            color, width = _series_style(plot, idx, s.label)
             coords = " ".join(f"{px(o):.1f},{ply(v):.1f}" for o, v in pts)
-            out.append(f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="1.8" data-si="{idx}"/>')
+            out.append(f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="{width}" data-si="{idx}"/>')
             legend.append((idx, s.label, color))
 
     out.append(
@@ -579,11 +752,17 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
     lut = [{c: v for c, v in s.points} for s in series]
     ov_lut = [{c: v for c, v in s.points} for s in overlays]
 
-    long_labels = any(len(c) > 9 for c in cats)
     left, right = 64, 18
     top = 30
-    bottom = 90 if long_labels else 80
     plot_w = width - left - right
+    # Rotar la etiqueta si es larga O si NO CABE en el ancho de su categoría. Lo
+    # segundo importa cuando hay muchas barras de nombre corto (37 monedas): sin
+    # el chequeo de ancho ninguna superaba los 9 caracteres, no se rotaba, y las
+    # etiquetas se pisaban unas con otras hasta ser ilegibles.
+    max_len = max(len(c) for c in cats)
+    fits = max_len * _CAT_LABEL_CHAR_W <= plot_w / len(cats) - 2
+    long_labels = max_len > 9 or not fits
+    bottom = 90 if long_labels else 80
     plot_h = height - top - bottom
 
     ov_all = [ov_lut[j].get(c, 0.0) for j in range(len(overlays)) for c in cats]
@@ -727,7 +906,7 @@ def _render_stacked_area(plot: PlotData, width: int, height: int) -> str:
         ymax = ymin + 1.0
     xmin, xmax = min(ordv), max(ordv)
 
-    def px(o: int) -> float:
+    def px(o: float) -> float:
         return left + (plot_w / 2 if xmax == xmin else plot_w * (o - xmin) / (xmax - xmin))
 
     def py(v: float) -> float:
@@ -1516,3 +1695,196 @@ def render_dcv_bucket_table(
         f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)}{asof_note} · '
         "escala de color sin considerar montos totales</div></div>"
     )
+
+
+# ── Tablas del Informe Cambiario AM ──────────────────────────────────────────
+#
+# Tres piezas del original que no son series: la tabla de percentiles bajo cada
+# gráfico de soporte/resistencia, el snapshot de drivers de la portada y el mapa
+# de calor de gamma por strike y vencimiento. Se dibujan como HTML (no SVG)
+# porque son tablas: el correo las quiere seleccionables y Outlook las respeta.
+
+def render_kv_table_html(
+    headers: list[str],
+    rows: list[list[str]],
+    *,
+    caption: str = "",
+    row_styles: list[str] | None = None,
+    max_width: int = 460,
+) -> str:
+    """Tabla simple encabezado + filas ya formateadas como texto.
+
+    ``row_styles`` (opcional, uno por fila) pinta la ÚLTIMA columna: es el semáforo
+    de la tabla de drivers (aprecia / deprecia) y queda vacío en las tablas de
+    percentiles, que no tienen signo que destacar."""
+    th = "text-align:right;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap"
+    thl = th.replace("text-align:right", "text-align:left")
+    tdl = "text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700"
+    tdr = "text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap"
+
+    body = ""
+    for i, row in enumerate(rows):
+        cells = f'<td style="{tdl}">{_esc(str(row[0]))}</td>'
+        for j, cell in enumerate(row[1:], start=1):
+            extra = ""
+            if row_styles and i < len(row_styles) and j == len(row) - 1:
+                extra = f";{row_styles[i]}"
+            cells += f'<td style="{tdr}{extra}">{_esc(str(cell))}</td>'
+        body += f"<tr>{cells}</tr>"
+
+    head = f'<th style="{thl}">{_esc(headers[0])}</th>' + "".join(
+        f'<th style="{th}">{_esc(h)}</th>' for h in headers[1:]
+    )
+    note = f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(caption)}</div>' if caption else ""
+    return (
+        f'<div style="overflow-x:auto;max-width:{max_width}px;margin:6px auto">'
+        '<table style="width:100%;border-collapse:collapse">'
+        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>{note}</div>"
+    )
+
+
+# Escala del mapa de calor de gamma: rojo (poca) → amarillo → verde (mucha), la
+# misma RdYlGn del original. Se interpola sobre BLANCO en vez de usar alpha
+# porque Outlook no compone rgba() sobre el fondo de la celda.
+_HEAT_STOPS = ((0.0, (198, 60, 45)), (0.5, (235, 190, 70)), (1.0, (35, 140, 80)))
+
+
+def _heat_color(frac: float) -> tuple[int, int, int]:
+    frac = min(1.0, max(0.0, frac))
+    for (f0, c0), (f1, c1) in itertools.pairwise(_HEAT_STOPS):
+        if frac <= f1:
+            t = 0.0 if f1 == f0 else (frac - f0) / (f1 - f0)
+            return tuple(round(a + (b - a) * t) for a, b in zip(c0, c1, strict=True))  # type: ignore[return-value]
+    return _HEAT_STOPS[-1][1]
+
+
+# Meses abreviados en español (mismo orden/formato que
+# ``series_transforms._fmt_date``: "DD-mmm-YYYY", p.ej. "10-ago-2026") — para
+# poder ORDENAR columnas de fecha cuyo label ya llegó como texto legible en vez
+# de ISO. Duplicado deliberado de la tabla de ``series_transforms.py``: importar
+# desde ahí crearía un ciclo (``series_transforms`` ya importa de este módulo).
+_MONTHS_ES_IDX = {
+    m: i for i, m in enumerate(
+        ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"), start=1,
+    )
+}
+_DATE_LABEL_RE = re.compile(r"^(\d{1,2})-([a-záéíóúñ]{3})-(\d{4})$", re.IGNORECASE)
+
+
+def _heatmap_col_sort_key(label: str) -> tuple[int, int, int] | None:
+    """``(año, mes, día)`` si ``label`` sigue el formato "DD-mmm-YYYY"; ``None``
+    si no matchea (columnas no-fecha, p.ej. instrumentos) — el caller entonces
+    deja el orden de aparición tal cual, sin reventar."""
+    m = _DATE_LABEL_RE.match(label)
+    if not m:
+        return None
+    day, mon, year = m.groups()
+    month_num = _MONTHS_ES_IDX.get(mon.lower())
+    return None if month_num is None else (int(year), month_num, int(day))
+
+
+def _render_heatmap(plot: PlotData, width: int, height: int) -> str:
+    """Matriz fila x columna pintada con la escala RdYlGn: réplica de
+    ``go.Heatmap(colorscale='RdYlGn')`` del dashboard original, en SVG puro (sin
+    JS ni Plotly) — mismo mecanismo ``viewBox`` + ``width="100%"`` que TODO el
+    resto de los gráficos del informe, así se auto-ajusta al ancho de su
+    tarjeta (comparte fila con otro gráfico) exactamente como Plotly, en vez de
+    quedar fijo como una tabla HTML de celdas de ancho constante.
+
+    Convención de ``plot.series``: UNA serie por FILA (``label`` = etiqueta de
+    fila), cuyos ``points`` son ``(columna, valor)`` — mismo ``PlotSeries`` que
+    ``grouped``/``snapshot``, leído distinto. Barra de escala (colorbar) a la
+    derecha con marcas en 100/75/50/25/0% del rango."""
+    rows = [s for s in plot.series if s.points]
+    cols: list[str] = []
+    seen_cols: set[str] = set()
+    cell: dict[tuple[str, str], float] = {}
+    values: list[float] = []
+    for s in rows:
+        for c, v in s.points:
+            if c not in seen_cols:
+                seen_cols.add(c)
+                cols.append(c)
+            cell[(s.label, c)] = v
+            values.append(v)
+    if not rows or not cols:
+        return _no_axis_message(plot, width, height)
+
+    # Orden de columnas: cronológico si TODAS parsean como fecha (el caso real,
+    # venc x strike). Sin esto quedan en orden de aparición del parquet —
+    # arbitrario, no la fecha— porque la transform no ordena por fila global,
+    # solo por fila individual (cada strike trae sus propios vencimientos).
+    sort_keys = [_heatmap_col_sort_key(c) for c in cols]
+    if all(k is not None for k in sort_keys):
+        cols = [c for _k, c in sorted(zip(sort_keys, cols, strict=True))]
+
+    vmin, vmax = min(values), max(values)
+    span = (vmax - vmin) or 1.0
+
+    left, right = 62, 92
+    top, bottom = 86, 16
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+    cell_w = plot_w / len(cols)
+    cell_h = plot_h / len(rows)
+    show_values = cell_w > 26 and cell_h > 14
+
+    out = _svg_open(width, height, f"{plot.dataset_id} — mapa de calor")
+    # Etiquetas de columna, rotadas sobre la grilla (fechas largas: "10-ago-26").
+    for j, c in enumerate(cols):
+        cx = left + (j + 0.5) * cell_w
+        out.append(
+            f'<text transform="translate({cx:.1f},{top - 8}) rotate(-45)" '
+            f'font-size="10" fill="#555" text-anchor="start">{_esc(c)}</text>'
+        )
+    # Celdas + etiquetas de fila. Sin dato en (fila, columna) → sin <rect>: se ve
+    # el fondo blanco, igual que un ``go.Heatmap`` sobre datos dispersos.
+    for i, s in enumerate(rows):
+        cy = top + i * cell_h
+        out.append(
+            f'<text x="{left - 8}" y="{cy + cell_h / 2 + 3.5:.1f}" font-size="11" '
+            f'fill="#333" text-anchor="end">{_esc(s.label)}</text>'
+        )
+        for j, c in enumerate(cols):
+            v = cell.get((s.label, c))
+            if v is None:
+                continue
+            frac = (v - vmin) / span
+            red, green, blue = _heat_color(frac)
+            ink = "#fff" if frac < 0.18 or frac > 0.82 else "#1c1c1c"
+            x = left + j * cell_w
+            color = f"rgb({red},{green},{blue})"
+            attrs = _tip_attrs(color, s=c, k=s.label, v=_val_unit(v, plot.unit))
+            out.append(
+                f'<rect x="{x:.1f}" y="{cy:.1f}" width="{max(0.0, cell_w - 1.5):.1f}" '
+                f'height="{max(0.0, cell_h - 1.5):.1f}" fill="{color}"{attrs}/>'
+            )
+            if show_values:
+                out.append(
+                    f'<text x="{x + cell_w / 2:.1f}" y="{cy + cell_h / 2 + 3.5:.1f}" '
+                    f'font-size="9.5" fill="{ink}" text-anchor="middle" pointer-events="none">'
+                    f"{_esc(_fmt_num(v))}</text>"
+                )
+
+    # Barra de escala (colorbar) a la derecha: franjas finas del MISMO
+    # _heat_color, no un <linearGradient> — coherente con el resto del render,
+    # que evita degradados y hace todo con formas explícitas.
+    lg_x, lg_w = left + plot_w + 16, 14
+    steps = max(2, round(plot_h / 6))
+    for i in range(steps):
+        frac = 1.0 - i / (steps - 1)
+        red, green, blue = _heat_color(frac)
+        y = top + i * (plot_h / steps)
+        out.append(
+            f'<rect x="{lg_x}" y="{y:.1f}" width="{lg_w}" height="{plot_h / steps + 0.5:.1f}" '
+            f'fill="rgb({red},{green},{blue})"/>'
+        )
+    for frac in (1.0, 0.75, 0.5, 0.25, 0.0):
+        y = top + (1.0 - frac) * plot_h
+        val = vmin + frac * (vmax - vmin)
+        out.append(f'<text x="{lg_x + lg_w + 5}" y="{y + 3.5:.1f}" font-size="10" fill="#666">{_esc(_fmt_num(val))}</text>')
+
+    if plot.unit:
+        out.append(f'<text x="{left}" y="16" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
+    out.append("</svg>")
+    return "\n".join(out)

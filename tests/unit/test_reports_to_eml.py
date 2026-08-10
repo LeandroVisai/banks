@@ -6,8 +6,10 @@ pass-through (tu HTML editado → correo), que no requieren parquets ni LLM.
 
 from __future__ import annotations
 
+import base64
 import email
 import importlib.util
+import io
 import pathlib
 
 import pytest
@@ -128,7 +130,7 @@ class TestProcessFilePassthrough:
         )
         assert msg.startswith("OK")
 
-        plain_file = plain / "reporte_ffmm.plano.html"
+        plain_file = plain / "reporte_ffmm.html"
         eml_file = out / "reporte_ffmm.eml"
         assert plain_file.exists() and eml_file.exists()
 
@@ -166,7 +168,7 @@ class TestProcessFilePassthrough:
         adj = next(p for p in m.walk() if p.get_content_disposition() == "attachment")
         assert "<svg" in adj.get_content()
         # la copia PLANA, en cambio, va sin interacción: PNG embebido, sin SVG ni JS
-        plano = (tmp_path / "plain" / "ffmm" / "ffmm_2026-01-01.plano.html").read_text(encoding="utf-8")
+        plano = (tmp_path / "plain" / "ffmm" / "ffmm_2026-01-01.html").read_text(encoding="utf-8")
         assert "<svg" not in plano and "<script" not in plano
         assert "data:image/png" in plano
 
@@ -266,7 +268,7 @@ class TestFamilyFolders:
             src, out, sender="a@x.cl", to="b@y.cl", subject_prefix="", plain_dir=plain,
         )
         assert (out / "fx" / "fx_2026-07-18.eml").exists()
-        assert (plain / "fx" / "fx_2026-07-18.plano.html").exists()
+        assert (plain / "fx" / "fx_2026-07-18.html").exists()
         assert [p.name for p in out.iterdir()] == ["fx"]  # nada suelto en la raíz
 
     def test_non_family_report_stays_flat(self, tmp_path: pathlib.Path) -> None:
@@ -279,3 +281,111 @@ class TestFamilyFolders:
         )
         assert (out / "reporte_ffmm_2026-06-21.eml").exists()
         assert not (out / "ffmm").exists()
+
+    def test_resolve_family_dir_formats_familia_placeholder(self, tmp_path: pathlib.Path) -> None:
+        template = str(tmp_path / "{familia}" / "Correo")
+        assert r2e._resolve_family_dir(template, "fx") == tmp_path / "fx" / "Correo"
+
+    def test_resolve_family_dir_without_placeholder_appends_family(self, tmp_path: pathlib.Path) -> None:
+        assert r2e._resolve_family_dir(str(tmp_path), "fx") == tmp_path / "fx"
+
+    def test_resolve_family_dir_with_placeholder_and_no_family_collapses_it(self, tmp_path: pathlib.Path) -> None:
+        # informe descriptivo (sin familia): el placeholder se limpia, no queda un
+        # directorio literal "{familia}" ni un segmento vacío suelto.
+        template = str(tmp_path / "{familia}" / "Correo")
+        assert r2e._resolve_family_dir(template, None) == tmp_path / "Correo"
+
+    def test_out_and_plain_dir_support_familia_placeholder_end_to_end(self, tmp_path: pathlib.Path) -> None:
+        """Réplica del caso real: --out y --plain-dir apuntando a árboles
+        DISTINTOS bajo la misma familia (ej. .../fx/Correo vs. .../fx/plano)."""
+        src = tmp_path / "fx_2026-07-18.html"
+        src.write_text(_SAMPLE, encoding="utf-8")
+        out_tpl = str(tmp_path / "{familia}" / "Correo")
+        plain_tpl = str(tmp_path / "{familia}" / "plano")
+
+        r2e.process_file_passthrough(
+            src, out_tpl, sender="a@x.cl", to="b@y.cl", subject_prefix="", plain_dir=plain_tpl,
+        )
+        assert (tmp_path / "fx" / "Correo" / "fx_2026-07-18.eml").exists()
+        assert (tmp_path / "fx" / "plano" / "fx_2026-07-18.html").exists()
+
+
+@pytest.mark.unit
+class TestPastedScreenshotCleanup:
+    """Fotos pegadas a mano (captura recortada a ojo): recorte del margen blanco
+    horneado en los píxeles + colapso de los "renglones fantasma" que el navegador
+    deja al pegar contenido en un área contenteditable."""
+
+    @staticmethod
+    def _synthetic_screenshot_b64() -> str:
+        """PNG blanco de 200x160 con un cuadrado rojo de 40x40 centrado: simula una
+        captura recortada a mano con mucho aire de sobra alrededor del gráfico."""
+        from PIL import Image
+        img = Image.new("RGB", (200, 160), "white")
+        for x in range(80, 120):
+            for y in range(60, 100):
+                img.putpixel((x, y), (200, 0, 0))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+
+    def test_trims_baked_in_whitespace_from_pasted_screenshot(self, tmp_path: pathlib.Path) -> None:
+        pytest.importorskip("PIL")
+        from PIL import Image
+
+        b64 = self._synthetic_screenshot_b64()
+        html = _SAMPLE.replace(
+            '<div class="section-text" data-text-slot="flujos_ffmm"><p>Parrafo.</p></div>',
+            f'<div class="section-text" data-text-slot="flujos_ffmm"><p>Parrafo.</p>'
+            f'<img src="data:image/png;base64,{b64}"></div>',
+        )
+        src = tmp_path / "reporte_ffmm.html"
+        src.write_text(html, encoding="utf-8")
+        out = tmp_path / "eml"
+        out.mkdir()
+
+        r2e.process_file_passthrough(
+            src, out, sender="a@x.cl", to="b@y.cl", subject_prefix="", plain_dir=tmp_path / "plain",
+        )
+        m = email.message_from_bytes(
+            (out / "reporte_ffmm.eml").read_bytes(), policy=email.policy.default,
+        )
+        pasted = [
+            p for p in m.walk()
+            if p.get_content_type() == "image/png" and (p.get("Content-ID") or "").startswith("<pasted")
+        ]
+        assert pasted, "no se encontró la imagen pegada como adjunto inline"
+        trimmed = Image.open(io.BytesIO(pasted[0].get_content()))
+        # recortada: bien más chica que el lienzo blanco original (200x160)...
+        assert trimmed.width < 200 and trimmed.height < 160
+        # ...pero sigue conteniendo el cuadrado de 40x40 completo.
+        assert trimmed.width >= 40 and trimmed.height >= 40
+
+    def test_collapses_paste_ghost_lines_in_body_but_not_the_attachment(self, tmp_path: pathlib.Path) -> None:
+        """El "renglón fantasma" (<div><br></div>) que deja el navegador al pegar no
+        debe sumar espacio en el CUERPO del correo; el adjunto (tu HTML tal cual)
+        no se toca, y un contenedor funcional real (#chart-tip, con id+role) nunca
+        se confunde con basura de pegado."""
+        html = _CURATED_SAMPLE.replace(
+            '<div class="section-text" data-text-slot="ffmm:flujos"><p>Parrafo.</p></div>',
+            '<div class="section-text" data-text-slot="ffmm:flujos"><p>Parrafo.</p>'
+            '<div><br></div><div><br></div></div>',
+        )
+        src = tmp_path / "ffmm_2026-01-01.html"
+        src.write_text(html, encoding="utf-8")
+        out = tmp_path / "eml"
+        out.mkdir()
+
+        r2e.process_file_passthrough(
+            src, out, sender="a@x.cl", to="b@y.cl", subject_prefix="", plain_dir=tmp_path / "plain",
+        )
+        m = email.message_from_bytes(
+            (out / "ffmm" / "ffmm_2026-01-01.eml").read_bytes(), policy=email.policy.default,
+        )
+        body = _html_body(m)
+        assert "<div><br" not in body  # colapsado en el CUERPO
+
+        adj = next(p for p in m.walk() if p.get_content_disposition() == "attachment")
+        adjunto = adj.get_content()
+        assert "<div><br></div><div><br></div>" in adjunto  # el adjunto NO se toca
+        assert 'id="chart-tip"' in adjunto                   # tooltip funcional intacto

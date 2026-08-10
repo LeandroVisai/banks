@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Informe Stocks Depósito Central de Valores</title>
+<style>
+  :root { --blue:#0b3766; --banner:#4a5a72; --text:#1f1f1f; --muted:#777; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#fff; color:var(--text); font-family:Arial, Helvetica, sans-serif; line-height:1.45; }
+  .page { width:min(1200px, calc(100% - 40px)); margin:18px auto 40px; }
+  .report-title { background:var(--banner); color:#fff; text-align:center; font-size:24px; font-weight:800; padding:12px 16px; letter-spacing:.3px; }
+  .subtitle { text-align:center; color:var(--muted); font-size:12px; margin:8px 0 4px; }
+  .report-synthesis { border:1px solid #d8dee8; background:#f6f8fb; border-radius:6px; padding:12px 18px; margin:14px 0 8px; }
+  .synthesis-title { color:var(--blue); font-size:16px; font-weight:800; margin:0 0 6px; }
+  .synthesis-body { color:var(--text); font-size:13px; }
+  .synthesis-body p { margin:4px 0; }
+  .synthesis-body ul { margin:4px 0 8px; padding-left:20px; }
+  .synthesis-body li { margin:2px 0; }
+  .synthesis-body[data-synthesis-body]:empty::before { content:"—"; color:#cfcfcf; }
+  .section-banner { background:var(--banner); color:#fff; text-align:center; font-size:18px; font-weight:800; padding:8px 14px; margin:30px 0 6px; }
+  .block { margin:14px 0 8px; page-break-inside:avoid; }
+  .block-title { color:var(--blue); font-size:16px; font-weight:700; margin:12px 0 2px; }
+  .block-unit { color:var(--muted); font-size:12px; margin:0 0 6px; }
+  .block-note { color:var(--muted); font-size:11px; font-style:italic; margin:0 0 6px; }
+  .block-dates { color:var(--blue); font-size:11px; font-weight:600; background:#eef3f9; border:1px solid #d8dee8; border-radius:4px; padding:2px 8px; margin:0 0 6px; display:inline-block; }
+  .prelim-note { color:#9a4b00; font-size:11px; margin:0 0 2px; }
+  .section-text { min-height:18px; margin:4px 0 10px; color:var(--text); font-size:14px; }
+  .section-text:empty::before { content:"—"; color:#cfcfcf; }
+  /* Texto del TÓPICO: el único slot editable de la sección, justo bajo su banner
+     (los bloques ya no llevan párrafo propio). */
+  .section-banner + .section-text { margin:8px 0 16px; }
+  .section-text p { margin:0 0 6px; }
+  .section-text p:last-child { margin-bottom:0; }
+  .report-chart { display:block; max-width:760px; margin:6px auto; }
+  .placeholder-card { border:1px dashed #bcbcbc; background:#fafafa; color:var(--muted); border-radius:6px; padding:18px; text-align:center; font-size:13px; max-width:760px; margin:6px auto; }
+  .placeholder-card .kind { font-weight:700; color:#9a4b00; }
+  .placeholder-card.skip .kind { color:#8a8a8a; }
+  /* Hover interactivo (estilo Plotly): el marcador aparece y el shape se resalta */
+  .report-chart .tip-pt { cursor:pointer; transition:fill-opacity .08s; }
+  .report-chart circle.tip-pt:hover { fill-opacity:1; stroke:#fff; stroke-width:1.4; }
+  .report-chart rect.tip-pt:hover, .report-chart path.tip-pt:hover { stroke:#1f1f1f; stroke-width:1.4; }
+  /* Crosshair overlay (series temporales) */
+  .report-chart .hover-overlay { cursor:crosshair; }
+  /* Leyenda clickeable para ocultar/mostrar series */
+  .report-chart .lg-item { cursor:pointer; }
+  .report-chart .lg-item:hover { opacity:0.75; }
+  /* Tooltip flotante */
+  #chart-tip { position:fixed; z-index:9999; display:none; pointer-events:none;
+    background:#fff; border:1px solid #d8dee8; border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,.16);
+    padding:7px 10px; font-size:12px; color:#1f1f1f; max-width:260px; line-height:1.35; }
+  #chart-tip .ct-k { color:#777; font-size:11px; margin-bottom:3px; }
+  #chart-tip .ct-r { display:flex; align-items:center; gap:6px; white-space:nowrap; margin-bottom:2px; }
+  #chart-tip .ct-r:last-child { margin-bottom:0; }
+  #chart-tip .ct-sw { width:10px; height:10px; border-radius:2px; flex:0 0 auto; }
+  #chart-tip .ct-s { color:#444; }
+  #chart-tip .ct-v { font-weight:700; }
+  /* Layout "grid" (opt-in vía FamilyReportSpec.layout): gráficos en tarjetas de
+     2 columnas en vez de apilados; la tabla compañera (percentiles S/R, resumen
+     de la vela) vive DENTRO de la tarjeta de su gráfico, pegada justo debajo.
+
+     Cada tarjeta ocupa DOS filas del subgrid (encabezado + cuerpo, ver
+     .card-head/.card-body): con grid-template-rows:subgrid, la fila de
+     encabezado de las DOS tarjetas de una misma fila se empareja a la altura de
+     la más alta ANTES de que arranque el cuerpo — así el gráfico queda a la
+     misma altura sin importar si una tarjeta trae nota/ventana de fechas y la
+     de al lado no (sin esto, la tarjeta con más texto arriba empuja su gráfico
+     más abajo que el de su vecina). */
+  .cards-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); grid-auto-rows:min-content; gap:10px 20px; margin:10px 0 26px; }
+  .card { grid-row:span 2; display:grid; grid-template-rows:subgrid; align-content:start; border:1px solid #e3e7ee; border-radius:8px; padding:12px 14px 10px; background:#fff; min-width:0; }
+  .card-head { align-self:start; }
+  .card-body { align-self:start; }
+  .card .report-chart, .card .placeholder-card { max-width:100%; margin:6px 0; }
+  .card .section-text { font-size:13px; }
+  .card-companion { margin-top:8px; padding-top:8px; border-top:1px dashed #e3e7ee; }
+  .card-companion .report-chart, .card-companion .placeholder-card { max-width:100%; margin:2px 0; }
+  .card.card-wide { grid-column:1 / -1; }
+  /* Tabla dentro de una tarjeta a fila completa: se libera del tope inline que
+     lleva para Outlook y aprovecha el ancho (el !important es contra ese inline). */
+  .card-wide .block-table > div { max-width:100% !important; }
+  @media (max-width:860px) { .cards-grid { grid-template-columns:1fr; } }
+  @media print { .section-banner, .report-chart, .placeholder-card, .block, .card { break-inside:avoid; } #chart-tip { display:none !important; } }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="report-title">Informe Stocks Depósito Central de Valores</div>
+    <div class="subtitle">Informe generado automáticamente desde bases DACE (Todos los textos fueron generados con IA) — uso interno; validar cifras antes de citar.</div>
+    <div class="report-synthesis">
+      <div class="synthesis-title">Síntesis — principales movimientos</div>
+      <div class="synthesis-body" data-synthesis-body></div>
+    </div>
+<div class="section-banner">Portafolio por agente</div>
+<div class="section-text" data-text-slot="dcv:sec:portafolio_por_agente"></div>
+<div class="block" data-block-status="mvp" data-chart="heatmap_table" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Portafolio por agente</div><div class="block-unit">(US$ Mill.)</div><div class="block-note">*Sin columna de duración: no hay parquet con duración por agente e instrumento.</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>heatmap_table</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="stacked_bar" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Tenencia agentes por instrumento</div><div class="block-unit">(US$ Mill.)</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>stacked_bar</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="skip" data-chart="point" data-source=""><div class="block-title">Duración agentes IIF</div><div class="block-unit">(Años)</div><div class="block-note">Falta parquet: duración por agente e instrumento.</div><div class="placeholder-card skip"><span class="kind">Falta el parquet</span><br>No se tiene este parquet todavía — el bloque se completa cuando llegue la serie</div></div>
+<div class="block" data-block-status="skip" data-chart="point" data-source=""><div class="block-title">Duración agentes RF</div><div class="block-unit">(Años)</div><div class="block-note">Falta parquet: duración por agente e instrumento.</div><div class="placeholder-card skip"><span class="kind">Falta el parquet</span><br>No se tiene este parquet todavía — el bloque se completa cuando llegue la serie</div></div>
+<div class="section-banner">Próximos Vencimientos</div>
+<div class="section-text" data-text-slot="dcv:sec:proximos_vencimientos"></div>
+<div class="block" data-block-status="skip" data-chart="heatmap_table" data-source=""><div class="block-title">Próximos vencimientos por agente (T, T+1, Acum. 7d, Acum. 30d)</div><div class="block-unit">(US$ Mill.)</div><div class="block-note">Falta parquet: el perfil de vencimientos disponible no abre por agente ni trae los cortes T / T+1 / Acum. 7d / Acum. 30d.</div><div class="placeholder-card skip"><span class="kind">Falta el parquet</span><br>No se tiene este parquet todavía — el bloque se completa cuando llegue la serie</div></div>
+<div class="block" data-block-status="mvp" data-chart="stacked_bar" data-source="perfil_vencimiento_dp_bb"><div class="block-title">Vencimientos Totales</div><div class="block-unit">(Millones USD)</div><div class="block-note">*Solo deuda bancaria (bonos y DAP); el correo apila además PDBC y abre los DAP por moneda.</div><svg class="report-chart" viewBox="0 0 760 320" width="100%" role="img" aria-label="perfil_vencimiento_dp_bb — barras" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif" data-stack="{&quot;k&quot;:&quot;bar&quot;,&quot;top&quot;:30,&quot;ph&quot;:200,&quot;ymin&quot;:0.0,&quot;ymax&quot;:1000.0,&quot;s&quot;:[{&quot;i&quot;:0,&quot;v&quot;:[0.0,0.0,103.725,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,296.488889,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,522.45,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,38.25,0.0]},{&quot;i&quot;:1,&quot;v&quot;:[165.51133,181.784299,387.523144,359.260998,219.25208,148.500699,136.562802,264.704031,210.832221,170.923216,217.181237,155.655782,0.0,303.537902,213.127705,90.750745,173.076998,118.212179,152.927884,237.906472,134.688995,69.506434,227.168698,171.976557,110.844722,365.497739,184.372223,199.718397,180.738899,92.391542,109.240618,304.565187,163.584184,158.929341,336.452423,184.790472,228.118912,206.788802,246.851607,280.266986,141.858478,96.802866,268.690064,123.014279,213.36302]}]}">
+<rect x="0" y="0" width="760" height="320" fill="white"/>
+<line x1="64" y1="230.0" x2="742" y2="230.0" stroke="#999" stroke-width="1"/>
+<text x="56" y="234.0" font-size="11" fill="#555" text-anchor="end">0,00</text>
+<line x1="64" y1="190.0" x2="742" y2="190.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="194.0" font-size="11" fill="#555" text-anchor="end">200,0</text>
+<line x1="64" y1="150.0" x2="742" y2="150.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="154.0" font-size="11" fill="#555" text-anchor="end">400,0</text>
+<line x1="64" y1="110.0" x2="742" y2="110.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="114.0" font-size="11" fill="#555" text-anchor="end">600,0</text>
+<line x1="64" y1="70.0" x2="742" y2="70.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="74.0" font-size="11" fill="#555" text-anchor="end">800,0</text>
+<line x1="64" y1="30.0" x2="742" y2="30.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="34.0" font-size="11" fill="#555" text-anchor="end">1.000</text>
+<rect x="67.4" y="196.9" width="8.3" height="33.1" fill="#c8102e" data-si="1" data-ci="0" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="15-jul-2026" data-v="165,5 Millones USD"/>
+<text transform="translate(71.5,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">15-jul-2026</text>
+<rect x="82.5" y="193.6" width="8.3" height="36.4" fill="#c8102e" data-si="1" data-ci="1" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="17-jul-2026" data-v="181,8 Millones USD"/>
+<text transform="translate(86.6,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">17-jul-2026</text>
+<rect x="97.5" y="209.3" width="8.3" height="20.7" fill="#0b3766" data-si="0" data-ci="2" class="tip-pt" data-c="#0b3766" data-s="Bonos" data-k="20-jul-2026" data-v="103,7 Millones USD"/>
+<rect x="97.5" y="131.8" width="8.3" height="77.5" fill="#c8102e" data-si="1" data-ci="2" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="20-jul-2026" data-v="387,5 Millones USD"/>
+<text transform="translate(101.7,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">20-jul-2026</text>
+<rect x="112.6" y="158.1" width="8.3" height="71.9" fill="#c8102e" data-si="1" data-ci="3" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="21-jul-2026" data-v="359,3 Millones USD"/>
+<text transform="translate(116.7,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">21-jul-2026</text>
+<rect x="127.7" y="186.1" width="8.3" height="43.9" fill="#c8102e" data-si="1" data-ci="4" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="22-jul-2026" data-v="219,3 Millones USD"/>
+<text transform="translate(131.8,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">22-jul-2026</text>
+<rect x="142.7" y="200.3" width="8.3" height="29.7" fill="#c8102e" data-si="1" data-ci="5" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="23-jul-2026" data-v="148,5 Millones USD"/>
+<text transform="translate(146.9,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">23-jul-2026</text>
+<rect x="157.8" y="202.7" width="8.3" height="27.3" fill="#c8102e" data-si="1" data-ci="6" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="24-jul-2026" data-v="136,6 Millones USD"/>
+<text transform="translate(161.9,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">24-jul-2026</text>
+<rect x="172.9" y="177.1" width="8.3" height="52.9" fill="#c8102e" data-si="1" data-ci="7" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="27-jul-2026" data-v="264,7 Millones USD"/>
+<text transform="translate(177.0,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">27-jul-2026</text>
+<rect x="187.9" y="187.8" width="8.3" height="42.2" fill="#c8102e" data-si="1" data-ci="8" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="28-jul-2026" data-v="210,8 Millones USD"/>
+<text transform="translate(192.1,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">28-jul-2026</text>
+<rect x="203.0" y="195.8" width="8.3" height="34.2" fill="#c8102e" data-si="1" data-ci="9" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="29-jul-2026" data-v="170,9 Millones USD"/>
+<text transform="translate(207.1,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">29-jul-2026</text>
+<rect x="218.1" y="186.6" width="8.3" height="43.4" fill="#c8102e" data-si="1" data-ci="10" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="30-jul-2026" data-v="217,2 Millones USD"/>
+<text transform="translate(222.2,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">30-jul-2026</text>
+<rect x="233.1" y="198.9" width="8.3" height="31.1" fill="#c8102e" data-si="1" data-ci="11" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="31-jul-2026" data-v="155,7 Millones USD"/>
+<text transform="translate(237.3,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">31-jul-2026</text>
+<rect x="248.2" y="170.7" width="8.3" height="59.3" fill="#0b3766" data-si="0" data-ci="12" class="tip-pt" data-c="#0b3766" data-s="Bonos" data-k="01-ago-2026" data-v="296,5 Millones USD"/>
+<text transform="translate(252.3,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">01-ago-2026</text>
+<rect x="263.3" y="169.3" width="8.3" height="60.7" fill="#c8102e" data-si="1" data-ci="13" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="03-ago-2026" data-v="303,5 Millones USD"/>
+<text transform="translate(267.4,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">03-ago-2026</text>
+<rect x="278.3" y="187.4" width="8.3" height="42.6" fill="#c8102e" data-si="1" data-ci="14" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="04-ago-2026" data-v="213,1 Millones USD"/>
+<text transform="translate(282.5,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">04-ago-2026</text>
+<rect x="293.4" y="211.8" width="8.3" height="18.2" fill="#c8102e" data-si="1" data-ci="15" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="05-ago-2026" data-v="90,8 Millones USD"/>
+<text transform="translate(297.5,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">05-ago-2026</text>
+<rect x="308.5" y="195.4" width="8.3" height="34.6" fill="#c8102e" data-si="1" data-ci="16" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="06-ago-2026" data-v="173,1 Millones USD"/>
+<text transform="translate(312.6,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">06-ago-2026</text>
+<rect x="323.5" y="206.4" width="8.3" height="23.6" fill="#c8102e" data-si="1" data-ci="17" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="07-ago-2026" data-v="118,2 Millones USD"/>
+<text transform="translate(327.7,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">07-ago-2026</text>
+<rect x="338.6" y="199.4" width="8.3" height="30.6" fill="#c8102e" data-si="1" data-ci="18" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="10-ago-2026" data-v="152,9 Millones USD"/>
+<text transform="translate(342.7,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">10-ago-2026</text>
+<rect x="353.7" y="182.4" width="8.3" height="47.6" fill="#c8102e" data-si="1" data-ci="19" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="11-ago-2026" data-v="237,9 Millones USD"/>
+<text transform="translate(357.8,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">11-ago-2026</text>
+<rect x="368.7" y="203.1" width="8.3" height="26.9" fill="#c8102e" data-si="1" data-ci="20" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="12-ago-2026" data-v="134,7 Millones USD"/>
+<text transform="translate(372.9,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">12-ago-2026</text>
+<rect x="383.8" y="216.1" width="8.3" height="13.9" fill="#c8102e" data-si="1" data-ci="21" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="13-ago-2026" data-v="69,5 Millones USD"/>
+<text transform="translate(387.9,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">13-ago-2026</text>
+<rect x="398.9" y="184.6" width="8.3" height="45.4" fill="#c8102e" data-si="1" data-ci="22" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="14-ago-2026" data-v="227,2 Millones USD"/>
+<text transform="translate(403.0,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">14-ago-2026</text>
+<rect x="413.9" y="195.6" width="8.3" height="34.4" fill="#c8102e" data-si="1" data-ci="23" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="17-ago-2026" data-v="172,0 Millones USD"/>
+<text transform="translate(418.1,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">17-ago-2026</text>
+<rect x="429.0" y="207.8" width="8.3" height="22.2" fill="#c8102e" data-si="1" data-ci="24" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="18-ago-2026" data-v="110,8 Millones USD"/>
+<text transform="translate(433.1,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">18-ago-2026</text>
+<rect x="444.1" y="156.9" width="8.3" height="73.1" fill="#c8102e" data-si="1" data-ci="25" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="19-ago-2026" data-v="365,5 Millones USD"/>
+<text transform="translate(448.2,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">19-ago-2026</text>
+<rect x="459.1" y="193.1" width="8.3" height="36.9" fill="#c8102e" data-si="1" data-ci="26" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="20-ago-2026" data-v="184,4 Millones USD"/>
+<text transform="translate(463.3,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">20-ago-2026</text>
+<rect x="474.2" y="190.1" width="8.3" height="39.9" fill="#c8102e" data-si="1" data-ci="27" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="21-ago-2026" data-v="199,7 Millones USD"/>
+<text transform="translate(478.3,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">21-ago-2026</text>
+<rect x="489.3" y="193.9" width="8.3" height="36.1" fill="#c8102e" data-si="1" data-ci="28" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="24-ago-2026" data-v="180,7 Millones USD"/>
+<text transform="translate(493.4,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">24-ago-2026</text>
+<rect x="504.3" y="211.5" width="8.3" height="18.5" fill="#c8102e" data-si="1" data-ci="29" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="25-ago-2026" data-v="92,4 Millones USD"/>
+<text transform="translate(508.5,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">25-ago-2026</text>
+<rect x="519.4" y="208.2" width="8.3" height="21.8" fill="#c8102e" data-si="1" data-ci="30" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="26-ago-2026" data-v="109,2 Millones USD"/>
+<text transform="translate(523.5,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">26-ago-2026</text>
+<rect x="534.5" y="169.1" width="8.3" height="60.9" fill="#c8102e" data-si="1" data-ci="31" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="27-ago-2026" data-v="304,6 Millones USD"/>
+<text transform="translate(538.6,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">27-ago-2026</text>
+<rect x="549.5" y="197.3" width="8.3" height="32.7" fill="#c8102e" data-si="1" data-ci="32" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="28-ago-2026" data-v="163,6 Millones USD"/>
+<text transform="translate(553.7,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">28-ago-2026</text>
+<rect x="564.6" y="198.2" width="8.3" height="31.8" fill="#c8102e" data-si="1" data-ci="33" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="31-ago-2026" data-v="158,9 Millones USD"/>
+<text transform="translate(568.7,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">31-ago-2026</text>
+<rect x="579.7" y="125.5" width="8.3" height="104.5" fill="#0b3766" data-si="0" data-ci="34" class="tip-pt" data-c="#0b3766" data-s="Bonos" data-k="01-sep-2026" data-v="522,5 Millones USD"/>
+<rect x="579.7" y="58.2" width="8.3" height="67.3" fill="#c8102e" data-si="1" data-ci="34" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="01-sep-2026" data-v="336,5 Millones USD"/>
+<text transform="translate(583.8,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">01-sep-2026</text>
+<rect x="594.7" y="193.0" width="8.3" height="37.0" fill="#c8102e" data-si="1" data-ci="35" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="02-sep-2026" data-v="184,8 Millones USD"/>
+<text transform="translate(598.9,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">02-sep-2026</text>
+<rect x="609.8" y="184.4" width="8.3" height="45.6" fill="#c8102e" data-si="1" data-ci="36" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="03-sep-2026" data-v="228,1 Millones USD"/>
+<text transform="translate(613.9,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">03-sep-2026</text>
+<rect x="624.9" y="188.6" width="8.3" height="41.4" fill="#c8102e" data-si="1" data-ci="37" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="04-sep-2026" data-v="206,8 Millones USD"/>
+<text transform="translate(629.0,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">04-sep-2026</text>
+<rect x="639.9" y="180.6" width="8.3" height="49.4" fill="#c8102e" data-si="1" data-ci="38" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="07-sep-2026" data-v="246,9 Millones USD"/>
+<text transform="translate(644.1,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">07-sep-2026</text>
+<rect x="655.0" y="173.9" width="8.3" height="56.1" fill="#c8102e" data-si="1" data-ci="39" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="08-sep-2026" data-v="280,3 Millones USD"/>
+<text transform="translate(659.1,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">08-sep-2026</text>
+<rect x="670.1" y="201.6" width="8.3" height="28.4" fill="#c8102e" data-si="1" data-ci="40" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="09-sep-2026" data-v="141,9 Millones USD"/>
+<text transform="translate(674.2,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">09-sep-2026</text>
+<rect x="685.1" y="210.6" width="8.3" height="19.4" fill="#c8102e" data-si="1" data-ci="41" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="10-sep-2026" data-v="96,8 Millones USD"/>
+<text transform="translate(689.3,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">10-sep-2026</text>
+<rect x="700.2" y="176.3" width="8.3" height="53.7" fill="#c8102e" data-si="1" data-ci="42" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="11-sep-2026" data-v="268,7 Millones USD"/>
+<text transform="translate(704.3,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">11-sep-2026</text>
+<rect x="715.3" y="222.3" width="8.3" height="7.7" fill="#0b3766" data-si="0" data-ci="43" class="tip-pt" data-c="#0b3766" data-s="Bonos" data-k="14-sep-2026" data-v="38,2 Millones USD"/>
+<rect x="715.3" y="197.7" width="8.3" height="24.6" fill="#c8102e" data-si="1" data-ci="43" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="14-sep-2026" data-v="123,0 Millones USD"/>
+<text transform="translate(719.4,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">14-sep-2026</text>
+<rect x="730.3" y="187.3" width="8.3" height="42.7" fill="#c8102e" data-si="1" data-ci="44" class="tip-pt" data-c="#c8102e" data-s="DAP" data-k="15-sep-2026" data-v="213,4 Millones USD"/>
+<text transform="translate(734.5,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">15-sep-2026</text>
+<line x1="64" y1="30" x2="64" y2="230" stroke="#999" stroke-width="1"/>
+<g class="lg-item" data-idx="0" style="cursor:pointer"><rect x="62.0" y="290.0" width="61" height="18" fill="transparent" stroke="none"/><rect x="64.0" y="292.0" width="10" height="10" fill="#0b3766"/><text x="78.0" y="300.0" font-size="11" fill="#444">Bonos</text></g><g class="lg-item" data-idx="1" style="cursor:pointer"><rect x="123.0" y="290.0" width="49" height="18" fill="transparent" stroke="none"/><rect x="125.0" y="292.0" width="10" height="10" fill="#c8102e"/><text x="139.0" y="300.0" font-size="11" fill="#444">DAP</text></g>
+<text x="64" y="18" font-size="11" fill="#777">Millones USD</text>
+</svg></div>
+<div class="section-banner">Todos los instrumentos</div>
+<div class="section-text" data-text-slot="dcv:sec:todos_los_instrumentos"></div>
+<div class="block" data-block-status="mvp" data-chart="heatmap_table" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Todos los instrumentos — stock por instrumento y tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="block-note">*Tramos del dato: 5 (Menor a 1Y, 1-2Y, 2-5Y, 5-10Y, Mayor a 10Y). El correo abre 8 tramos con corte fino bajo 1 año, que el parquet no trae.</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>heatmap_table</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="stacked_bar" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Todos los instrumentos — distribución por tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>stacked_bar</code> — se completa en la próxima iteración</div></div>
+<div class="section-banner">Bancos</div>
+<div class="section-text" data-text-slot="dcv:sec:bancos"></div>
+<div class="block" data-block-status="mvp" data-chart="heatmap_table" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Bancos — stock por instrumento y tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="block-note">*Tramos del dato: 5 (Menor a 1Y, 1-2Y, 2-5Y, 5-10Y, Mayor a 10Y). El correo abre 8 tramos con corte fino bajo 1 año, que el parquet no trae.</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>heatmap_table</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="stacked_bar" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Bancos — distribución por tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>stacked_bar</code> — se completa en la próxima iteración</div></div>
+<div class="section-banner">Fondos de Pensiones y AFC</div>
+<div class="section-text" data-text-slot="dcv:sec:fondos_de_pensiones_y_afc"></div>
+<div class="block" data-block-status="mvp" data-chart="heatmap_table" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Fondos de Pensiones y AFC — stock por instrumento y tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="block-note">*Tramos del dato: 5 (Menor a 1Y, 1-2Y, 2-5Y, 5-10Y, Mayor a 10Y). El correo abre 8 tramos con corte fino bajo 1 año, que el parquet no trae.</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>heatmap_table</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="stacked_bar" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Fondos de Pensiones y AFC — distribución por tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>stacked_bar</code> — se completa en la próxima iteración</div></div>
+<div class="section-banner">Fondos Mutuos</div>
+<div class="section-text" data-text-slot="dcv:sec:fondos_mutuos"></div>
+<div class="block" data-block-status="mvp" data-chart="heatmap_table" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Fondos Mutuos — stock por instrumento y tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="block-note">*Tramos del dato: 5 (Menor a 1Y, 1-2Y, 2-5Y, 5-10Y, Mayor a 10Y). El correo abre 8 tramos con corte fino bajo 1 año, que el parquet no trae.</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>heatmap_table</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="stacked_bar" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Fondos Mutuos — distribución por tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>stacked_bar</code> — se completa en la próxima iteración</div></div>
+<div class="section-banner">Compañías de Seguros</div>
+<div class="section-text" data-text-slot="dcv:sec:companias_de_seguros"></div>
+<div class="block" data-block-status="mvp" data-chart="heatmap_table" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Compañías de Seguros — stock por instrumento y tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="block-note">*Tramos del dato: 5 (Menor a 1Y, 1-2Y, 2-5Y, 5-10Y, Mayor a 10Y). El correo abre 8 tramos con corte fino bajo 1 año, que el parquet no trae.</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>heatmap_table</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="stacked_bar" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Compañías de Seguros — distribución por tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>stacked_bar</code> — se completa en la próxima iteración</div></div>
+<div class="section-banner">Mandantes</div>
+<div class="section-text" data-text-slot="dcv:sec:mandantes"></div>
+<div class="block" data-block-status="mvp" data-chart="heatmap_table" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Mandantes — stock por instrumento y tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="block-note">*Tramos del dato: 5 (Menor a 1Y, 1-2Y, 2-5Y, 5-10Y, Mayor a 10Y). El correo abre 8 tramos con corte fino bajo 1 año, que el parquet no trae.</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>heatmap_table</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="stacked_bar" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Mandantes — distribución por tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>stacked_bar</code> — se completa en la próxima iteración</div></div>
+<div class="section-banner">Corredores de Bolsa</div>
+<div class="section-text" data-text-slot="dcv:sec:corredores_de_bolsa"></div>
+<div class="block" data-block-status="mvp" data-chart="heatmap_table" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Corredores de Bolsa — stock por instrumento y tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="block-note">*Tramos del dato: 5 (Menor a 1Y, 1-2Y, 2-5Y, 5-10Y, Mayor a 10Y). El correo abre 8 tramos con corte fino bajo 1 año, que el parquet no trae.</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>heatmap_table</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="stacked_bar" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Corredores de Bolsa — distribución por tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>stacked_bar</code> — se completa en la próxima iteración</div></div>
+<div class="section-banner">Otros</div>
+<div class="section-text" data-text-slot="dcv:sec:otros"></div>
+<div class="block" data-block-status="mvp" data-chart="heatmap_table" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Otros — stock por instrumento y tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="block-note">*Tramos del dato: 5 (Menor a 1Y, 1-2Y, 2-5Y, 5-10Y, Mayor a 10Y). El correo abre 8 tramos con corte fino bajo 1 año, que el parquet no trae.</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>heatmap_table</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="stacked_bar" data-source="variacion_instrumento_todos_plazo"><div class="block-title">Otros — distribución por tramo de plazo</div><div class="block-unit">(US$ Mill.)</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>stacked_bar</code> — se completa en la próxima iteración</div></div>
+  </div>
+  <div id="chart-tip" role="tooltip"></div>
+  <script>
+(function(){
+  var tip=document.getElementById('chart-tip');
+  if(!tip) return;
+  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+  function move(e){
+    var pad=14,w=tip.offsetWidth,h=tip.offsetHeight,
+        x=e.clientX+pad,y=e.clientY+pad;
+    if(x+w>window.innerWidth)x=e.clientX-w-pad;
+    if(y+h>window.innerHeight)y=e.clientY-h-pad;
+    tip.style.left=x+'px';tip.style.top=y+'px';
+  }
+  function hide(){tip.style.display='none';}
+  // Coordenadas pantalla → viewBox SVG.
+  function svgCoords(svg,e){
+    var pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  }
+  // Re-apila las series VISIBLES de un gráfico apilado (área/barra) recomputando
+  // su geometría con el eje fijo embebido en data-stack: al ocultar una serie las
+  // demás se completan hacia la base en vez de dejar un hueco. Replica exactamente
+  // el apilado divergente de svg_chart.py (positivos sobre 0, negativos bajo 0).
+  function restack(svg){
+    var raw=svg.getAttribute('data-stack');
+    if(!raw) return;
+    var st; try{st=JSON.parse(raw);}catch(err){return;}
+    var span=(st.ymax-st.ymin)||1;
+    function py(v){return st.top+st.ph*(1-(v-st.ymin)/span);}
+    function visible(i){
+      var lg=svg.querySelector('.lg-item[data-idx="'+i+'"]');
+      return !lg||lg.getAttribute('data-hidden')!=='1';
+    }
+    if(st.k==='area'){
+      var X=st.x,n=X.length,pos=[],neg=[];
+      for(var k=0;k<n;k++){pos.push(0);neg.push(0);}
+      st.s.forEach(function(ser){
+        if(!visible(ser.i)) return;  // oculta: no acumula ni se redibuja
+        var poly=svg.querySelector('polygon[data-si="'+ser.i+'"]');
+        if(!poly) return;
+        var upper=[],lower=[];
+        for(var j=0;j<n;j++){
+          var v=ser.v[j],lo,hi;
+          if(v>=0){lo=pos[j];hi=pos[j]+v;pos[j]=hi;}
+          else{hi=neg[j];lo=neg[j]+v;neg[j]=lo;}
+          upper.push(X[j].toFixed(1)+','+py(hi).toFixed(1));
+          lower.push(X[j].toFixed(1)+','+py(lo).toFixed(1));
+        }
+        lower.reverse();
+        poly.setAttribute('points',upper.join(' ')+' '+lower.join(' '));
+      });
+    } else if(st.k==='bar'){
+      var ncat=st.s.length?st.s[0].v.length:0;
+      for(var ci=0;ci<ncat;ci++){
+        var posAcc=0,negAcc=0;
+        st.s.forEach(function(ser){
+          if(!visible(ser.i)) return;  // oculta: no acumula
+          var v=ser.v[ci],yTop,yBot;
+          if(v>=0){yTop=py(posAcc+v);yBot=py(posAcc);posAcc+=v;}
+          else{yTop=py(negAcc);yBot=py(negAcc+v);negAcc+=v;}
+          var rect=svg.querySelector('rect[data-si="'+ser.i+'"][data-ci="'+ci+'"]');
+          if(rect){
+            rect.setAttribute('y',Math.min(yTop,yBot).toFixed(1));
+            rect.setAttribute('height',Math.abs(yBot-yTop).toFixed(1));
+          }
+        });
+      }
+    }
+  }
+  document.querySelectorAll('svg.report-chart').forEach(function(svg){
+    // ── Leyenda clickeable ────────────────────────────────────────────────────
+    svg.querySelectorAll('.lg-item').forEach(function(lg){
+      lg.addEventListener('click',function(){
+        var idx=lg.getAttribute('data-idx');
+        var off=lg.getAttribute('data-hidden')==='1';
+        if(off){
+          lg.removeAttribute('data-hidden');lg.style.opacity='';
+          svg.querySelectorAll('[data-si="'+idx+'"]').forEach(function(el){el.style.display='';});
+        } else {
+          lg.setAttribute('data-hidden','1');lg.style.opacity='0.25';
+          svg.querySelectorAll('[data-si="'+idx+'"]').forEach(function(el){el.style.display='none';});
+        }
+        restack(svg);  // re-apila las visibles (área/barra apilada); no-op si no hay data-stack
+      });
+    });
+    // ── Crosshair unificado + highlight de serie más cercana ─────────────────
+    var ptsRaw=svg.getAttribute('data-pts');
+    var pts=null;
+    if(ptsRaw){try{pts=JSON.parse(ptsRaw);}catch(err){}}
+    var guide=svg.querySelector('.x-guide');
+    var overlay=svg.querySelector('.hover-overlay');
+    if(pts&&overlay&&guide){
+      var lastSI=-1;
+      // Aplica highlight a la serie activa y atenúa las demás (solo cuando cambia).
+      function setActive(si){
+        if(si===lastSI) return;
+        lastSI=si;
+        svg.querySelectorAll('[data-si]').forEach(function(el){
+          if(el.style.display==='none') return;
+          var esi=parseInt(el.getAttribute('data-si'));
+          if(si<0){
+            el.style.opacity='';
+            if(el.tagName==='polyline')el.style.strokeWidth='';
+          } else if(esi===si){
+            el.style.opacity='1';
+            if(el.tagName==='polyline')el.style.strokeWidth='2.8';
+          } else {
+            el.style.opacity='0.2';
+            if(el.tagName==='polyline')el.style.strokeWidth='1.2';
+          }
+        });
+      }
+      overlay.addEventListener('mousemove',function(e){
+        var sc=svgCoords(svg,e),mx=sc.x,my=sc.y;
+        // Fecha más cercana (eje X).
+        var best=pts[0],bd=Infinity;
+        for(var i=0;i<pts.length;i++){var d=Math.abs(pts[i].x-mx);if(d<bd){bd=d;best=pts[i];}}
+        guide.setAttribute('x1',best.x);guide.setAttribute('x2',best.x);
+        guide.removeAttribute('display');
+        // Series visibles (no ocultas por leyenda).
+        var vis=best.vals.filter(function(r){
+          var lg=svg.querySelector('.lg-item[data-idx="'+r.i+'"]');
+          return !lg||lg.getAttribute('data-hidden')!=='1';
+        });
+        if(!vis.length){setActive(-1);hide();return;}
+        // Serie más cercana en Y (si los datos tienen coordenada y).
+        var closestSI=-1;
+        if(vis[0].y!==undefined){
+          var minDY=Infinity;
+          vis.forEach(function(r){var d=Math.abs(r.y-my);if(d<minDY){minDY=d;closestSI=r.i;}});
+        }
+        setActive(closestSI);
+        // Tooltip: todas las series; la más cercana en negrita.
+        var rows=vis.map(function(r){
+          var hi=(r.i===closestSI);
+          return '<div class="ct-r'+(hi?' ct-r-hi':'')+'">'+
+            '<span class="ct-sw" style="background:'+esc(r.c)+'"></span>'+
+            '<span class="ct-s"'+(hi?' style="color:#000;font-weight:700"':'')+'>'+esc(r.s)+'</span>'+
+            '<span class="ct-v">'+esc(r.v)+'</span></div>';
+        }).join('');
+        tip.innerHTML='<div class="ct-k">'+esc(best.k)+'</div>'+rows;
+        tip.style.display='block';move(e);
+      });
+      overlay.addEventListener('mouseleave',function(){
+        guide.setAttribute('display','none');
+        setActive(-1);
+        hide();
+      });
+      return;
+    }
+    // ── Tooltip individual (barras, torta, composición) ──────────────────────
+    svg.addEventListener('mouseover',function(e){
+      var el=e.target.closest('.tip-pt');
+      if(!el) return;
+      var c=el.getAttribute('data-c')||'#0b3766',s=el.getAttribute('data-s')||'',
+          k=el.getAttribute('data-k')||'',v=el.getAttribute('data-v')||'';
+      tip.innerHTML=(k?'<div class="ct-k">'+esc(k)+'</div>':'')+
+        '<div class="ct-r"><span class="ct-sw" style="background:'+esc(c)+'"></span>'+
+        (s?'<span class="ct-s">'+esc(s)+'</span>':'')+(v?'<span class="ct-v">'+esc(v)+'</span>':'')+'</div>';
+      tip.style.display='block';move(e);
+    });
+    svg.addEventListener('mousemove',function(e){if(tip.style.display==='block')move(e);});
+    svg.addEventListener('mouseout',function(e){if(e.target.closest('.tip-pt'))hide();});
+  });
+})();
+</script>
+</body>
+</html>

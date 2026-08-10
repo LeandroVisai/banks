@@ -6,6 +6,8 @@ mismo patrón que test_compute_series.
 
 from __future__ import annotations
 
+import re
+
 import duckdb
 import pytest
 
@@ -17,6 +19,8 @@ from banks_rag.application.reporting.curated_report import (
     _scale_plot,
     fill_synthesis_slot,
     fill_text_slots,
+    section_slot_ids,
+    section_text_slots,
 )
 from banks_rag.application.reporting.parquet_facts import HtmlTable, PlotData, PlotSeries
 from banks_rag.application.reporting.report_spec import (
@@ -179,6 +183,21 @@ class TestAfpSpec:
     def test_no_duplicate_titles(self):
         titles = [b.title for b in AFP_SPEC.blocks]
         assert len(titles) == len(set(titles))
+
+    def test_every_source_id_is_in_the_real_catalog(self):
+        """Un ``source_id`` que no exista en el catálogo real sale como
+        placeholder silencioso en el informe (bug real: "Posición SPC en
+        dólares" apuntaba a ``afp_posicion_swap_usd``, que nunca existió — el
+        parquet y la entrada del catálogo son ``afp_posicion_spc_usd``)."""
+        from banks_rag.infrastructure.sql.parquet_catalog_loader import (
+            get_dataset,
+            load_parquet_catalog,
+        )
+
+        entries = load_parquet_catalog()
+        for b in AFP_SPEC.blocks:
+            if b.source_id:
+                assert get_dataset(entries, b.source_id) is not None, b.source_id
 
 
 # ── Transforms ───────────────────────────────────────────────────────────────
@@ -807,7 +826,10 @@ class TestBuildCuratedReport:
         assert "Informe T" in html
         assert html.count("section-banner") >= 2 + 2  # 2 secciones + 2 en CSS
         assert "<svg" in html                            # bloques graficados
-        assert 'data-text-slot="t:s1"' in html           # slot de texto presente
+        # un slot de texto por TÓPICO (banner de sección), no uno por gráfico
+        assert 'data-text-slot="t:sec:s1"' in html
+        assert 'data-text-slot="t:sec:s2"' in html
+        assert html.count("data-text-slot") == 2
         assert "placeholder-card" in html                # heatmap + SKIP
         assert 'data-chart="heatmap_table"' in html     # bloque heatmap presente
         assert "vista preliminar" in html                # nota del bloque de barras
@@ -820,7 +842,20 @@ class TestBuildCuratedReport:
         report = build_curated_report(_spec_for_build(), entries=entries, parquet_dir=tmp_path)
         html = render_curated_html(report)
         # el slot va vacío (el texto se llena después con el LLM)
-        assert 'data-text-slot="t:s1"></div>' in html
+        assert 'data-text-slot="t:sec:s1"></div>' in html
+
+    def test_topic_slot_sits_right_below_its_banner(self, tmp_path):
+        """El texto editable va debajo del banner del tópico, ANTES de su primer
+        gráfico — no debajo del título de cada gráfico."""
+        p = tmp_path / "dur.parquet"
+        _categorical_parquet(p)
+        entries = [_ds("dur.parquet", id="dur")]
+        report = build_curated_report(_spec_for_build(), entries=entries, parquet_dir=tmp_path)
+        html = render_curated_html(report)
+        banner = html.index('<div class="section-banner">S1</div>')
+        slot = html.index('data-text-slot="t:sec:s1"')
+        title = html.index('<div class="block-title">Línea</div>')
+        assert banner < slot < title
 
 
 # ── Ejes redondos + base 0, tooltips, escala, texto/síntesis (mejoras gerencia) ─
@@ -922,6 +957,55 @@ class TestTextAndSynthesis:
     def test_fill_synthesis_empty_is_noop(self):
         html = '<div class="synthesis-body" data-synthesis-body></div>'
         assert fill_synthesis_slot(html, "") == html
+
+
+@pytest.mark.unit
+class TestTopicTextSlots:
+    """Un slot por TÓPICO: id estable desde el nombre de la sección y párrafos del
+    LLM (uno por dataset) concatenados dentro del tópico al que pertenecen."""
+
+    def _spec(self) -> FamilyReportSpec:
+        return FamilyReportSpec(
+            family="t", title="Informe T",
+            blocks=(
+                ReportBlock(section="Renta Fija (DCV)", title="A", chart="line",
+                            status=STATUS_MVP, source_id="a"),
+                ReportBlock(section="Renta Fija (DCV)", title="B", chart="line",
+                            status=STATUS_MVP, source_id="b"),
+                ReportBlock(section="Mercado cambiario", title="C", chart="line",
+                            status=STATUS_MVP, source_id="c"),
+            ),
+        )
+
+    def test_slot_id_is_slug_of_section(self):
+        ids = section_slot_ids(self._spec())
+        assert ids["Renta Fija (DCV)"] == "t:sec:renta_fija_dcv"
+        assert ids["Mercado cambiario"] == "t:sec:mercado_cambiario"
+
+    def test_slot_ids_are_unique_when_slugs_collide(self):
+        spec = FamilyReportSpec(
+            family="t", title="T",
+            blocks=(
+                ReportBlock(section="Cobre", title="A", chart="line", status=STATUS_MVP, source_id="a"),
+                ReportBlock(section="COBRE!", title="B", chart="line", status=STATUS_MVP, source_id="b"),
+            ),
+        )
+        assert len(set(section_slot_ids(spec).values())) == 2
+
+    def test_paragraphs_are_grouped_by_topic_in_spec_order(self):
+        slots = section_text_slots(self._spec(), {"a": "Uno.", "b": "Dos.", "c": "Tres."})
+        assert slots["t:sec:renta_fija_dcv"] == "Uno.\n\nDos."
+        assert slots["t:sec:mercado_cambiario"] == "Tres."
+
+    def test_missing_paragraphs_are_skipped(self):
+        slots = section_text_slots(self._spec(), {"b": "Solo B."})
+        assert slots == {"t:sec:renta_fija_dcv": "Solo B."}
+
+    def test_filled_topic_renders_one_p_per_dataset_paragraph(self):
+        html = '<div class="section-text" data-text-slot="t:sec:renta_fija_dcv"></div>'
+        slots = section_text_slots(self._spec(), {"a": "Uno.", "b": "Dos."})
+        out = fill_text_slots(html, slots)
+        assert out.count("<p>") == 2
 
 
 @pytest.mark.unit
@@ -1344,18 +1428,27 @@ class TestBuildFamilyReportLayout:
         monkeypatch.setattr(mod, "build_curated_report",
                             lambda spec: type("R", (), {"summary": lambda self: "ok"})())
 
-        assert mod.build_one("fx", tmp_path, editable=True) is True
-        fam_dir = tmp_path / "fx"
-        assert fam_dir.is_dir(), "el informe debe caer en <out>/<familia>/"
-        names = sorted(p.name for p in fam_dir.iterdir())
-        assert len(names) == 2 and all(n.startswith("fx_") for n in names)
-        assert any(n.endswith("_editable.html") for n in names)
-        # nada suelto en la raíz
-        assert [p.name for p in tmp_path.iterdir()] == ["fx"]
+        out_dir = tmp_path / "fx" / "no_editable"
+        editable_dir = tmp_path / "fx" / "Editable"
+        assert mod.build_one("fx", out_dir, editable_dir, editable=True) is True
+        assert out_dir.is_dir() and editable_dir.is_dir()
+        names = sorted(p.name for p in out_dir.iterdir())
+        assert len(names) == 1 and names[0].startswith("fx_") and not names[0].endswith("_editable.html")
+        ed_names = sorted(p.name for p in editable_dir.iterdir())
+        assert len(ed_names) == 1 and ed_names[0].endswith("_editable.html")
 
     def test_unknown_family_reports_failure(self, tmp_path):
         mod = self._load_script()
-        assert mod.build_one("no_existe", tmp_path, editable=False) is False
+        assert mod.build_one("no_existe", tmp_path, None, editable=False) is False
+
+    def test_resolve_out_dir_formats_familia_placeholder(self, tmp_path):
+        mod = self._load_script()
+        template = str(tmp_path / "{familia}" / "Editable")
+        assert mod._resolve_out_dir(template, "fx") == tmp_path / "fx" / "Editable"
+
+    def test_resolve_out_dir_without_placeholder_appends_family(self, tmp_path):
+        mod = self._load_script()
+        assert mod._resolve_out_dir(str(tmp_path), "fx") == tmp_path / "fx"
 
 
 # ── Informe DCV (Stocks Depósito Central de Valores) ─────────────────────────
@@ -1611,3 +1704,1038 @@ class TestBlockDateFilter:
             # Hoy ningún spec recorta fechas: el diccionario vacío confirma que la
             # función es opt-in y no altera los informes actuales.
             assert spec_date_filters(spec) == {}, spec.family
+
+
+# ── Informe Cambiario AM (familia cambiarioam) ───────────────────────────────
+#
+# El informe todavía no tiene sus parquets en data_pipeline/parquet (los genera
+# scripts/build_cambiario_parquets.py desde el Excel del DOMA + el DW), así que
+# acá se arman a mano con el mismo esquema declarado en el catálogo.
+
+def _cam_ohlc_parquet(path) -> None:
+    """20 sesiones OHLC: alternan cierre al alza y a la baja para cubrir ambos
+    colores de vela."""
+    rows = []
+    for i in range(20):
+        day = f"2026-07-{i + 1:02d}"
+        op = 900.0 + i
+        cl = op + (4.0 if i % 2 == 0 else -4.0)
+        rows.append(f"(DATE '{day}', {op}, {max(op, cl) + 2}, {min(op, cl) - 2}, {cl}, {500.0 + i})")
+    _write(path, "SELECT * FROM (VALUES " + ", ".join(rows) + ') t(Fecha, "Apertura", "Máximo", "Mínimo", "Cierre", "Monto transado")')
+
+
+def _cam_wide_parquet(path, col: str, values: list[float], *, start_day: int = 1) -> None:
+    rows = [
+        f"(DATE '2026-07-{start_day + i:02d}', {v})"
+        for i, v in enumerate(values)
+    ]
+    _write(path, "SELECT * FROM (VALUES " + ", ".join(rows) + f') t(Fecha, "{col}")')
+
+
+@pytest.mark.unit
+class TestCambiarioAmSpec:
+    def test_registered_and_listed(self):
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        assert get_spec("cambiarioam") is CAMBIARIOAM_SPEC
+        assert "cambiarioam" in available_families()
+
+    def test_sections_follow_the_dashboard_order(self):
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        assert CAMBIARIOAM_SPEC.sections() == [
+            "Drivers del día", "CLP · Análisis", "No Residentes", "Monedas & Carry",
+            "Cobre", "Dólar · DXY", "Expectativas", "Otros",
+        ]
+
+    def test_blocks_reference_known_transforms(self):
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        for b in CAMBIARIOAM_SPEC.blocks:
+            assert get_transform(b.transform) is not None, b.title
+
+    def test_every_source_id_is_in_the_catalog(self):
+        """Un source_id que no esté en el catálogo sale como placeholder silencioso:
+        el spec y el catálogo tienen que moverse juntos."""
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+        from banks_rag.infrastructure.sql.parquet_catalog_loader import (
+            get_dataset,
+            load_parquet_catalog,
+        )
+
+        entries = load_parquet_catalog()
+        for b in CAMBIARIOAM_SPEC.blocks:
+            assert get_dataset(entries, b.source_id) is not None, b.source_id
+
+    def test_dual_axis_blocks_declare_right_axis(self):
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        dual = [b for b in CAMBIARIOAM_SPEC.blocks if b.chart == "dual_axis"]
+        assert len(dual) >= 8
+        for b in dual:
+            assert b.params.get("right_axis"), b.title
+
+    def test_sr_tables_pair_with_their_chart_and_carry_no_text(self):
+        """Cada tabla de percentiles va pegada a su gráfico, con la MISMA fuente y
+        ventana, y sin párrafo propio (el comentario se escribe en el gráfico)."""
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        blocks = list(CAMBIARIOAM_SPEC.blocks)
+        tables = [(i, b) for i, b in enumerate(blocks) if b.transform == "cam_sr_table"]
+        assert len(tables) == 4  # CLP, NR, cobre y DXY
+        for i, table in tables:
+            chart = blocks[i - 1]
+            assert chart.transform == "cam_sr_percentiles"
+            assert chart.source_id == table.source_id
+            assert chart.params["months"] == table.params["months"]
+            assert table.no_text
+
+    def test_no_duplicate_charts_or_titles(self):
+        import json
+
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        sigs = [
+            (b.source_id, b.transform, json.dumps(b.params or {}, sort_keys=True, default=str))
+            for b in CAMBIARIOAM_SPEC.blocks
+        ]
+        assert len(sigs) == len(set(sigs)), "gráfico repetido"
+        titles = [b.title for b in CAMBIARIOAM_SPEC.blocks]
+        assert len(titles) == len(set(titles)), "título repetido"
+
+
+@pytest.mark.unit
+class TestCambiarioTransforms:
+    def test_candlestick_returns_the_four_ohlc_series(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_candlestick
+
+        _cam_ohlc_parquet(tmp_path / "ohlc.parquet")
+        ds = _ds("ohlc.parquet", id="cam_clp_ohlc", unit="CLP/USD")
+        plot = cam_candlestick(ds, tmp_path, {"months": 12})
+        assert [s.label for s in plot.series] == ["Apertura", "Máximo", "Mínimo", "Cierre"]
+        # El monto transado del parquet NO entra: vive en su propio gráfico.
+        assert all(s.label != "Monto transado" for s in plot.series)
+
+    def test_candlestick_svg_colors_by_direction(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_candlestick
+        from banks_rag.application.reporting.svg_chart import render_plot_svg, renders_natively
+
+        _cam_ohlc_parquet(tmp_path / "ohlc.parquet")
+        ds = _ds("ohlc.parquet", id="cam_clp_ohlc", unit="CLP/USD")
+        svg = render_plot_svg(cam_candlestick(ds, tmp_path, {"months": 12}), chart="candlestick")
+        assert svg.count("#0a8a5f") >= 10 and svg.count("#c8102e") >= 10  # alza y baja
+        assert renders_natively("timeseries", "candlestick")
+
+    def test_candle_table_soporte_resistencia_are_p25_p75(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_candle_table
+
+        _cam_ohlc_parquet(tmp_path / "ohlc.parquet")
+        ds = _ds("ohlc.parquet", id="cam_clp_ohlc", unit="CLP/USD")
+        table = cam_candle_table(ds, tmp_path, {"months": 12})
+        assert isinstance(table, HtmlTable)
+        for label in ("Máximo del día", "Mínimo del día", "Soporte", "Resistencia"):
+            assert label in table.html
+
+    def test_sr_percentiles_draw_flat_levels_matching_the_table(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import (
+            cam_sr_percentiles,
+            cam_sr_table,
+        )
+
+        values = [float(v) for v in range(100, 121)]
+        _cam_wide_parquet(tmp_path / "sr.parquet", "CLP Cierre", values)
+        ds = _ds("sr.parquet", id="cam_clp_sr", unit="CLP/USD")
+        plot = cam_sr_percentiles(ds, tmp_path, {"months": 120})
+
+        assert plot.series[0].label == "CLP Cierre"
+        levels = plot.series[1:]
+        assert [s.label.split(" ·")[0] for s in levels] == ["P10", "P25", "P50", "P75", "P90", "P100"]
+        for s in levels:  # cada nivel es una horizontal de extremo a extremo
+            assert len(s.points) == 2
+            assert s.points[0][1] == s.points[1][1]
+        # La mediana de 100..120 es 110: el gráfico y la tabla citan el mismo nivel.
+        p50 = next(s for s in levels if s.label.startswith("P50"))
+        assert p50.points[0][1] == pytest.approx(110.0)
+        assert "110" in cam_sr_table(ds, tmp_path, {"months": 120}).html
+
+    def test_bollinger_bands_wrap_the_moving_average(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_bollinger
+
+        _cam_wide_parquet(tmp_path / "bb.parquet", "CLP Cierre",
+                          [900.0 + (i % 5) for i in range(25)])
+        ds = _ds("bb.parquet", id="cam_clp_bollinger", unit="CLP/USD")
+        plot = cam_bollinger(ds, tmp_path, {"period": 10})
+        labels = [s.label for s in plot.series]
+        assert labels == ["Banda superior (10d)", "Media móvil 10d", "Banda inferior (10d)", "CLP Cierre"]
+        upper, ma, lower = (dict(s.points) for s in plot.series[:3])
+        for iso in ma:
+            assert lower[iso] < ma[iso] < upper[iso]
+
+    def test_rsi_bands_add_the_70_30_thresholds(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_rsi_bands
+
+        _cam_wide_parquet(tmp_path / "rsi.parquet", "RSI Cobre", [40.0, 55.0, 72.0, 61.0])
+        ds = _ds("rsi.parquet", id="cam_rsi_cobre", unit="RSI")
+        plot = cam_rsi_bands(ds, tmp_path, {"levels": [70, 30]})
+        assert [s.label for s in plot.series] == [
+            "RSI Cobre", "Sobrecompra · 70", "Sobreventa · 30",
+        ]
+        assert [v for _d, v in plot.series[1].points] == [70.0, 70.0]
+
+    def test_base100_rebases_each_series_on_its_first_point(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_base100
+
+        rows = [f"(DATE '2026-07-{i + 1:02d}', {800.0 + i * 8}, {20.0 + i})" for i in range(10)]
+        _write(tmp_path / "mon.parquet",
+               "SELECT * FROM (VALUES " + ", ".join(rows) + ') t(Fecha, "CLP", "MXN")')
+        ds = _ds("mon.parquet", id="cam_monedas_latam", unit="paridad")
+        plot = cam_base100(ds, tmp_path, {"months": 120})
+        for s in plot.series:  # toda serie arranca EXACTAMENTE en 100
+            assert s.points[0][1] == pytest.approx(100.0)
+        assert plot.unit == "Índice base 100"
+
+    def test_signed_bars_split_by_sign_so_each_bar_gets_its_color(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_signed_bars
+
+        _write(tmp_path / "var.parquet",
+               "SELECT * FROM (VALUES ('Chile', 1.5), ('Brasil', -2.0), ('Peru', 0.5)) t(Pais, Variacion)")
+        ds = _ds("var.parquet", id="cam_monedas_variacion_dia", unit="%")
+        plot = cam_signed_bars(ds, tmp_path, {"category": "Pais", "value": "Variacion"})
+        assert plot.kind == "grouped"
+        pos, neg = plot.series
+        assert dict(pos.points)["Chile"] == pytest.approx(1.5)
+        assert dict(neg.points)["Brasil"] == pytest.approx(-2.0)
+        # Orden descendente por valor, como el gráfico original.
+        assert [c for c, _v in pos.points] == ["Chile", "Peru", "Brasil"]
+
+    def test_spread_expanding_computes_bp_and_running_average(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_spread_expanding
+
+        rows = [
+            "(DATE '2026-07-01', 5.0, 4.0)",
+            "(DATE '2026-07-02', 5.0, 3.0)",
+        ]
+        _write(tmp_path / "tpm.parquet",
+               "SELECT * FROM (VALUES " + ", ".join(rows) + ') t(Fecha, "TPM Chile 1Y", "TPM US 1Y")')
+        ds = _ds("tpm.parquet", id="cam_tpm_spread", unit="%")
+        plot = cam_spread_expanding(ds, tmp_path, {
+            "minuend": "TPM Chile 1Y", "subtrahend": "TPM US 1Y", "scale": 100.0,
+        })
+        spread = dict(plot.series[2].points)
+        avg = dict(plot.series[3].points)
+        assert spread["2026-07-01"] == pytest.approx(100.0)   # (5-4)*100 pb
+        assert spread["2026-07-02"] == pytest.approx(200.0)
+        assert avg["2026-07-02"] == pytest.approx(150.0)      # promedio acumulado
+
+    def test_fixing_stacked_anchors_on_the_last_day_with_data(self, tmp_path):
+        """El original filtraba por ``Timestamp.today()`` y quedaba vacío en feriados;
+        acá el corte es el último día CON dato."""
+        from banks_rag.application.reporting.series_transforms import cam_fixing_stacked
+
+        rows = [
+            "(DATE '2026-07-01', 'Santander', 'AFP', 10.0)",
+            "(DATE '2026-07-02', 'Total', 'AFP', 30.0)",
+            "(DATE '2026-07-02', 'Santander', 'AFP', 20.0)",
+            "(DATE '2026-07-02', 'Santander', 'FFMM', 5.0)",
+        ]
+        _write(tmp_path / "fix.parquet",
+               "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Informante, Sector, Pos_neta)")
+        ds = _ds("fix.parquet", id="cam_fixing_bancos", unit="MM USD")
+        plot = cam_fixing_stacked(ds, tmp_path, {})
+        assert "02-jul-2026" in plot.date_note
+        assert plot.overlay == ("Total agente",)
+        total = dict(next(s for s in plot.series if s.label == "Total agente").points)
+        assert total["Santander"] == pytest.approx(25.0)  # 20 AFP + 5 FFMM
+        # "Total" va primero en el eje X, como en el dashboard original.
+        assert plot.series[0].points[0][0] == "Total"
+
+    def test_market_table_flags_direction_per_driver(self, tmp_path):
+        """Cobre al alza APRECIA el peso; el DXY al alza lo DEPRECIA."""
+        from banks_rag.application.reporting.series_transforms import cam_market_table
+
+        rows = [
+            "(DATE '2026-07-01', 400.0, 100.0)",
+            "(DATE '2026-07-02', 410.0, 101.0)",
+        ]
+        _write(tmp_path / "drv.parquet",
+               "SELECT * FROM (VALUES " + ", ".join(rows) + ') t(Fecha, "Cobre", "DXY")')
+        ds = _ds("drv.parquet", id="cam_drivers_snapshot", unit="niveles")
+        table = cam_market_table(ds, tmp_path, {"indicators": [
+            {"column": "Cobre", "label": "Cobre", "mode": "pct", "clp": +1},
+            {"column": "DXY", "label": "DXY", "mode": "pct", "clp": -1},
+        ]})
+        assert isinstance(table, HtmlTable)
+        assert "Aprecia" in table.html and "Deprecia" in table.html
+
+    def test_gamma_heatmap_orders_strikes_descending(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_gamma_heatmap
+
+        rows = [
+            "(DATE '2026-07-10', 930.0, 5.0)",
+            "(DATE '2026-07-10', 935.0, 9.0)",
+            "(DATE '2026-07-17', 930.0, 2.0)",
+        ]
+        _write(tmp_path / "gam.parquet",
+               "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Vencimiento, Strike, Gamma)")
+        ds = _ds("gam.parquet", id="cam_gamma_heatmap", unit="MM USD")
+        plot = cam_gamma_heatmap(ds, tmp_path, {"row": "Strike", "value": "Gamma"})
+        assert plot.kind == "heatmap"
+        assert [s.label for s in plot.series] == ["935,0", "930,0"]  # strike descendente
+
+    def test_intraday_lines_keep_the_time_component(self, tmp_path):
+        """Sin la hora, los puntos de un mismo día colapsan sobre la misma abscisa
+        y el gráfico intradía sale como una barra vertical."""
+        from banks_rag.application.reporting.series_transforms import cam_lines
+
+        rows = [
+            "(TIMESTAMP '2026-07-10 09:00:00', 100.0)",
+            "(TIMESTAMP '2026-07-10 12:30:00', 101.0)",
+        ]
+        _write(tmp_path / "intra.parquet",
+               "SELECT * FROM (VALUES " + ", ".join(rows) + ') t(Fecha, "CLP")')
+        ds = _ds("intra.parquet", id="cam_clp_intradia", unit="Índice base 100")
+        plot = cam_lines(ds, tmp_path, {"keep_time": True})
+        isos = [iso for iso, _v in plot.series[0].points]
+        assert isos == ["2026-07-10T09:00", "2026-07-10T12:30"]
+
+        from banks_rag.application.reporting.svg_chart import _date_ord
+
+        assert _date_ord(isos[0]) != _date_ord(isos[1])
+
+
+@pytest.mark.unit
+class TestAxisScaling:
+    """El eje Y de una serie temporal: base 0 para flujos, ajustado para niveles."""
+
+    def _svg(self, values: list[float], *, zero_base: bool) -> str:
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        pts = [(f"2026-07-{i + 1:02d}", v) for i, v in enumerate(values)]
+        plot = PlotData("t", "line", "timeseries", "CLP/USD",
+                        [PlotSeries(label="CLP", points=pts)], zero_base=zero_base)
+        return render_plot_svg(plot, chart="line")
+
+    def test_default_still_anchors_the_axis_on_zero(self):
+        """Comportamiento histórico intacto: los informes de flujos siguen viendo el 0."""
+        assert "0,00" in self._svg([930.0, 935.0, 928.0], zero_base=True)
+
+    def test_zero_base_false_fits_the_axis_to_the_data(self):
+        """Un tipo de cambio en 930 con base 0 queda aplastado contra el borde."""
+        svg = self._svg([930.0, 935.0, 928.0], zero_base=False)
+        assert "0,00" not in svg
+        assert "930" in svg or "935" in svg
+
+    def test_intraday_ticks_show_the_hour(self):
+        """Una serie de una sola jornada repetía la misma fecha en los cinco ticks."""
+        from banks_rag.application.reporting.svg_chart import _fmt_date
+
+        assert _fmt_date("2026-07-10") == "10-07-26"
+        assert _fmt_date("2026-07-10T14:35") == "10-07 14:35"
+        # Medianoche exacta = parquet diario guardado como TIMESTAMP: sin hora.
+        assert _fmt_date("2026-07-10T00:00:00") == "10-07-26"
+
+
+# ── Layout "grid" (opt-in por spec) ──────────────────────────────────────────
+
+@pytest.mark.unit
+class TestGridLayout:
+    def test_existing_families_default_to_stack(self):
+        """El campo es nuevo: si alguna familia existente lo declarara sin
+        querer, su HTML cambiaría de un día para otro."""
+        for spec in (FFMM_SPEC, NR_SPEC, AFP_SPEC, FX_SPEC, DCV_SPEC):
+            assert spec.layout == "stack", spec.family
+
+    def test_cambiarioam_opts_into_grid(self):
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        assert CAMBIARIOAM_SPEC.layout == "grid"
+
+    def test_stack_render_has_no_grid_markup(self, tmp_path):
+        """Con layout por defecto, el HTML no debe contener el MARKUP de grilla
+        (la CSS del sistema de grilla es compartida y siempre se emite, muerta
+        si no se usa; lo que no debe aparecer son los elementos)."""
+        spec = _spec_for_build()
+        report = build_curated_report(spec, entries=[], parquet_dir=tmp_path)
+        html = render_curated_html(report)
+        assert '<div class="cards-grid">' not in html
+        assert '<div class="card"' not in html
+        assert '<div class="card-companion">' not in html
+
+    def test_group_cards_merges_only_matching_companion(self):
+        from banks_rag.application.reporting.curated_report import CuratedBlock, _group_cards
+
+        chart_a = ReportBlock(section="S", title="A", chart="line", status=STATUS_MVP, source_id="x")
+        table_a = ReportBlock(section="S", title="A tabla", chart="heatmap_table", status=STATUS_MVP,
+                              source_id="x", no_text=True)
+        chart_b = ReportBlock(section="S", title="B", chart="line", status=STATUS_MVP, source_id="y")
+        # no_text que NO acompaña a nada (fuente distinta a la del bloque anterior):
+        # no debe fundirse.
+        orphan = ReportBlock(section="S", title="Huérfano", chart="line", status=STATUS_MVP,
+                             source_id="z", no_text=True)
+
+        blocks = [
+            CuratedBlock(chart_a, "chart", "<svg-a/>"),
+            CuratedBlock(table_a, "chart", "<table-a/>"),
+            CuratedBlock(chart_b, "chart", "<svg-b/>"),
+            CuratedBlock(orphan, "chart", "<svg-orphan/>"),
+        ]
+        cards = _group_cards(blocks)
+        assert len(cards) == 3
+        assert cards[0].main.block.title == "A" and cards[0].companion.block.title == "A tabla"
+        assert cards[1].main.block.title == "B" and cards[1].companion is None
+        assert cards[2].main.block.title == "Huérfano" and cards[2].companion is None
+
+    def test_grid_render_wraps_section_and_widens_the_odd_card(self):
+        from banks_rag.application.reporting.curated_report import CuratedReport
+
+        blocks = [
+            ReportBlock(section="S", title="Uno", chart="line", status=STATUS_MVP, source_id="a"),
+            ReportBlock(section="S", title="Dos", chart="line", status=STATUS_MVP, source_id="b"),
+            ReportBlock(section="S", title="Tres", chart="line", status=STATUS_MVP, source_id="c"),
+        ]
+        spec = FamilyReportSpec(family="t", title="T", blocks=tuple(blocks), layout="grid")
+        cbs = [_curated_block_of(b) for b in blocks]
+        report = CuratedReport(spec=spec, generated_at="now", blocks=cbs)
+        html = render_curated_html(report)
+
+        assert html.count('<div class="cards-grid">') == 1
+        assert html.count('data-chart="line"') == 3  # 3 tarjetas, ninguna fundida
+        card_divs = re.findall(r'<div class="card(?: card-wide)?"', html)
+        assert len(card_divs) == 3
+        # Solo la ÚLTIMA (impar) se ensancha, no las tres.
+        assert card_divs.count('<div class="card card-wide"') == 1
+
+    def test_grid_companion_table_lives_inside_the_chart_card(self):
+        from banks_rag.application.reporting.curated_report import CuratedReport
+
+        chart = ReportBlock(section="S", title="Gráfico", chart="line", status=STATUS_MVP, source_id="a")
+        table = ReportBlock(section="S", title="Niveles", chart="heatmap_table", status=STATUS_MVP,
+                            source_id="a", no_text=True)
+        spec = FamilyReportSpec(family="t", title="T", blocks=(chart, table), layout="grid")
+        cbs = [_curated_block_of(chart), _curated_block_of(table)]
+        report = CuratedReport(spec=spec, generated_at="now", blocks=cbs)
+        html = render_curated_html(report)
+
+        card_divs = re.findall(r'<div class="card(?: card-wide)?"', html)
+        assert len(card_divs) == 1  # UNA sola tarjeta para las dos piezas
+        assert html.count('data-source="a"') == 1  # un solo elemento de tarjeta física
+        assert '<div class="card-companion">' in html
+        assert 'class="block-title">Gráfico<' in html
+        # El título de la tabla NO se repite (show_title=False en la compañera).
+        assert 'class="block-title">Niveles<' not in html
+
+
+def _curated_block_of(block):
+    from banks_rag.application.reporting.curated_report import CuratedBlock
+
+    return CuratedBlock(block, "chart", f"<svg data-t='{block.title}'/>")
+
+
+# ── Resaltado de series (PlotData.emphasis / .muted) ─────────────────────────
+
+@pytest.mark.unit
+class TestSeriesEmphasis:
+    def test_defaults_are_empty(self):
+        plot = PlotData("t", "line", "timeseries", "u", [PlotSeries(label="X", points=[("2026-01-01", 1.0)])])
+        assert plot.emphasis == {}
+        assert plot.muted == ()
+
+    def test_emphasis_overrides_palette_color(self):
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        pts = [("2026-01-01", 1.0), ("2026-01-02", 2.0)]
+        plot = PlotData("t", "line", "timeseries", "u",
+                        [PlotSeries(label="Base", points=pts), PlotSeries(label="MA50", points=pts)],
+                        emphasis={"MA50": "#8a6d3b"})
+        svg = render_plot_svg(plot, chart="line")
+        assert 'stroke="#8a6d3b"' in svg
+        assert 'stroke-width="2.4"' in svg  # resaltada: más gruesa que el default 1.8
+
+    def test_muted_renders_thin_and_gray(self):
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        pts = [("2026-01-01", 1.0), ("2026-01-02", 2.0)]
+        plot = PlotData("t", "line", "timeseries", "u",
+                        [PlotSeries(label="Base", points=pts), PlotSeries(label="MA10", points=pts)],
+                        muted=("MA10",))
+        svg = render_plot_svg(plot, chart="line")
+        assert 'stroke="#9aa2b1" stroke-width="0.9"' in svg
+
+
+@pytest.mark.unit
+class TestCamMovingAverages:
+    def test_highlights_50_and_200_mutes_the_rest(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_moving_averages
+
+        rows = []
+        for i in range(15):
+            day = f"2026-07-{i + 1:02d}"
+            rows.append(
+                f"(DATE '{day}', {930.0 + i}, {928.0 + i}, {929.0 + i}, {931.0 + i}, {700.0 + i})"
+            )
+        _write(
+            tmp_path / "ma.parquet",
+            "SELECT * FROM (VALUES " + ", ".join(rows) + ') t(Fecha, "CLP Cierre", '
+            '"CLP Media móvil 10", "CLP Media móvil 50", "CLP Media móvil 200", "Monto transado (MM5d)")',
+        )
+        ds = _ds("ma.parquet", id="cam_clp_medias_moviles", unit="CLP/USD")
+        plot = cam_moving_averages(ds, tmp_path, {
+            "base": "CLP Cierre", "right": "Monto transado (MM5d)",
+        })
+        labels = [s.label for s in plot.series]
+        assert labels == [
+            "CLP Cierre", "CLP Media móvil 10", "CLP Media móvil 50",
+            "CLP Media móvil 200", "Monto transado (MM5d)",
+        ]
+        assert plot.emphasis == {"CLP Media móvil 50": "#8a6d3b", "CLP Media móvil 200": "#c8102e"}
+        assert plot.muted == ("CLP Media móvil 10",)
+
+    def test_returns_none_without_any_moving_average_column(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_moving_averages
+
+        _write(tmp_path / "flat.parquet",
+               "SELECT * FROM (VALUES (DATE '2026-07-01', 930.0)) t(Fecha, \"CLP Cierre\")")
+        ds = _ds("flat.parquet", id="cam_clp_medias_moviles", unit="CLP/USD")
+        assert cam_moving_averages(ds, tmp_path, {}) is None
+
+
+@pytest.mark.unit
+class TestCategoryLabelRotation:
+    """Etiquetas del eje X de barras: rotan cuando son largas O cuando no caben."""
+
+    def _svg(self, cats: list[str]) -> str:
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        plot = PlotData("t", "grouped_bar", "grouped", "%",
+                        [PlotSeries(label="s", points=[(c, 1.0) for c in cats])])
+        return render_plot_svg(plot, chart="grouped_bar")
+
+    def test_few_short_labels_stay_horizontal(self):
+        assert "rotate(-45)" not in self._svg(["Chile", "Peru", "Brasil"])
+
+    def test_long_labels_rotate(self):
+        assert "rotate(-45)" in self._svg(["Itaú-Corpbanca", "Scotiabank"])
+
+    def test_many_short_labels_rotate_because_they_do_not_fit(self):
+        """37 monedas de nombre corto: ninguna supera los 9 caracteres, pero a
+        ~25px por categoría se pisaban entre sí."""
+        cats = [f"Pais{i:02d}" for i in range(37)]
+        assert max(len(c) for c in cats) <= 9   # no entra por la regla de largo
+        assert "rotate(-45)" in self._svg(cats)  # sí entra por la de ancho
+
+
+@pytest.mark.unit
+class TestCambiarioFixingAnchor:
+    def test_spec_anchors_the_clp_section(self):
+        """El fixing se abre por fecha de VENCIMIENTO (futura): sin el corte
+        común el gráfico mostraría los forwards a dos meses en vez de la sesión."""
+        from banks_rag.application.reporting.curated_report import weekly_anchor_source_ids
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        assert CAMBIARIOAM_SPEC.share_weekly_cutoff is True
+        assert CAMBIARIOAM_SPEC.weekly_anchor_sections == ("CLP · Análisis",)
+        assert "cam_fixing_bancos" in weekly_anchor_source_ids(CAMBIARIOAM_SPEC)
+
+    def test_fixing_transform_respects_the_anchor_over_the_parquet_max(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_fixing_stacked
+
+        rows = [
+            "(DATE '2026-07-07', 'Santander', 'AFP', 10.0)",
+            # Fixing FUTURO: es el máximo del parquet pero no la sesión del informe.
+            "(DATE '2026-09-03', 'Santander', 'AFP', 999.0)",
+        ]
+        _write(tmp_path / "fx.parquet",
+               "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Informante, Sector, Pos_neta)")
+        ds = _ds("fx.parquet", id="cam_fixing_bancos", unit="MM USD")
+
+        anchored = cam_fixing_stacked(ds, tmp_path, {"weekly_asof": "2026-07-07"})
+        assert "07-jul-2026" in anchored.date_note
+        assert dict(anchored.series[0].points)["Santander"] == pytest.approx(10.0)
+
+        # Sin ancla cae al máximo del parquet (el vencimiento futuro).
+        assert "03-sep-2026" in cam_fixing_stacked(ds, tmp_path, {}).date_note
+
+
+@pytest.mark.unit
+class TestGridWidths:
+    """Reparto de anchos de la grilla: misma regla que ``_annotate_layout`` del
+    dashboard original (hero declarado + paridad automática)."""
+
+    def _cards(self, blocks):
+        from banks_rag.application.reporting.curated_report import (
+            CuratedBlock,
+            _assign_widths,
+            _group_cards,
+            _wide_block_ids,
+        )
+
+        spec = FamilyReportSpec(family="t", title="T", blocks=tuple(blocks), layout="grid")
+        cards = _group_cards([CuratedBlock(b, "chart", "<svg/>") for b in blocks])
+        _assign_widths(cards, _wide_block_ids(spec))
+        return cards
+
+    def _block(self, title, *, full_width=False, source_id=None, no_text=False):
+        return ReportBlock(section="S", title=title, chart="line", status=STATUS_MVP,
+                           source_id=source_id or title, full_width=full_width, no_text=no_text)
+
+    def test_full_width_block_is_wide(self):
+        cards = self._cards([self._block("Hero", full_width=True), self._block("A"), self._block("B")])
+        assert [c.wide for c in cards] == [True, False, False]
+
+    def test_odd_leftover_widens_the_last_one(self):
+        cards = self._cards([self._block("A"), self._block("B"), self._block("C")])
+        assert [c.wide for c in cards] == [False, False, True]
+
+    def test_even_leftover_widens_nothing(self):
+        cards = self._cards([self._block("A"), self._block("B")])
+        assert [c.wide for c in cards] == [False, False]
+
+    def test_hero_does_not_count_for_the_parity_rule(self):
+        """El hero sale del conteo: con hero + 3 automáticas, la última se
+        ensancha (3 es impar), igual que en el original."""
+        cards = self._cards([
+            self._block("Hero", full_width=True),
+            self._block("A"), self._block("B"), self._block("C"),
+        ])
+        assert [c.wide for c in cards] == [True, False, False, True]
+
+    def test_merged_companion_counts_as_one_card(self):
+        """Un gráfico + su tabla son UNA tarjeta: la paridad cuenta tarjetas, no
+        bloques (si contara bloques, 3 bloques = 2 tarjetas daría par y dejaría
+        una tarjeta huérfana)."""
+        cards = self._cards([
+            self._block("Gráfico", source_id="x"),
+            self._block("Tabla", source_id="x", no_text=True),
+            self._block("Otro", source_id="y"),
+        ])
+        assert len(cards) == 2
+        assert [c.wide for c in cards] == [False, False]
+
+
+@pytest.mark.unit
+class TestCambiarioAmWidths:
+    def test_layout_matches_the_original_dashboard(self):
+        """Las cuatro secciones con ``hero: True`` en el nav_groups del original
+        más la tabla de portada son las que abren a fila completa. Gamma Proxy y
+        su heatmap NO están acá: el heatmap se dibuja en SVG (auto-ajustable,
+        ``_render_heatmap``) y comparte fila con Gamma Proxy como en el
+        original, sin necesitar ancho completo."""
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        wide = {b.title for b in CAMBIARIOAM_SPEC.blocks if b.full_width}
+        assert wide == {
+            "Snapshot de Mercado · Drivers",  # tabla de portada (fuera de la grilla)
+            "Derivados",                      # hero de No Residentes
+            "Monedas LATAM",                  # hero de Monedas & Carry
+            "Cobre vs CLP",                   # hero de Cobre
+            "DXY vs CLP",                     # hero de Dólar · DXY
+        }
+
+    def test_drivers_section_puts_the_two_small_charts_side_by_side(self):
+        from banks_rag.application.reporting.curated_report import (
+            CuratedBlock,
+            _assign_widths,
+            _group_cards,
+            _wide_block_ids,
+        )
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        blocks = [b for b in CAMBIARIOAM_SPEC.blocks if b.section == "Drivers del día"]
+        cards = _group_cards([CuratedBlock(b, "chart", "<svg/>") for b in blocks])
+        _assign_widths(cards, _wide_block_ids(CAMBIARIOAM_SPEC))
+        layout = [(c.main.block.title, c.wide) for c in cards]
+        assert layout == [
+            ("Snapshot de Mercado · Drivers", True),
+            ("Variación Monedas en el día", False),
+            ("Monedas Intradía", False),
+            ("Evolución tipo de cambio", True),  # impar → cierra la fila
+        ]
+        # La tabla de la vela viaja DENTRO de la tarjeta del candlestick.
+        assert cards[-1].companion.block.title.endswith("resumen de la sesión")
+
+    def test_moving_averages_keep_the_full_history(self):
+        """El dashboard original dibuja las medias desde 2019; acotarlas rompe la
+        comparación con el informe que reemplaza."""
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        ma = next(b for b in CAMBIARIOAM_SPEC.blocks if b.title == "Medias Móviles")
+        assert "months" not in ma.params
+
+
+@pytest.mark.unit
+class TestDualAxisRightStyle:
+    """La serie del eje derecho: área tenue (default) o línea con su color."""
+
+    def _plot(self):
+        pts = [("2026-07-01", 1.0), ("2026-07-02", 2.0), ("2026-07-03", 1.5)]
+        rpts = [("2026-07-01", 900.0), ("2026-07-02", 950.0), ("2026-07-03", 930.0)]
+        return PlotData("t", "line", "timeseries", "USD/lb", [
+            PlotSeries(label="Cobre", points=pts),
+            PlotSeries(label="CLP", points=rpts),
+        ])
+
+    def _svg(self, **kw):
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        return render_plot_svg(self._plot(), chart="dual_axis", right_axis=["CLP"], **kw)
+
+    def test_default_keeps_the_area(self):
+        """Comportamiento histórico intacto: afp/nr dibujan el AUM como área."""
+        svg = self._svg()
+        assert "<polygon" in svg
+        assert 'fill="#c8ccd4"' in svg  # relleno gris del área
+
+    def test_line_style_draws_a_polyline_with_its_palette_color(self):
+        svg = self._svg(right_style="line")
+        assert "<polygon" not in svg          # ya no es área
+        assert svg.count("<polyline") == 2    # las dos series son líneas
+        assert 'fill="#c8ccd4"' not in svg    # sin relleno gris (el eje sí lo usa)
+        assert "CLP (eje der.)" in svg        # sigue marcada como eje derecho
+
+    def test_unknown_style_falls_back_to_area(self):
+        assert "<polygon" in self._svg(right_style="zigzag")
+
+
+@pytest.mark.unit
+class TestLeftUnitOverride:
+    def test_block_can_relabel_the_left_axis(self, tmp_path):
+        """En Inventarios el eje izquierdo lleva el PRECIO, no la unidad del
+        dataset: sin el override el eje diría 'Toneladas' sobre valores USD/lb."""
+        rows = [f"(DATE '2026-07-{i + 1:02d}', {100.0 + i}, {5.0 + i / 10})" for i in range(5)]
+        _write(tmp_path / "inv.parquet",
+               "SELECT * FROM (VALUES " + ", ".join(rows) + ') t(Fecha, "Inventarios", "Precio")')
+        entries = [_ds("inv.parquet", id="inv", unit="Toneladas")]
+        spec = FamilyReportSpec(
+            family="t", title="T",
+            blocks=(ReportBlock(
+                section="S", title="Inventarios", chart="dual_axis", status=STATUS_MVP,
+                source_id="inv", transform="cam_lines",
+                params={"right_axis": ["Inventarios"], "right_unit": "Toneladas",
+                        "left_unit": "USD/lb"},
+            ),),
+        )
+        report = build_curated_report(spec, entries=entries, parquet_dir=tmp_path)
+        assert report.blocks[0].plot.unit == "USD/lb"
+
+
+@pytest.mark.unit
+class TestCambiarioDualAxisStyles:
+    def test_only_volume_series_stay_as_area(self):
+        """El original dibuja línea contra línea salvo cuando la serie del eje
+        derecho es un VOLUMEN (monto transado, inventarios)."""
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        area = {
+            b.title for b in CAMBIARIOAM_SPEC.blocks
+            if b.chart == "dual_axis" and b.params.get("right_style", "area") == "area"
+        }
+        assert area == {"Medias Móviles", "Inventarios COMEX", "Inventarios Londres"}
+
+    def test_the_rest_are_line_against_line(self):
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        line = [b for b in CAMBIARIOAM_SPEC.blocks
+                if b.chart == "dual_axis" and b.params.get("right_style") == "line"]
+        assert len(line) == 10
+        for b in line:
+            assert b.params.get("right_axis"), b.title
+
+
+@pytest.mark.unit
+class TestWideChartCanvas:
+    """El viewBox de un bloque ancho es el DOBLE, no el mismo estirado por CSS —
+    si no, el navegador escala todo (ejes, leyenda, grosor) y se ve con zoom."""
+
+    def _spec(self, *, wide_title: str) -> FamilyReportSpec:
+        # Dos bloques NORMALES además del ancho (par): así "B" no se ensancha
+        # también por la regla de paridad automática y el test aísla el efecto
+        # de ``full_width``.
+        blocks = (
+            ReportBlock(section="S", title=wide_title, chart="line", status=STATUS_MVP,
+                       source_id="a", transform="filter_fund", full_width=True),
+            ReportBlock(section="S", title="B", chart="line", status=STATUS_MVP,
+                       source_id="a", transform="filter_fund"),
+            ReportBlock(section="S", title="C", chart="line", status=STATUS_MVP,
+                       source_id="a", transform="filter_fund"),
+        )
+        return FamilyReportSpec(family="t", title="T", blocks=blocks, layout="grid")
+
+    def test_wide_block_gets_the_double_viewbox(self, tmp_path):
+        import re
+
+        _categorical_parquet(tmp_path / "dur.parquet")
+        entries = [_ds("dur.parquet", id="a")]
+        report = build_curated_report(self._spec(wide_title="Ancho"), entries=entries, parquet_dir=tmp_path)
+        by = {b.block.title: b for b in report.blocks}
+
+        m_wide = re.search(r'viewBox="0 0 ([\d.]+)', by["Ancho"].body_html)
+        m_normal = re.search(r'viewBox="0 0 ([\d.]+)', by["B"].body_html)
+        assert float(m_wide.group(1)) == float(m_normal.group(1)) * 2
+
+    def test_html_render_stays_consistent_with_the_chosen_width(self, tmp_path):
+        """La tarjeta que la grilla ensancha con CSS es la MISMA que recibió el
+        viewBox ancho — no pueden desincronizarse (misma fuente: _wide_block_ids)."""
+        _categorical_parquet(tmp_path / "dur.parquet")
+        entries = [_ds("dur.parquet", id="a")]
+        report = build_curated_report(self._spec(wide_title="Ancho"), entries=entries, parquet_dir=tmp_path)
+        html = render_curated_html(report)
+        # La tarjeta "card-wide" es la que contiene el SVG de 1520 (2x760).
+        idx_wide_card = html.index('class="card card-wide"')
+        idx_next_card = html.index('<div class="card"', idx_wide_card)
+        segment = html[idx_wide_card:idx_next_card]
+        assert 'viewBox="0 0 1520' in segment
+        assert 'viewBox="0 0 760' not in segment
+
+
+@pytest.mark.unit
+class TestCamLinesAlignFrom:
+    def test_clips_all_series_to_the_latest_start(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_lines
+
+        rows = [f"(DATE '2019-07-{i + 1:02d}', {900.0 + i}, NULL)" for i in range(5)]
+        rows += [f"(DATE '2022-01-{i + 1:02d}', {900.0 + i}, {5.0 + i})" for i in range(5)]
+        _write(tmp_path / "al.parquet",
+               "SELECT * FROM (VALUES " + ", ".join(rows) + ') t(Fecha, "CLP", "NR")')
+        ds = _ds("al.parquet", id="cam_pos_no_residentes", unit="CLP/USD")
+
+        plot = cam_lines(ds, tmp_path, {"align_from": ["NR"]})
+        clp_isos = [iso for iso, _v in next(s for s in plot.series if s.label == "CLP").points]
+        nr_isos = [iso for iso, _v in next(s for s in plot.series if s.label == "NR").points]
+        assert min(clp_isos) == "2022-01-01"  # recortado a donde arranca NR
+        assert min(nr_isos) == "2022-01-01"
+
+    def test_without_align_from_keeps_full_history(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import cam_lines
+
+        rows = [f"(DATE '2019-07-{i + 1:02d}', {900.0 + i}, NULL)" for i in range(5)]
+        rows += [f"(DATE '2022-01-{i + 1:02d}', {900.0 + i}, {5.0 + i})" for i in range(5)]
+        _write(tmp_path / "al2.parquet",
+               "SELECT * FROM (VALUES " + ", ".join(rows) + ') t(Fecha, "CLP", "NR")')
+        ds = _ds("al2.parquet", id="cam_pos_no_residentes", unit="CLP/USD")
+
+        plot = cam_lines(ds, tmp_path, {})
+        clp_isos = [iso for iso, _v in next(s for s in plot.series if s.label == "CLP").points]
+        assert min(clp_isos) == "2019-07-01"  # sin recorte: historia completa
+
+
+@pytest.mark.unit
+class TestCambiarioDerivadosAlignment:
+    def test_spec_aligns_derivados_from_the_nr_series(self):
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        b = next(x for x in CAMBIARIOAM_SPEC.blocks if x.title == "Derivados")
+        assert b.params.get("align_from") == ["CLPBODM Index"]
+
+    def test_otros_section_has_six_paired_cards(self):
+        """6 bloques (par): se acomodan de a dos por fila, ninguno se ensancha
+        por la regla de paridad — incluye Gamma Proxy + su heatmap, que ahora
+        comparten fila (el heatmap es SVG auto-ajustable, no tabla HTML fija)."""
+        from banks_rag.application.reporting.curated_report import _wide_block_ids
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        wide = _wide_block_ids(CAMBIARIOAM_SPEC)
+        otros = [b for b in CAMBIARIOAM_SPEC.blocks if b.section == "Otros"]
+        assert [b.title in wide for b in otros] == [False] * 6
+        assert otros[0].title == "Gamma Proxy"
+        assert otros[1].title == "Heatmap Gamma Proxy"
+
+
+@pytest.mark.unit
+class TestHeatmapSvg:
+    """``_render_heatmap``: mapa de calor en SVG (auto-ajustable, sin JS) —
+    reemplaza la vieja tabla HTML de celdas de ancho fijo. Convención de
+    ``PlotData``: una serie POR FILA, ``points = [(columna, valor)]``."""
+
+    def _plot(self, rows: dict[str, list[tuple[str, float]]], unit: str = "MM USD") -> PlotData:
+        return PlotData("t", "heatmap", "heatmap", unit,
+                        [PlotSeries(label=r, points=pts) for r, pts in rows.items()])
+
+    def test_renders_a_rect_per_cell_with_hover_data(self):
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        svg = render_plot_svg(self._plot({
+            "940": [("10-ago-2026", 42.5)], "920": [("12-ago-2026", 5.0)],
+        }), chart="heatmap_table")
+        assert svg.count("<rect") >= 2
+        assert 'data-k="940"' in svg and 'data-k="920"' in svg  # fila en el tooltip
+        assert 'data-s="10-ago-2026"' in svg                    # columna en el tooltip
+
+    def test_columns_sort_chronologically_not_by_appearance(self):
+        """Bug real: el parquet no viene ordenado por fecha, y cada fila trae
+        SUS fechas en su propio orden — sin ordenar, las columnas salían
+        mezcladas (25-ago antes que 10-ago)."""
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        svg = render_plot_svg(self._plot({
+            "940": [("25-ago-2026", 1.0), ("10-ago-2026", 2.0)],
+            "920": [("03-sep-2026", 3.0), ("12-ago-2026", 4.0)],
+        }), chart="heatmap_table")
+        order = [svg.index(f'text-anchor="start">{d}<') for d in
+                 ("10-ago-2026", "12-ago-2026", "25-ago-2026", "03-sep-2026")]
+        assert order == sorted(order)
+
+    def test_non_date_columns_keep_appearance_order(self):
+        """Columnas que NO parsean como fecha (p.ej. instrumentos): se dejan tal
+        cual, sin intentar ordenarlas ni reventar."""
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        svg = render_plot_svg(self._plot({
+            "940": [("Bono", 1.0), ("DAP", 2.0)],
+        }), chart="heatmap_table")
+        assert svg.index('>Bono<') < svg.index('>DAP<')
+
+    def test_legend_bar_spans_the_data_range(self):
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        svg = render_plot_svg(self._plot({
+            "940": [("10-ago-2026", 100.0)], "920": [("10-ago-2026", 0.0)],
+        }), chart="heatmap_table")
+        assert "100,0" in svg  # marca del máximo en la barra de escala
+        assert "0,00" in svg   # marca del mínimo
+
+    def test_missing_cells_draw_no_rect(self):
+        """Fila con menos columnas que otra: la celda faltante no dibuja nada
+        (fondo blanco), como un heatmap sobre datos dispersos. Se cuentan solo
+        las celdas de DATO (``class="tip-pt"``, la marca del hover), no las
+        franjas de la barra de escala — esas también son ``<rect>``."""
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        svg = render_plot_svg(self._plot({
+            "940": [("10-ago-2026", 1.0), ("12-ago-2026", 2.0)],
+            "920": [("10-ago-2026", 3.0)],  # sin dato para 12-ago
+        }), chart="heatmap_table")
+        assert svg.count('class="tip-pt"') == 3  # 940x10ago, 940x12ago, 920x10ago (no 920x12ago)
+
+    def test_shares_the_wide_viewbox_mechanism(self, tmp_path):
+        """El heatmap usa el MISMO ``render_plot_svg(width=...)`` que cualquier
+        otro gráfico: si el bloque pide ancho, sale con el viewBox ancho."""
+        import re
+
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        plot = self._plot({"940": [("10-ago-2026", 1.0)]})
+        wide = render_plot_svg(plot, chart="heatmap_table", width=1520)
+        normal = render_plot_svg(plot, chart="heatmap_table", width=760)
+        assert re.search(r'viewBox="0 0 1520', wide)
+        assert re.search(r'viewBox="0 0 760', normal)
+
+
+@pytest.mark.unit
+class TestCardSubgridAlignment:
+    """El gráfico de dos tarjetas en la misma fila arranca a la MISMA altura,
+    aunque una traiga nota/ventana de fechas y la otra no (CSS subgrid:
+    .card-head se empareja antes de que arranque .card-body)."""
+
+    def test_card_splits_into_head_and_body_rows(self):
+        from banks_rag.application.reporting.curated_report import CuratedReport
+
+        with_note = ReportBlock(section="S", title="Con nota", chart="line", status=STATUS_MVP,
+                                source_id="a", note="una nota")
+        without_note = ReportBlock(section="S", title="Sin nota", chart="line", status=STATUS_MVP,
+                                   source_id="b")
+        spec = FamilyReportSpec(family="t", title="T", blocks=(with_note, without_note), layout="grid")
+        cbs = [_curated_block_of(with_note), _curated_block_of(without_note)]
+        report = CuratedReport(spec=spec, generated_at="now", blocks=cbs)
+        html = render_curated_html(report)
+
+        assert html.count('<div class="card-head">') == 2
+        assert html.count('<div class="card-body">') == 2
+        # La nota vive en card-head, no en card-body.
+        assert '<div class="card-head"><div class="block-title">Con nota</div>' in html
+        assert 'block-note">una nota</div>' in html.split('<div class="card-head">')[1]
+
+    def test_head_contains_the_variable_height_content(self):
+        """Título, unidad, nota y ventana de fechas van en card-head; el gráfico
+        (y el aviso de preliminar) van en card-body — es la separación que
+        permite al subgrid emparejar las alturas."""
+        from banks_rag.application.reporting.curated_report import (
+            CuratedBlock,
+            _card_head_body_html,
+        )
+
+        block = ReportBlock(section="S", title="T", chart="line", status=STATUS_MVP,
+                            source_id="a", unit="CLP/USD", note="nota")
+        cb = CuratedBlock(block, "chart", "<svg-x/>", date_note="ventana", preliminary=True)
+        head, body = _card_head_body_html(cb)
+        head_html, body_html = "".join(head), "".join(body)
+        for marker in ("block-title", "block-unit", "block-note", "block-dates"):
+            assert marker in head_html, marker
+        assert "prelim-note" in body_html
+        assert "<svg-x/>" in body_html
+        assert "block-title" not in body_html and "block-dates" not in body_html
+
+    def test_stack_layout_output_is_unaffected(self, tmp_path):
+        """El layout ``stack`` (todas las familias salvo cambiarioam) sigue
+        concatenando encabezado + cuerpo en el MISMO ``.block``, sin dividir en
+        card-head/card-body (esa separación es solo para la grilla)."""
+        spec = _spec_for_build()
+        report = build_curated_report(spec, entries=[], parquet_dir=tmp_path)
+        html = render_curated_html(report)
+        assert '<div class="card-head">' not in html
+        assert '<div class="card-body">' not in html
+
+
+@pytest.mark.unit
+class TestPerSectionGrid:
+    """``FamilyReportSpec.grid_sections``: solo ALGUNAS secciones de un informe
+    por lo demás apilado usan la grilla de 2 columnas (caso real: "Allocation y
+    patrimonio" en afp), sin pasar el informe ENTERO a "grid"."""
+
+    def _spec(self, *, grid_sections=frozenset()):
+        blocks = (
+            ReportBlock(section="Grilla", title="G1", chart="line", status=STATUS_MVP, source_id="a"),
+            ReportBlock(section="Grilla", title="G2", chart="line", status=STATUS_MVP, source_id="b"),
+            ReportBlock(section="Apilada", title="S1", chart="line", status=STATUS_MVP, source_id="c"),
+            ReportBlock(section="Apilada", title="S2", chart="line", status=STATUS_MVP, source_id="d"),
+        )
+        return FamilyReportSpec(family="t", title="T", blocks=blocks, grid_sections=grid_sections)
+
+    def test_default_grid_sections_is_empty_and_changes_nothing(self):
+        """Ninguna familia existente declara esto: default vacío = comportamiento
+        histórico intacto."""
+        for spec in (FFMM_SPEC, NR_SPEC, FX_SPEC, DCV_SPEC):
+            assert spec.grid_sections == frozenset()
+
+    def test_only_the_named_section_becomes_grid(self):
+        from banks_rag.application.reporting.curated_report import CuratedReport
+
+        spec = self._spec(grid_sections=frozenset({"Grilla"}))
+        cbs = [_curated_block_of(b) for b in spec.blocks]
+        report = CuratedReport(spec=spec, generated_at="now", blocks=cbs)
+        html = render_curated_html(report)
+
+        assert html.count('<div class="cards-grid">') == 1  # solo "Grilla"
+        # "Apilada" sigue con bloques .block sueltos, no tarjetas.
+        assert html.count('<div class="block" data-block-status') == 2
+
+    def test_no_grid_sections_behaves_exactly_like_stack(self):
+        from banks_rag.application.reporting.curated_report import CuratedReport
+
+        spec = self._spec()  # grid_sections vacío, layout default "stack"
+        cbs = [_curated_block_of(b) for b in spec.blocks]
+        report = CuratedReport(spec=spec, generated_at="now", blocks=cbs)
+        html = render_curated_html(report)
+        assert '<div class="cards-grid">' not in html
+
+    def test_spec_wide_grid_still_covers_every_section_without_declaring_it(self):
+        """cambiarioam (``layout="grid"``) no necesita nombrar sus 8 secciones en
+        ``grid_sections``: la condición OR ya las cubre todas."""
+        from banks_rag.application.reporting.curated_report import _is_grid_section
+        from banks_rag.application.reporting.specs import CAMBIARIOAM_SPEC
+
+        assert CAMBIARIOAM_SPEC.grid_sections == frozenset()
+        for sec in CAMBIARIOAM_SPEC.sections():
+            assert _is_grid_section(CAMBIARIOAM_SPEC, sec)
+
+
+@pytest.mark.unit
+class TestAfpAllocationGrid:
+    def test_allocation_section_is_grid_the_rest_is_not(self):
+        from banks_rag.application.reporting.curated_report import _is_grid_section
+        from banks_rag.application.reporting.specs.afp_spec import AFP_SPEC
+
+        assert AFP_SPEC.layout == "stack"  # el informe sigue apilado por defecto
+        assert _is_grid_section(AFP_SPEC, "Allocation y patrimonio")
+        for sec in AFP_SPEC.sections():
+            if sec != "Allocation y patrimonio":
+                assert not _is_grid_section(AFP_SPEC, sec), sec

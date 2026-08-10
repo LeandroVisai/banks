@@ -745,6 +745,228 @@ def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
                     series, overlay=overlay, date_note=note)
     return None if plot.is_empty() else plot
 
+def wide_daily_diff_ytd(
+    dataset: ParquetDataset,
+    parquet_dir: Path,
+    params: dict,
+) -> PlotData | None:
+    """
+    Convierte columnas de niveles diarios en variaciones diarias y luego
+    acumula las variaciones desde el comienzo del último año disponible.
+
+    Parquet esperado:
+        Fecha
+        1 a 90 dias
+        91 a 360 dias
+        Entre 1 y 2Y
+        Mayor a 2Y
+        Neto
+
+    Para cada serie:
+        diferencia_diaria[t] = nivel[t] - nivel[t-1]
+        acumulado_ytd[t] = suma de las diferencias diarias desde la base
+
+    Esto equivale a:
+        acumulado_ytd[t] = nivel[t] - nivel_base
+    """
+    parquet_path = dataset.parquet_path(parquet_dir)
+
+    if not parquet_path.exists():
+        return None
+
+    requested_columns = list(
+        params.get("columns")
+        or [
+            "1 a 90 dias",
+            "91 a 360 dias",
+            "Entre 1 y 2Y",
+            "Mayor a 2Y",
+            "Neto",
+        ]
+    )
+
+    overlay_columns = tuple(params.get("overlay") or ["Neto"])
+
+    con = duckdb.connect()
+
+    try:
+        describe_rows = con.execute(
+            f"""
+            DESCRIBE
+            SELECT *
+            FROM read_parquet('{parquet_path.as_posix()}')
+            """
+        ).fetchall()
+
+        available_columns = {str(row[0]) for row in describe_rows}
+
+        if "Fecha" not in available_columns:
+            log.warning(
+                "Dataset %s no contiene la columna Fecha",
+                dataset.id,
+            )
+            return None
+
+        value_columns = [
+            column
+            for column in requested_columns
+            if column in available_columns
+        ]
+
+        missing_columns = [
+            column
+            for column in requested_columns
+            if column not in available_columns
+        ]
+
+        if missing_columns:
+            log.warning(
+                "Dataset %s no contiene estas columnas: %s",
+                dataset.id,
+                missing_columns,
+            )
+
+        if not value_columns:
+            log.warning(
+                "Dataset %s no tiene columnas numéricas graficables",
+                dataset.id,
+            )
+            return None
+
+        value_select = ", ".join(
+            f'TRY_CAST("{column}" AS DOUBLE) AS "{column}"'
+            for column in value_columns
+        )
+
+        query = f"""
+            SELECT
+                TRY_CAST("Fecha" AS DATE) AS fecha,
+                {value_select}
+            FROM read_parquet('{parquet_path.as_posix()}')
+            WHERE TRY_CAST("Fecha" AS DATE) IS NOT NULL
+            ORDER BY fecha
+        """
+
+        rows = con.execute(query).fetchall()
+
+    finally:
+        con.close()
+
+    if not rows:
+        log.warning(
+            "Dataset %s no contiene observaciones válidas",
+            dataset.id,
+        )
+        return None
+
+    # El YTD se calcula para el año de la última observación.
+    last_date = rows[-1][0]
+    target_year = last_date.year
+    year_start = date(target_year, 1, 1)
+
+    previous_rows = [
+        row
+        for row in rows
+        if row[0] < year_start
+    ]
+
+    ytd_rows = [
+        row
+        for row in rows
+        if year_start <= row[0] <= last_date
+    ]
+
+    if not ytd_rows:
+        log.warning(
+            "Dataset %s no contiene datos para el YTD de %s",
+            dataset.id,
+            target_year,
+        )
+        return None
+
+    # Idealmente se utiliza la última observación del año anterior.
+    # Si no existe, se utiliza la primera observación del año actual.
+    base_row = previous_rows[-1] if previous_rows else ytd_rows[0]
+
+    series: list[PlotSeries] = []
+
+    for column_index, column in enumerate(value_columns, start=1):
+        base_value = base_row[column_index]
+
+        if base_value is None:
+            first_valid_row = next(
+                (
+                    row
+                    for row in ytd_rows
+                    if row[column_index] is not None
+                ),
+                None,
+            )
+
+            if first_valid_row is None:
+                continue
+
+            base_value = first_valid_row[column_index]
+
+        base_value = float(base_value)
+        previous_value = base_value
+        accumulated_value = 0.0
+        points: list[tuple[str, float]] = []
+
+        for row in ytd_rows:
+            current_raw = row[column_index]
+
+            if current_raw is None:
+                continue
+
+            current_value = float(current_raw)
+
+            # Paso 1: diferencia diaria.
+            daily_difference = current_value - previous_value
+
+            # Paso 2: acumulación YTD.
+            accumulated_value += daily_difference
+
+            points.append(
+                (
+                    str(row[0]),
+                    accumulated_value,
+                )
+            )
+
+            previous_value = current_value
+
+        if points:
+            series.append(
+                PlotSeries(
+                    label=column,
+                    points=_downsample(points),
+                )
+            )
+
+    valid_overlays = tuple(
+        label
+        for label in overlay_columns
+        if any(series_item.label == label for series_item in series)
+    )
+
+    plot = PlotData(
+        dataset.id,
+        "stacked_area",
+        "timeseries",
+        dataset.unit,
+        series,
+        overlay=valid_overlays,
+        date_note=(
+            f"Variación diaria acumulada YTD "
+            f"desde el corte base {base_row[0]} "
+            f"hasta {last_date}"
+        ),
+    )
+
+    return None if plot.is_empty() else plot
+
+
 
 def wide_lines(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Multi-línea de un parquet 'ancho' (varias columnas de valor), seleccionando
@@ -1586,6 +1808,8 @@ _DCV_AGENTS = {
     "AFP": "FP y AFC",
     "FFMM": "FFMM",
     "CS": "CSV",
+    "Mandantes": "Mandantes",
+    "CB": "CB",
     "Otros": "Otros",
 }
 
@@ -1838,6 +2062,73 @@ def gbi_rendimiento_range(dataset: ParquetDataset, parquet_dir: Path, params: di
     return None if plot.is_empty() else plot
 
 
+def gbi_rendimiento_range_sin_base(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Rango histórico (mín/máx), promedio y valor "hoy" por categoría, sobre un
+    índice REBASADO a 100 al inicio de la ventana: ``100 * Valor / Valor_inicio``
+    (réplica de "Rendimiento monedas" del tablero GBI — un parquet LARGO con
+    fecha + categoría [p.ej. "País | Rating"] + nivel).
+
+    A diferencia de ``_accumulate(mode="rebase")`` (que resta el nivel base, para
+    VARIACIONES), acá se DIVIDE por el nivel base: el resultado es un índice
+    (100 = inicio de la ventana), no una variación absoluta.
+
+    params: ``category``/``value`` (si faltan, ``detect_roles``), ``order``
+    (orden/selección de categorías — el tablero las ordena por calidad
+    crediticia, no alfabético; se declara explícito, como el resto de bloques
+    NR), ``window`` (default ``ytd``).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        cat = params.get("category") or (roles.category_cols[0] if roles.category_cols else None)
+        val = params.get("value") or (roles.value_cols[0] if roles.value_cols else None)
+        if roles.date_col is None or not cat or not val:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, cat, val])
+    finally:
+        con.close()
+    by_cat = _aggregate_by_category(rows, roles.date_col, cat, val)
+    if not by_cat:
+        return None
+    last = max(iso for s in by_cat.values() for iso, _ in s)
+    start = _window_start(last, params.get("window", "ytd")) or min(iso for s in by_cat.values() for iso, _ in s)
+
+    order = params.get("order") or sorted(by_cat)
+    mins: dict[str, float] = {}
+    maxs: dict[str, float] = {}
+    means: dict[str, float] = {}
+    hoys: dict[str, float] = {}
+    for c in order:
+        pts = [(iso, v) for iso, v in by_cat.get(c, []) if iso >= start]
+        if not pts or pts[0][1] == 0:
+            continue
+        base = pts[0][1]
+        rebased = [v for _iso, v in pts]
+        mins[c] = min(rebased)
+        maxs[c] = max(rebased)
+        means[c] = sum(rebased) / len(rebased)
+        hoys[c] = rebased[-1]
+    cats = [c for c in order if c in hoys]
+    if not cats:
+        return None
+    series = [
+        PlotSeries("Mínimo", [(c, mins[c]) for c in cats]),
+        PlotSeries("Máximo", [(c, maxs[c]) for c in cats]),
+        PlotSeries("Promedio", [(c, means[c]) for c in cats]),
+        PlotSeries("Hoy", [(c, hoys[c]) for c in cats]),
+    ]
+    note = f"{_fmt_date(start)} · datos hasta {_fmt_date(last)}"
+    plot = PlotData(dataset.id, "bar", "range", dataset.unit or "", series, date_note=note)
+    return None if plot.is_empty() else plot
+
+
+
+
+
+
 def fx_tasas_scatter(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Retorno acumulado FX vs. tasa de mercado por país, snapshot al último dato:
     dispersión x=retorno FX (%), y=retorno tasas (%), un punto por país (réplica de
@@ -1906,7 +2197,7 @@ def fx_tasas_scatter(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
         elif col.startswith(rate_pre):
             r = _cum_return(col)
             if r is not None:
-                rate_ret[col[len(rate_pre):].lower()] = r
+                rate_ret[col[len(rate_pre):].lower()] = -r
 
     countries = sorted(set(fx_ret) & set(rate_ret))
     if not countries:
@@ -2323,6 +2614,929 @@ def fx_agent_delta_table(dataset: ParquetDataset, parquet_dir: Path, params: dic
     return HtmlTable(html=html, dataset_id=dataset.id)
 
 
+def allocation_wide_by_fund(
+    dataset: ParquetDataset,
+    parquet_dir: Path,
+    params: dict,
+) -> PlotData | None:
+    """
+    Allocation histórica de un fondo en un parquet ancho.
+
+    Estructura esperada:
+        Fecha, Fondo, RFN, RVN, RFI, RVI, OTROS, AUM
+
+    Filtra Fondo y crea una serie temporal por cada clase de activo.
+    Opcionalmente incluye AUM para graficarlo en el eje derecho.
+    """
+    parquet_path = dataset.parquet_path(parquet_dir)
+    if not parquet_path.exists():
+        return None
+
+    fund = str(params.get("fund") or "").strip()
+    columns = list(
+        params.get("columns")
+        or ["RFN", "RVN", "RFI", "RVI", "Otros"]
+    )
+
+    if params.get("include_aum", True) and "AUM" not in columns:
+        columns.append("AUM")
+
+    con = duckdb.connect()
+
+    try:
+        available_columns = {
+            row[0]
+            for row in con.execute(
+                f"""
+                DESCRIBE
+                SELECT *
+                FROM read_parquet('{parquet_path.as_posix()}')
+                """
+            ).fetchall()
+        }
+
+        required = {"Fecha", "Fondo"}
+        missing_required = required - available_columns
+
+        if missing_required:
+            log.warning(
+                "Dataset %s no contiene las columnas requeridas: %s",
+                dataset.id,
+                sorted(missing_required),
+            )
+            return None
+
+        value_columns = [
+            column
+            for column in columns
+            if column in available_columns
+        ]
+
+        if not value_columns:
+            log.warning(
+                "Dataset %s no tiene columnas de allocation disponibles",
+                dataset.id,
+            )
+            return None
+
+        quoted_values = ", ".join(
+            f'TRY_CAST("{column}" AS DOUBLE) AS "{column}"'
+            for column in value_columns
+        )
+
+
+        conditions = ['TRY_CAST("Fecha" AS DATE) IS NOT NULL']
+        #where_clause = ""
+        query_params: list[str] = []
+
+        if fund:
+            conditions.append('TRIM(CAST("Fondo" AS VARCHAR)) = ?')
+            query_params.append(fund)
+
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+        query = f"""
+            SELECT
+                TRY_CAST("Fecha" AS DATE) AS fecha,
+                {quoted_values}
+            FROM read_parquet('{parquet_path.as_posix()}')
+            {where_clause}
+            ORDER BY fecha
+        """
+
+        rows = con.execute(query, query_params).fetchall()
+
+    finally:
+        con.close()
+
+    if not rows:
+        log.warning(
+            "Dataset %s no tiene datos para Fondo=%s",
+            dataset.id,
+            fund,
+        )
+        return None
+
+    series: list[PlotSeries] = []
+
+    for column_index, column in enumerate(value_columns, start=1):
+        points = [
+            (str(row[0]), float(row[column_index]))
+            for row in rows
+            if row[column_index] is not None
+        ]
+
+        if points:
+            series.append(
+                PlotSeries(
+                    label=column,
+                    points=_downsample(points),
+                )
+            )
+
+    plot = PlotData(
+        dataset.id,
+        "dual_axis" if "AUM" in value_columns else "line",
+        "timeseries",
+        dataset.unit,
+        series,
+    )
+
+    return None if plot.is_empty() else plot
+
+
+
+# ── Informe Cambiario AM (familia cambiarioam) ───────────────────────────────
+#
+# El informe original dibujaba con Plotly y calculaba sus derivados (bandas de
+# Bollinger, percentiles S/R, base 100, spreads) en el mismo script que leía el
+# Excel. Acá se separan: el parquet guarda el dato CRUDO por columna y estas
+# transforms hacen el cálculo, para que el gráfico se recalcule solo cuando
+# llegue una sesión nueva sin volver a tocar el origen.
+#
+# Todas leen parquets ANCHOS (Fecha + una columna por serie) generados por
+# ``scripts/build_cambiario_parquets.py``.
+
+# Percentiles que el informe usa como soportes y resistencias, y el color/estilo
+# con que los dibuja el original. El orden importa: es el de la leyenda.
+_SR_PERCENTILES = (10, 25, 50, 75, 90, 100)
+
+
+def _fmt_num(value: float) -> str:
+    """Formato numérico es-CL, el MISMO del renderer. Se delega en vez de
+    reimplementarlo para que las tablas y los ejes no muestren dos formatos
+    distintos del mismo número (import diferido: ``svg_chart`` importa de
+    ``parquet_facts``, no de acá, pero el diferido evita cualquier ciclo futuro)."""
+    from .svg_chart import _fmt_num as fmt
+
+    return fmt(value)
+
+
+def _cam_zero_base(params: dict) -> bool:
+    """¿El eje Y de este bloque debe incluir el 0?
+
+    En el informe cambiario NO por defecto: son precios, índices y tasas que
+    nunca se acercan a cero (el CLP en 930, un base 100, un RSI entre 30 y 70) y
+    anclarlos en 0 aplasta la serie contra el borde. El spec puede pedir
+    ``zero_base: True`` en un bloque donde el cero sí sea la referencia."""
+    return bool(params.get("zero_base", False))
+
+
+def _cam_wide_rows(
+    dataset: ParquetDataset, parquet_dir: Path, *, keep_time: bool = False,
+) -> tuple[str, list[str], list[dict]] | None:
+    """``(date_col, value_cols, rows)`` de un parquet ancho del informe cambiario.
+
+    ``keep_time=True`` conserva la HORA de la marca temporal (gráficos intradía);
+    por defecto la fecha se castea a DATE como en el resto del informe."""
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None or not roles.value_cols:
+            return None
+        if not keep_time:
+            rows = _read_series_rows(
+                con, path, date_col=roles.date_col,
+                columns=[roles.date_col, *roles.value_cols],
+            )
+        else:
+            quoted = ", ".join(f'"{c}"' for c in roles.value_cols)
+            raw = con.execute(
+                f'SELECT strftime("{roles.date_col}", \'%Y-%m-%dT%H:%M\') AS "{roles.date_col}", '
+                f'{quoted} FROM read_parquet(\'{path.as_posix()}\') '
+                f'WHERE "{roles.date_col}" IS NOT NULL ORDER BY 1'
+            ).fetchall()
+            names = [roles.date_col, *roles.value_cols]
+            rows = [dict(zip(names, r, strict=True)) for r in raw]
+        return roles.date_col, list(roles.value_cols), rows
+    finally:
+        con.close()
+
+
+def _cam_points(rows: list[dict], date_col: str, value_col: str) -> list[tuple[str, float]]:
+    from banks_rag.infrastructure.sql import series_analytics as sa
+
+    return sa.clean_series(rows, date_col, value_col)
+
+
+def _cam_last_months(points: list[tuple[str, float]], months: int) -> list[tuple[str, float]]:
+    """Últimos ``months`` meses de la serie. Los percentiles S/R y la base 100 se
+    calculan sobre el régimen RECIENTE, no sobre toda la historia: el original
+    filtra a 12 meses (``_last_year``) justo por eso."""
+    if not points or months <= 0:
+        return points
+    last = date.fromisoformat(points[-1][0][:10])
+    year, month = last.year, last.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+    day = min(last.day, 28)
+    start = date(year, month, day).isoformat()
+    return [p for p in points if p[0][:10] >= start]
+
+
+def _cam_flat(points: list[tuple[str, float]], level: float) -> list[tuple[str, float]]:
+    """Línea horizontal al nivel ``level`` sobre el mismo dominio X de la serie.
+    Es como el renderer dibuja un umbral (percentil, 70/30 del RSI) sin agregar
+    una primitiva nueva: una serie de dos puntos, extremo a extremo."""
+    if not points:
+        return []
+    return [(points[0][0], level), (points[-1][0], level)]
+
+
+def _cam_percentile(sorted_values: list[float], pct: float) -> float:
+    """Percentil por interpolación lineal, igual criterio que ``numpy.percentile``
+    (el original usa numpy; acá no se importa numpy solo para esto)."""
+    if not sorted_values:
+        return 0.0
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    pos = (len(sorted_values) - 1) * pct / 100.0
+    lo = int(pos)
+    hi = min(lo + 1, len(sorted_values) - 1)
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (pos - lo)
+
+
+def cam_lines(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Multi-línea de un parquet ancho del informe cambiario.
+
+    Igual que ``wide_lines`` pero sin el tope de 6 series (los paneles de monedas
+    llevan hasta 10) y con ``months`` para recortar la ventana visible, que es
+    como el original acota los gráficos de puntas forward y tasas implícitas al
+    último año. params: ``include``/``exclude``/``months``/``keep_time``,
+    ``align_from`` (ver abajo)."""
+    read = _cam_wide_rows(dataset, parquet_dir, keep_time=bool(params.get("keep_time")))
+    if read is None:
+        return None
+    date_col, value_cols, rows = read
+    exclude = set(params.get("exclude") or [])
+    wanted = [c for c in (params.get("include") or value_cols) if c in value_cols and c not in exclude]
+    months = int(params.get("months") or 0)
+
+    raw: dict[str, list[tuple[str, float]]] = {}
+    for col in wanted[:10]:
+        pts = _cam_last_months(_cam_points(rows, date_col, col), months)
+        if pts:
+            raw[col] = pts
+    if not raw:
+        return None
+
+    # ``align_from``: recorta TODAS las series al inicio de la MÁS TARDÍA entre
+    # las nombradas. Sin esto, dos series con historia de distinto largo (el CLP
+    # desde 2019, la posición de no residentes recién desde 2022) comparten eje
+    # X pero la más corta deja un tramo vacío al principio mientras la más larga
+    # sigue de fondo — el gráfico "compara" un período donde en realidad solo hay
+    # una serie. El recorte es sobre el PLOT, no sobre el parquet: cada serie
+    # conserva su historia completa en el dato, solo se dibuja desde que las dos
+    # coinciden.
+    align_from = [c for c in (params.get("align_from") or []) if c in raw]
+    if align_from:
+        start = max(raw[c][0][0] for c in align_from)
+        raw = {c: [p for p in pts if p[0] >= start] for c, pts in raw.items()}
+        raw = {c: pts for c, pts in raw.items() if pts}
+
+    series = [PlotSeries(label=c, points=_downsample(pts)) for c, pts in raw.items()]
+    if not series:
+        return None
+    note = ""
+    if months:
+        isos = [iso for s in series for iso, _ in s.points]
+        note = f"Ventana: {_fmt_date(min(isos))} → {_fmt_date(max(isos))}"
+    plot = PlotData(dataset.id, chart_family(dataset.chart_type), "timeseries", dataset.unit,
+                    series, date_note=note, zero_base=_cam_zero_base(params))
+    return None if plot.is_empty() else plot
+
+
+# Color de resaltado por período de la media móvil — reutiliza acentos YA
+# presentes en la paleta institucional del renderer (``svg_chart._PALETTE``,
+# tabaco/rojo), no colores nuevos: MA50 marca el cruce dorado, MA200 el de la
+# muerte; el resto de las medias (10/20/100, lo que traiga el Excel) queda muda.
+_MA_HIGHLIGHT = {50: "#8a6d3b", 200: "#c8102e"}
+
+
+def _cam_ma_period(col: str) -> int | None:
+    """Extrae el período (días) del nombre de columna, mismo criterio que el
+    dashboard original: el primer token compuesto solo por dígitos."""
+    for token in col.split():
+        if token.isdigit():
+            return int(token)
+    return None
+
+
+def cam_moving_averages(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Cierre + sus medias móviles, con MA50/MA200 resaltadas (cruce dorado/de la
+    muerte) y el resto en gris tenue de solo contexto — igual que el original.
+
+    Sin esto (``cam_lines`` genérica) un gráfico con 5-6 medias móviles del mismo
+    grosor y color cíclico no deja ver cuál es la que técnicamente importa.
+    ``ma_cols`` se detectan por nombre (contienen "media m[o/ó]vil", tolerante a
+    mojibake) en vez de venir fijas en el spec: el Excel real las trae con el
+    nombre que tenga esa columna en el servidor, y el período se lee del propio
+    nombre (``_cam_ma_period``), no de una lista hardcodeada.
+    params: ``base`` (columna del cierre, default "CLP Cierre"), ``right``
+    (columna del eje derecho, p.ej. el monto transado), ``months``."""
+    read = _cam_wide_rows(dataset, parquet_dir)
+    if read is None:
+        return None
+    date_col, value_cols, rows = read
+    base_col = params.get("base") or "CLP Cierre"
+    right_col = params.get("right")
+    ma_cols = [
+        c for c in value_cols if c not in (base_col, right_col)
+        and re.search(r"media\s*m[oó]vil", c, re.IGNORECASE)
+    ]
+    if base_col not in value_cols or not ma_cols:
+        return None
+    ma_cols.sort(key=lambda c: _cam_ma_period(c) if _cam_ma_period(c) is not None else 999)
+    months = int(params.get("months") or 0)
+
+    series = [PlotSeries(
+        label=base_col, points=_downsample(_cam_last_months(_cam_points(rows, date_col, base_col), months)),
+    )]
+    emphasis: dict[str, str] = {}
+    muted: list[str] = []
+    for col in ma_cols:
+        pts = _cam_last_months(_cam_points(rows, date_col, col), months)
+        if not pts:
+            continue
+        series.append(PlotSeries(label=col, points=_downsample(pts)))
+        period = _cam_ma_period(col)
+        if period in _MA_HIGHLIGHT:
+            emphasis[col] = _MA_HIGHLIGHT[period]
+        else:
+            muted.append(col)
+    if right_col and right_col in value_cols:
+        pts = _cam_last_months(_cam_points(rows, date_col, right_col), months)
+        if pts:
+            series.append(PlotSeries(label=right_col, points=_downsample(pts)))
+
+    plot = PlotData(dataset.id, "line", "timeseries", dataset.unit, series,
+                    emphasis=emphasis, muted=tuple(muted), zero_base=_cam_zero_base(params))
+    return None if plot.is_empty() else plot
+
+
+def cam_candlestick(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Vela OHLC del USD/CLP sobre la ventana visible (``months``, 3 en el original).
+
+    Devuelve las cuatro series con los labels que ``_render_candlestick`` espera;
+    el monto transado del parquet se deja fuera (vive en su propio gráfico)."""
+    read = _cam_wide_rows(dataset, parquet_dir)
+    if read is None:
+        return None
+    date_col, value_cols, rows = read
+    months = int(params.get("months") or 3)
+    wanted = ["Apertura", "Máximo", "Mínimo", "Cierre"]
+    if not all(c in value_cols for c in wanted):
+        return None
+
+    series: list[PlotSeries] = []
+    for col in wanted:
+        pts = _cam_last_months(_cam_points(rows, date_col, col), months)
+        if pts:
+            series.append(PlotSeries(label=col, points=pts))
+    if len(series) < 4:
+        return None
+    isos = [iso for s in series for iso, _ in s.points]
+    plot = PlotData(
+        dataset.id, "line", "timeseries", dataset.unit, series,
+        date_note=f"Últimos {months} meses: {_fmt_date(min(isos))} → {_fmt_date(max(isos))}",
+        zero_base=_cam_zero_base(params),
+    )
+    return None if plot.is_empty() else plot
+
+
+def cam_candle_table(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
+    """Tabla que acompaña a la vela: máximo y mínimo de la última sesión, más el
+    soporte y la resistencia (P25 y P75 del cierre sobre la MISMA ventana de tres
+    meses que dibuja el gráfico, para que tabla y vela no se contradigan)."""
+    from .svg_chart import render_kv_table_html
+
+    read = _cam_wide_rows(dataset, parquet_dir)
+    if read is None:
+        return None
+    date_col, _value_cols, rows = read
+    months = int(params.get("months") or 3)
+    cierres = _cam_last_months(_cam_points(rows, date_col, "Cierre"), months)
+    if not cierres:
+        return None
+    ordered = sorted(v for _d, v in cierres)
+    soporte = _cam_percentile(ordered, 25)
+    resistencia = _cam_percentile(ordered, 75)
+
+    maximos = dict(_cam_points(rows, date_col, "Máximo"))
+    minimos = dict(_cam_points(rows, date_col, "Mínimo"))
+    last = next((d for d, _v in reversed(cierres) if d in maximos and d in minimos), None)
+    if last is None:
+        return None
+    html = render_kv_table_html(
+        ["Indicador", "Valor"],
+        [
+            ["Máximo del día", _fmt_num(maximos[last])],
+            ["Mínimo del día", _fmt_num(minimos[last])],
+            ["Soporte", _fmt_num(soporte)],
+            ["Resistencia", _fmt_num(resistencia)],
+        ],
+        caption=f"{dataset.unit} · sesión {_fmt_date(last)} · S/R = P25 y P75 de {months} meses",
+    )
+    return HtmlTable(html=html, dataset_id=dataset.id)
+
+
+def cam_bollinger(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Bandas de Bollinger: media móvil de ``period`` días ± ``mult`` desviaciones
+    estándar, sobre la primera columna de valor del parquet."""
+    read = _cam_wide_rows(dataset, parquet_dir)
+    if read is None:
+        return None
+    date_col, value_cols, rows = read
+    col = params.get("value") or value_cols[0]
+    period = int(params.get("period") or 20)
+    mult = float(params.get("mult") or 2.0)
+    months = int(params.get("months") or 0)
+    pts = _cam_points(rows, date_col, col)
+    if len(pts) < period:
+        return None
+
+    ma: list[tuple[str, float]] = []
+    upper: list[tuple[str, float]] = []
+    lower: list[tuple[str, float]] = []
+    for i in range(period - 1, len(pts)):
+        window = [v for _d, v in pts[i - period + 1:i + 1]]
+        mean = sum(window) / period
+        var = sum((v - mean) ** 2 for v in window) / (period - 1)
+        sd = var ** 0.5
+        iso = pts[i][0]
+        ma.append((iso, mean))
+        upper.append((iso, mean + mult * sd))
+        lower.append((iso, mean - mult * sd))
+
+    cut = _cam_last_months(ma, months)
+    keep = {d for d, _v in cut} if months else None
+
+    def _clip(seq: list[tuple[str, float]]) -> list[tuple[str, float]]:
+        out = [p for p in seq if keep is None or p[0] in keep]
+        return _downsample(out)
+
+    series = [
+        PlotSeries(label=f"Banda superior ({period}d)", points=_clip(upper)),
+        PlotSeries(label=f"Media móvil {period}d", points=_clip(ma)),
+        PlotSeries(label=f"Banda inferior ({period}d)", points=_clip(lower)),
+        PlotSeries(label=col, points=_clip([p for p in pts if keep is None or p[0] in keep])),
+    ]
+    plot = PlotData(dataset.id, "line", "timeseries", dataset.unit, series,
+                    zero_base=_cam_zero_base(params))
+    return None if plot.is_empty() else plot
+
+
+def _cam_sr_levels(
+    dataset: ParquetDataset, parquet_dir: Path, params: dict,
+) -> tuple[str, list[tuple[str, float]], list[tuple[int, float]]] | None:
+    """``(label, serie recortada, [(percentil, nivel)])`` — cálculo COMPARTIDO por
+    el gráfico S/R y su tabla, para que ambos citen exactamente los mismos niveles."""
+    read = _cam_wide_rows(dataset, parquet_dir)
+    if read is None:
+        return None
+    date_col, value_cols, rows = read
+    col = params.get("value") or value_cols[0]
+    months = int(params.get("months") or 12)
+    pts = _cam_last_months(_cam_points(rows, date_col, col), months)
+    if not pts:
+        return None
+    ordered = sorted(v for _d, v in pts)
+    levels = [(p, _cam_percentile(ordered, p)) for p in _SR_PERCENTILES]
+    return col, pts, levels
+
+
+def cam_sr_percentiles(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Serie + sus percentiles P10…P100 como líneas horizontales (soportes y
+    resistencias del régimen de los últimos ``months`` meses, 12 por defecto)."""
+    computed = _cam_sr_levels(dataset, parquet_dir, params)
+    if computed is None:
+        return None
+    col, pts, levels = computed
+    series = [PlotSeries(label=col, points=_downsample(pts))]
+    series += [
+        PlotSeries(label=f"P{p} · {_fmt_num(v)}", points=_cam_flat(pts, v))
+        for p, v in levels
+    ]
+    plot = PlotData(
+        dataset.id, "line", "timeseries", dataset.unit, series,
+        date_note=f"Percentiles de {_fmt_date(pts[0][0])} → {_fmt_date(pts[-1][0])}",
+        zero_base=_cam_zero_base(params),
+    )
+    return None if plot.is_empty() else plot
+
+
+def cam_sr_table(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
+    """Tabla de los mismos percentiles del gráfico S/R (el original la pone justo
+    debajo, para no depender solo de la leyenda para leer el nivel exacto)."""
+    from .svg_chart import render_kv_table_html
+
+    computed = _cam_sr_levels(dataset, parquet_dir, params)
+    if computed is None:
+        return None
+    _col, pts, levels = computed
+    html = render_kv_table_html(
+        ["Percentil", "Nivel"],
+        [[f"P{p}", _fmt_num(v)] for p, v in levels],
+        caption=f"{dataset.unit} · {_fmt_date(pts[0][0])} → {_fmt_date(pts[-1][0])}",
+    )
+    return HtmlTable(html=html, dataset_id=dataset.id)
+
+
+def cam_rsi_bands(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """RSI con sus umbrales de sobrecompra y sobreventa como líneas horizontales.
+    params: ``levels`` (default 70 y 30), ``months``."""
+    read = _cam_wide_rows(dataset, parquet_dir)
+    if read is None:
+        return None
+    date_col, value_cols, rows = read
+    col = params.get("value") or value_cols[0]
+    months = int(params.get("months") or 0)
+    pts = _cam_last_months(_cam_points(rows, date_col, col), months)
+    if not pts:
+        return None
+    levels = params.get("levels") or [70, 30]
+    names = params.get("level_labels") or ["Sobrecompra", "Sobreventa"]
+    series = [PlotSeries(label=col, points=_downsample(pts))]
+    for i, level in enumerate(levels):
+        label = names[i] if i < len(names) else f"Nivel {level}"
+        series.append(PlotSeries(label=f"{label} · {level:g}", points=_cam_flat(pts, float(level))))
+    plot = PlotData(dataset.id, "line", "timeseries", dataset.unit, series,
+                    zero_base=_cam_zero_base(params))
+    return None if plot.is_empty() else plot
+
+
+def cam_base100(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Panel de monedas rebasado a 100 al inicio de la ventana visible.
+
+    El original lo resuelve con botones (1M/3M/6M/1A/YTD/Todo) que recalculan la
+    base; acá la ventana la fija el spec (``months``, 2 como en la vista por
+    defecto) y el rebase se hace sobre el primer dato de CADA serie dentro de
+    ella, así una moneda que empieza más tarde no arranca desalineada."""
+    read = _cam_wide_rows(dataset, parquet_dir)
+    if read is None:
+        return None
+    date_col, value_cols, rows = read
+    months = int(params.get("months") or 2)
+    wanted = [c for c in (params.get("include") or value_cols) if c in value_cols]
+
+    series: list[PlotSeries] = []
+    for col in wanted[:10]:
+        pts = _cam_last_months(_cam_points(rows, date_col, col), months)
+        base = next((v for _d, v in pts if v), None)
+        if not base:
+            continue
+        series.append(PlotSeries(
+            label=col, points=_downsample([(d, v / base * 100.0) for d, v in pts]),
+        ))
+    if not series:
+        return None
+    isos = [iso for s in series for iso, _ in s.points]
+    plot = PlotData(
+        dataset.id, "line", "timeseries", "Índice base 100", series,
+        date_note=f"Base 100 = {_fmt_date(min(isos))} · hasta {_fmt_date(max(isos))}",
+        zero_base=_cam_zero_base(params),
+    )
+    return None if plot.is_empty() else plot
+
+
+def cam_signed_bars(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Barras por categoría separadas en DOS series por el signo del valor.
+
+    Réplica del ``color_discrete_map`` verde/rojo del original sin tocar el
+    renderer: las variaciones positivas van en una serie y las negativas en otra,
+    así cada barra queda del color de su signo y la leyenda lo explica.
+    params: ``category``, ``value``, ``pos_label``/``neg_label``, ``ascending``."""
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        cat = params.get("category") or (roles.category_cols[0] if roles.category_cols else None)
+        val = params.get("value") or (roles.value_cols[0] if roles.value_cols else None)
+        if not cat or not val:
+            return None
+        rows = _read_rows(con, path, date_col=None, columns=[cat, val])
+    finally:
+        con.close()
+
+    pairs: list[tuple[str, float]] = []
+    for r in rows:
+        name = r.get(cat)
+        if name is None:
+            continue
+        try:
+            pairs.append((str(name), float(r.get(val))))
+        except (TypeError, ValueError):
+            continue
+    if not pairs:
+        return None
+    pairs.sort(key=lambda kv: kv[1], reverse=not params.get("ascending"))
+
+    pos_label = params.get("pos_label") or "Variación positiva"
+    neg_label = params.get("neg_label") or "Variación negativa"
+    cats = [c for c, _v in pairs]
+    agg = {
+        pos_label: {c: v for c, v in pairs if v >= 0},
+        neg_label: {c: v for c, v in pairs if v < 0},
+    }
+    return _grouped(dataset.id, dataset.unit, agg, cats, [pos_label, neg_label])
+
+
+def cam_histogram(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Histograma de un parquet SIN fecha cuyo eje X es NUMÉRICO (tramos de precio).
+
+    ``detect_roles`` clasifica el tramo como columna de valor (es un número), así
+    que ni ``snapshot_grouped`` ni ``latest_snapshot`` lo arman bien: acá el eje X
+    se toma explícito y se formatea como etiqueta de categoría."""
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        x = params.get("x") or (roles.value_cols[0] if roles.value_cols else None)
+        y = params.get("value") or next((c for c in roles.value_cols if c != x), None)
+        if not x or not y:
+            return None
+        rows = _read_rows(con, path, date_col=None, columns=[x, y])
+    finally:
+        con.close()
+
+    pairs: list[tuple[float, float]] = []
+    for r in rows:
+        try:
+            pairs.append((float(r.get(x)), float(r.get(y))))
+        except (TypeError, ValueError):
+            continue
+    if not pairs:
+        return None
+    pairs.sort()
+    label = params.get("series_label") or y
+    cats = [_fmt_num(k) for k, _v in pairs]
+    return _grouped(dataset.id, dataset.unit, {label: {_fmt_num(k): v for k, v in pairs}}, cats, [label])
+
+
+def cam_contract_curve(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Curva de futuros: precio por fecha de vencimiento, con el nombre del
+    contrato en el tooltip de cada punto."""
+    read = _cam_wide_rows(dataset, parquet_dir)
+    if read is None:
+        return None
+    date_col, value_cols, rows = read
+    col = params.get("value") or value_cols[0]
+    pts = _cam_points(rows, date_col, col)
+    if not pts:
+        return None
+    label = params.get("series_label") or dataset.name
+    plot = PlotData(
+        dataset.id, "line", "timeseries", dataset.unit,
+        [PlotSeries(label=label, points=pts)],
+        date_note=f"Vencimientos {_fmt_date(pts[0][0])} → {_fmt_date(pts[-1][0])}",
+        zero_base=_cam_zero_base(params),
+    )
+    return None if plot.is_empty() else plot
+
+
+def cam_fixing_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Fixing del ÚLTIMO día disponible: un grupo por banco informante, apilado
+    por sector de la contraparte, con el total del agente superpuesto.
+
+    Se ancla al último día CON DATO en vez de a "hoy" (como el original, que
+    filtraba por ``Timestamp.today()`` y quedaba vacío en feriados)."""
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None or len(roles.category_cols) < 2 or not roles.value_cols:
+            return None
+        agent = params.get("agent") or roles.category_cols[0]
+        sector = params.get("sector") or next((c for c in roles.category_cols if c != agent), None)
+        val = params.get("value") or roles.value_cols[0]
+        if not sector:
+            return None
+        rows = _read_series_rows(
+            con, path, date_col=roles.date_col,
+            columns=[roles.date_col, agent, sector, val],
+        )
+    finally:
+        con.close()
+
+    dates = [str(r[roles.date_col]) for r in rows if r.get(roles.date_col)]
+    if not dates:
+        return None
+    asof = params.get("weekly_asof") or max(dates)
+    asof = max((d for d in dates if d <= asof), default=max(dates))
+
+    agg: dict[str, dict[str, float]] = {}
+    agents: list[str] = []
+    sectors: list[str] = []
+    for r in rows:
+        if str(r.get(roles.date_col)) != asof:
+            continue
+        a, s = r.get(agent), r.get(sector)
+        if a is None or s is None:
+            continue
+        try:
+            v = float(r.get(val))
+        except (TypeError, ValueError):
+            continue
+        agg.setdefault(str(s), {})[str(a)] = agg.setdefault(str(s), {}).get(str(a), 0.0) + v
+        if str(a) not in agents:
+            agents.append(str(a))
+        if str(s) not in sectors:
+            sectors.append(str(s))
+    if not agg:
+        return None
+
+    # "Total" primero, como el eje X del original; el resto alfabético.
+    total_first = params.get("total_first", "Total")
+    agents.sort(key=lambda a: (a != total_first, a))
+    sectors.sort()
+    agg["Total agente"] = {a: sum(agg[s].get(a, 0.0) for s in sectors) for a in agents}
+    return _grouped(
+        dataset.id, dataset.unit, agg, agents, [*sectors, "Total agente"],
+        overlay=("Total agente",), date_note=f"Fixing del {_fmt_date(asof)}",
+    )
+
+
+def cam_spread_expanding(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Dos tasas con su spread (en puntos base) y el promedio histórico acumulado
+    del spread, para el gráfico de expectativas de TPM Chile vs Estados Unidos.
+
+    params: ``minuend``/``subtrahend`` (columnas), ``scale`` (100 = a puntos base),
+    ``spread_label``/``avg_label`` — que el spec pasa además como ``right_axis``."""
+    read = _cam_wide_rows(dataset, parquet_dir)
+    if read is None:
+        return None
+    date_col, value_cols, rows = read
+    a = params.get("minuend") or value_cols[0]
+    b = params.get("subtrahend") or (value_cols[1] if len(value_cols) > 1 else None)
+    if not b:
+        return None
+    scale = float(params.get("scale") or 100.0)
+    pa, pb = dict(_cam_points(rows, date_col, a)), dict(_cam_points(rows, date_col, b))
+    isos = sorted(set(pa) & set(pb))
+    if not isos:
+        return None
+
+    spread_label = params.get("spread_label") or "Spread (pb)"
+    avg_label = params.get("avg_label") or "Promedio histórico"
+    spread: list[tuple[str, float]] = []
+    avg: list[tuple[str, float]] = []
+    running = 0.0
+    for i, iso in enumerate(isos, start=1):
+        value = (pa[iso] - pb[iso]) * scale
+        running += value
+        spread.append((iso, value))
+        avg.append((iso, running / i))
+
+    series = [
+        PlotSeries(label=a, points=_downsample([(d, pa[d]) for d in isos])),
+        PlotSeries(label=b, points=_downsample([(d, pb[d]) for d in isos])),
+        PlotSeries(label=spread_label, points=_downsample(spread)),
+        PlotSeries(label=avg_label, points=_downsample(avg)),
+    ]
+    plot = PlotData(dataset.id, "line", "timeseries", dataset.unit, series,
+                    zero_base=_cam_zero_base(params))
+    return None if plot.is_empty() else plot
+
+
+def cam_market_table(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
+    """Snapshot de mercado de la portada: último nivel, variación del día y de la
+    semana de cada driver, y el signo de su impacto sobre el peso.
+
+    ``mode`` por indicador: ``pct`` (variación porcentual), ``bp`` (diferencia en
+    puntos base) o ``pts`` (diferencia en puntos). ``clp`` es el signo con que ese
+    driver mueve al peso (+1 lo aprecia cuando sube, -1 lo deprecia, 0 neutral);
+    el spec lo declara y acá solo se aplica."""
+    from .svg_chart import _CELL_NEG, _CELL_POS, render_kv_table_html
+
+    read = _cam_wide_rows(dataset, parquet_dir)
+    if read is None:
+        return None
+    date_col, value_cols, rows = read
+    indicators = params.get("indicators") or []
+    if not indicators:
+        return None
+
+    def _series_for(spec: dict) -> list[tuple[str, float]]:
+        """Serie del indicador: una columna, o la diferencia entre dos (SPC–OIS)."""
+        if spec.get("minus"):
+            pa = dict(_cam_points(rows, date_col, spec["column"]))
+            pb = dict(_cam_points(rows, date_col, spec["minus"]))
+            factor = float(spec.get("factor") or 1.0)
+            return [(d, (pa[d] - pb[d]) * factor) for d in sorted(set(pa) & set(pb))]
+        return _cam_points(rows, date_col, spec["column"])
+
+    table_rows: list[list[str]] = []
+    styles: list[str] = []
+    asof = ""
+    for spec in indicators:
+        if spec.get("column") not in value_cols:
+            continue
+        pts = _series_for(spec)
+        if not pts:
+            continue
+        asof = max(asof, pts[-1][0])
+        last = pts[-1][1]
+        dec = int(spec.get("decimals", 2))
+        mode = spec.get("mode", "pct")
+
+        def _delta(lag: int, _pts=pts, _last=last, _mode=mode) -> float | None:
+            if len(_pts) <= lag:
+                return None
+            prev = _pts[-1 - lag][1]
+            if _mode == "pct":
+                return None if not prev else (_last / prev - 1) * 100
+            return _last - prev
+
+        day, week = _delta(1), _delta(5)
+        suffix = {"pct": "%", "bp": " pb", "pts": " pts"}.get(mode, "")
+
+        def _fmt_delta(v: float | None, _dec=dec, _sfx=suffix) -> str:
+            return "—" if v is None else f"{v:+.{_dec}f}{_sfx}"
+
+        direction = int(spec.get("clp", 0))
+        if day is None or direction == 0:
+            estado = "Neutral" if day is not None else "—"
+            styles.append("")
+        elif day * direction > 0:
+            estado = "↑ Aprecia"
+            styles.append(_CELL_POS)
+        else:
+            estado = "↓ Deprecia"
+            styles.append(_CELL_NEG)
+        table_rows.append([
+            f"{spec.get('label') or spec['column']} · {spec.get('unit', '')}".strip(" ·"),
+            f"{last:,.{dec}f}".replace(",", "."),
+            _fmt_delta(day), _fmt_delta(week), estado,
+        ])
+
+    if not table_rows:
+        return None
+    html = render_kv_table_html(
+        ["Indicador", "Último", "Var. día", "Var. semana", "Impacto CLP"],
+        table_rows, row_styles=styles, max_width=620,
+        caption=f"Cierre del {_fmt_date(asof)} · el impacto compara la variación del día "
+                "con el signo con que ese driver mueve al peso",
+    )
+    return HtmlTable(html=html, dataset_id=dataset.id)
+
+
+def cam_gamma_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Mapa de calor de la gamma proxy: filas = strike, columnas = vencimiento.
+
+    Una ``PlotSeries`` POR STRIKE (fila), con ``points = [(vencimiento, gamma)]``
+    — mismo ``PlotData`` que cualquier otro gráfico, con ``kind="heatmap"`` para
+    que ``svg_chart._render_heatmap`` la lea como matriz en vez de curva. Al ser
+    SVG con el mismo ``viewBox``/``width="100%"`` que el resto de los gráficos,
+    se auto-ajusta al ancho de su tarjeta y puede compartir fila con "Gamma
+    Proxy" — una tabla HTML de celdas fijas no podía sin scroll horizontal."""
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None or len(roles.value_cols) < 2:
+            return None
+        row_col = params.get("row") or roles.value_cols[0]
+        val_col = params.get("value") or next((c for c in roles.value_cols if c != row_col), None)
+        if not val_col:
+            return None
+        rows = _read_series_rows(
+            con, path, date_col=roles.date_col,
+            columns=[roles.date_col, row_col, val_col],
+        )
+    finally:
+        con.close()
+
+    by_row: dict[float, list[tuple[str, float]]] = {}
+    for r in rows:
+        d, k, v = r.get(roles.date_col), r.get(row_col), r.get(val_col)
+        if d is None or k is None or v is None:
+            continue
+        try:
+            row_num, value = float(k), float(v)
+        except (TypeError, ValueError):
+            continue
+        by_row.setdefault(row_num, []).append((_fmt_date(str(d)), value))
+    if not by_row:
+        return None
+
+    # Strike descendente (el mapa se lee como un eje Y: el más alto arriba).
+    series = [PlotSeries(label=_fmt_num(n), points=by_row[n]) for n in sorted(by_row, reverse=True)]
+    plot = PlotData(dataset.id, "heatmap", "heatmap", dataset.unit, series)
+    return None if plot.is_empty() else plot
+
+
 # ── Registro: nombre → transform (None = declarada, pendiente de 2ª iteración) ─
 
 _REGISTRY: dict[str, Transform | None] = {
@@ -2369,7 +3583,28 @@ _REGISTRY: dict[str, Transform | None] = {
     "fx_agent_delta_table": fx_agent_delta_table,
     # Rango histórico + dispersión x/y (NR: comparables GBI).
     "gbi_rendimiento_range": gbi_rendimiento_range,
+    "gbi_rendimiento_range_sin_base": gbi_rendimiento_range_sin_base,
     "fx_tasas_scatter": fx_tasas_scatter,
+    "allocation_wide_by_fund":allocation_wide_by_fund,
+    "wide_daily_diff_ytd": wide_daily_diff_ytd,
+    # Informe Cambiario AM (familia cambiarioam): el parquet trae el dato crudo y
+    # la transform calcula lo derivado (Bollinger, percentiles S/R, base 100, spreads).
+    "cam_lines": cam_lines,
+    "cam_moving_averages": cam_moving_averages,
+    "cam_candlestick": cam_candlestick,
+    "cam_candle_table": cam_candle_table,
+    "cam_bollinger": cam_bollinger,
+    "cam_sr_percentiles": cam_sr_percentiles,
+    "cam_sr_table": cam_sr_table,
+    "cam_rsi_bands": cam_rsi_bands,
+    "cam_base100": cam_base100,
+    "cam_signed_bars": cam_signed_bars,
+    "cam_histogram": cam_histogram,
+    "cam_contract_curve": cam_contract_curve,
+    "cam_fixing_stacked": cam_fixing_stacked,
+    "cam_spread_expanding": cam_spread_expanding,
+    "cam_market_table": cam_market_table,
+    "cam_gamma_heatmap": cam_gamma_heatmap,
 }
 
 

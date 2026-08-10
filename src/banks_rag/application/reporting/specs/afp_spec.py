@@ -39,6 +39,103 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         params={"right_axis": ["AUM"], "right_unit": "US$ Mill."},
         note="*AUM en el eje derecho (US$ Mill.); allocation en el izquierdo (%)",
     ),
+
+    ReportBlock(
+            section=_S_ALLOC, title="Allocation activos",
+            unit="% del AUM", chart="dual_axis", status=STATUS_MVP,
+            source_id="allocation_categoria", transform="straight_series",
+            params={"right_axis": ["AUM"], "right_unit": "US$ Mill."},
+            note="*AUM en el eje derecho (US$ Mill.); allocation por activo en el izquierdo (%)",
+        ),
+
+    ReportBlock(
+        section=_S_ALLOC,
+        title="Allocation activos - Fondo A",
+        unit="% del AUM",
+        chart="line",
+        status=STATUS_MVP,
+        source_id="allocation_fondo_categoria",date_from= "2015-01-01",
+        transform="allocation_wide_by_fund",
+        params={
+            "fund": "A",
+            "columns": ["RFN", "RVN", "RFI", "RVI", "Otros"],
+            "include_aum": False},
+        note=(
+            "allocation por clase de activo en el eje izquierdo (%).*"
+            ),
+        ),
+
+
+    ReportBlock(
+                section=_S_ALLOC,
+                title="Allocation activos - Fondo B",
+                unit="% del AUM",
+                chart="line",
+                status=STATUS_MVP,
+                source_id="allocation_fondo_categoria",date_from= "2015-01-01",
+                transform="allocation_wide_by_fund",
+                params={
+                    "fund": "B",
+                    "columns": ["RFN", "RVN", "RFI", "RVI", "Otros"],
+                    "include_aum": False},
+                note=(
+                    "allocation por clase de activo en el eje izquierdo (%).*"
+                    ),
+                ),
+    ReportBlock(
+                    section=_S_ALLOC,
+                    title="Allocation activos - Fondo C",
+                    unit="% del AUM",
+                    chart="line",
+                    status=STATUS_MVP,
+                    source_id="allocation_fondo_categoria",date_from= "2015-01-01",
+                    transform="allocation_wide_by_fund",
+                    params={
+                        "fund": "C",
+                        "columns": ["RFN", "RVN", "RFI", "RVI", "Otros"],
+                        "include_aum": False},
+                    note=(
+                        "allocation por clase de activo en el eje izquierdo (%).*"
+                        ),
+                    ),
+
+    ReportBlock(
+                        section=_S_ALLOC,
+                        title="Allocation activos - Fondo D",
+                        unit="% del AUM",
+                        chart="line",
+                        status=STATUS_MVP,
+                        source_id="allocation_fondo_categoria",date_from= "2015-01-01",
+                        transform="allocation_wide_by_fund",
+                        params={
+                            "fund": "D",
+                            "columns": ["RFN", "RVN", "RFI", "RVI", "Otros"],
+                            "include_aum": False},
+                        note=(
+                            "allocation por clase de activo en el eje izquierdo (%).*"
+                            ),
+                        ),
+
+
+    ReportBlock(
+                            section=_S_ALLOC,
+                            title="Allocation activos - Fondo E",
+                            unit="% del AUM",
+                            chart="line",
+                            status=STATUS_MVP,
+                            source_id="allocation_fondo_categoria",date_from= "2015-01-01",
+                            transform="allocation_wide_by_fund",
+                            params={
+                                "fund": "E",
+                                "columns": ["RFN", "RVN", "RFI", "RVI", "Otros"],
+                                "include_aum": False},
+                            note=(
+                                "allocation por clase de activo en el eje izquierdo (%).*"
+                                ),
+                            ),
+
+
+
     ReportBlock(
         section=_S_ALLOC, title="Stock de fondos por tipo (A-E)",
         unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
@@ -48,10 +145,10 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     # flujo acumulado de la última semana y del último mes, lado a lado. Va ARRIBA del
     # gráfico diario para leer la variación semanal/mensual de un vistazo.
     ReportBlock(
-        section=_S_ALLOC, title="Traspaso de fondos entre multifondos (acumulado semanal y mensual)",
+        section=_S_ALLOC, title="Flujo de fondos (acumulado semanal y mensual)",
         unit="US$ Mill.", chart="grouped_bar", status=STATUS_MVP,
         source_id="movimientos_fondos", transform="window_accum_by_cat",
-        params={"category": "fondo", "value": "flujos_usd",
+        params={"category": "Fondo", "value": "Flujos_usd",
                 "order": ["A", "B", "C", "D", "E"],
                 "windows": [["Δ T-7", 7], ["Δ T-30", 30]]},
         note="*flujo acumulado por tipo de fondo: última semana vs. último mes",
@@ -60,10 +157,10 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     # fondo (mismos colores que el gráfico diario). El alto neto de cada columna es
     # el flujo neto de la ventana; muestra cómo quedaron los fondos entre sí.
     ReportBlock(
-        section=_S_ALLOC, title="Traspaso de fondos entre multifondos (neto apilado por fondo)",
+        section=_S_ALLOC, title="Flujo de fondos (neto apilado por fondo)",
         unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
         source_id="movimientos_fondos", transform="window_accum_stacked_by_cat",
-        params={"category": "fondo", "value": "flujos_usd",
+        params={"category": "Fondo", "value": "Flujos_usd",
                 "order": ["A", "B", "C", "D", "E"],
                 "windows": [["Δ T-7", 7], ["Δ T-30", 30]]},
         note="*composición del flujo neto por fondo: semanal vs. mensual",
@@ -72,10 +169,10 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     # Traspaso entre multifondos: barra apilada DIVERGENTE por día (flujos diarios
     # por fondo A-E), réplica de "Traspaso de fondos de FP" del tablero.
     ReportBlock(
-        section=_S_ALLOC, title="Traspaso de fondos entre multifondos (diario)",
+        section=_S_ALLOC, title="Flujo por fondos (diario)",
         unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
         source_id="movimientos_fondos", transform="window_stacked_by_cat",
-        params={"category": "fondo", "value": "flujos_usd",
+        params={"category": "Fondo", "value": "Flujos_usd",
                 "order": ["A", "B", "C", "D", "E"], "last_n": 14},
         note="*flujos diarios por tipo de fondo, últimas ~2 semanas",
         no_text=True,  # comentario único en el bloque de variación de arriba
@@ -122,8 +219,9 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         section=_S_FX, title="Flujo cambiario por AFP (spot + forward)",
         unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
         source_id="cambiario_afp", transform="window_pivot_grouped",
-        params={"group": "Sector_contraparte", "type_col": "Tipo", "value": "Monto",
-                "values": ["Spot", "Forward", "Neto"], "overlay": ["Neto"], "window_days": 7,
+        params={"group": "Sector_contraparte", "type_col": "Tipo",
+                "value": "Monto", "values": ["Spot","Forward","Neto"],
+                "overlay": ["Neto"], "window_days": 7,
                 "order": ["Habitat", "Provida", "Uno", "Cuprum", "Capital", "Modelo", "Planvital"]},
         note="*última semana; Neto = Spot + Forward como punto",
     ),
@@ -142,24 +240,83 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         section=_S_TASAS, title="MtM de swaps por tipo de fondo",
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
         source_id="mtm_afp", transform="category_series",
-        params={"category": "fondo", "value": "mtm",
+        params={"category": "Fondo", "value": "MtM",
                 "order": ["A", "B", "C", "D", "E"], "net": "auto"},  # + línea Neto = suma de fondos
     ),
     ReportBlock(
         section=_S_TASAS, title="DV01 proyectado en swap por moneda",
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
-        source_id="dv01_spc_afp", transform="filter_fund",
-        params={"funds": ["CLP", "US$"]},  # se excluye UF a pedido
+        source_id="dv01_spc_afp", transform="category_series",
+        # category EXPLÍCITA (no auto-detect): el parquet trae además "fondo"
+        # (A-E); al no seleccionarlo, category_series lo colapsa sumando por
+        # fecha+moneda solo — robusto a que "fondo" esté siempre presente.
+        params={"category": "moneda", "value": "dv01", "order": ["CLP", "USD"]},
+        # moneda real: CLP/UF/USD; se excluye UF a pedido (no entra en "order")
     ),
-    # ── Atribución de retorno ────────────────────────────────────────────────
+
+
     ReportBlock(
-        section=_S_ATTR, title="Atribución de retorno por clase de activos (por fondo)",
-        unit="%", chart="stacked_bar", status=STATUS_MVP,
-        source_id="attribution", transform="snapshot_stacked",  # scale 100 ahora en el catálogo
-        params={"x": "fondo", "series": "Clase", "value": "Valor",
-                "x_order": ["A", "B", "C", "D", "E"], "total_overlay": True},
-        note="*contribución al retorno por clase de activo; Total como punto",
+            section=_S_TASAS, title="Posición SPC en dólares",
+            unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
+            source_id="afp_posicion_spc_usd", transform="category_series",date_from= "2023-01-01",
+            params={"category":"Plazo","value":"mmusd",
+                    "order": ["10Y", "1Y", "2Y", "5Y"], "net": "auto"},
+            note="*acumulado desde ene.; Neto = spot + derivados",
+        ),
+
+    ReportBlock(
+                section=_S_TASAS, title="Posición SPC nominal con agentes locales",
+                unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
+                source_id="afp_posicion_spc", transform="category_series",date_from= "2022-01-01",
+                params={"category":"Plazo","value":"mmusd",
+                            "order": ["1 a 90 dias", "91 a 360 dias", "Entre 1 y 2Y", "Mayor a 2Y"], "net": "auto"},
+                note="*acumulado desde ene.; Neto = spot + derivados",
+                ),
+
+
+
+    ReportBlock(
+        section=_S_TASAS, title="Variación acumulada en SPC nominal con agentes locales",
+        unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
+        source_id="afp_variacion_spc", transform="wide_daily_diff_ytd",
+        params={
+            "columns": [
+                "1 a 90 dias",
+                "91 a 360 dias",
+                "Entre 1 y 2Y",
+                "Mayor a 2Y",
+                "Neto",
+            ],
+            "overlay": ["Neto"],
+        },
+        note=(
+            "Variación diaria acumulada YTD por tramo de plazo. "
+            "Neto se presenta como línea superpuesta."
+        ),
     ),
+    
+
+
+    #ReportBlock(
+    #        section=_S_TASAS, title="Variación posición SPC mensual",
+    #        unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
+    #        source_id="afp_variacion_spc", transform="wide_monthly_bars",
+    #        params={"include": ["1 a 90 dias", "91 a 360 dias","Entre 1 y 2Y", "Mayor a 2Y"],
+    #                "overlay": ["Neto"], "months": 12},
+    #        note="*suma mensual de la variación por tramo; Neto como punto",
+    #    ),
+
+
+
+    # ── Atribución de retorno ────────────────────────────────────────────────
+    #ReportBlock(
+    #    section=_S_ATTR, title="Atribución de retorno por clase de activos (por fondo)",
+    #    unit="%", chart="stacked_bar", status=STATUS_MVP,
+    #    source_id="attribution", transform="snapshot_stacked",  # scale 100 ahora en el catálogo
+    #    params={"x": "fondo", "series": "Clase", "value": "Valor",
+    #            "x_order": ["A", "B", "C", "D", "E"], "total_overlay": True},
+    #    note="*contribución al retorno por clase de activo; Total como punto",
+    #),
 )
 
 AFP_SPEC = FamilyReportSpec(
@@ -170,4 +327,9 @@ AFP_SPEC = FamilyReportSpec(
     # DCV al 10-06). Sin corte común cada gráfico se ancla al máximo de SU parquet,
     # evitando arrastrar todo a la fecha del parquet con menor fecha.
     share_weekly_cutoff=False,
+    # Solo "Allocation y patrimonio" en grilla de 2 columnas (gráfico junto a
+    # gráfico, como el informe cambiario): el resto del informe sigue apilado
+    # (``layout`` default "stack"). 11 bloques → 5 pares + el último a fila
+    # completa (impar), regla automática de ``_wide_block_ids``.
+    grid_sections=frozenset({_S_ALLOC}),
 )

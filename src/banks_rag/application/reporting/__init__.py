@@ -14,6 +14,8 @@ from .curated_report import (
     fill_synthesis_slot,
     fill_text_slots,
     render_curated_html,
+    section_slot_ids,
+    section_text_slots,
 )
 from .editable_html import make_editable_html, strip_editable_chrome
 from .html_render import render_parquet_report_html
@@ -60,6 +62,8 @@ __all__ = [
     "rasterize_inline_svgs",
     "render_curated_html",
     "render_parquet_report_html",
+    "section_slot_ids",
+    "section_text_slots",
     "select_datasets",
     "strip_editable_chrome",
     "svg_to_png",

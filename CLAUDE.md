@@ -44,6 +44,14 @@ python scripts/xlsx_to_parquet.py
 python scripts/refresh_catalog_dates.py
 python scripts/audit_parquets.py            # roles + mismatches catálogo↔parquet
 
+# Diccionario auto-generado (sql_catalog/diccionario_parquets_IA.yaml) → catálogo.
+# El pipeline lo reescribe cada vez que cambia un parquet en las bases: trae el
+# esquema REAL (renombres, columnas, enums, date_range) pero NO sabe nada de lo
+# nuestro (cam_*, value_scale/value_kind/facts, ids de-duplicados). NUNCA copiarlo
+# encima del catálogo: fusionar, que reinyecta la capa curada sola.
+python scripts/merge_parquet_catalog.py             # dry-run + reporte
+python scripts/merge_parquet_catalog.py --write -v  # actualiza parquet_catalog.yaml
+
 # Informe descriptivo de datasets parquet (SIN tools: Python calcula los hechos
 # del parquet real vía parquet_facts + series_analytics, y el LLM solo redacta 1
 # párrafo de movimientos relevantes por dataset; síntesis global; salidas en
@@ -54,11 +62,26 @@ python scripts/parquet_report.py --datasets flujos_ffmm,duracion_ffmm --windows 
 # Informe CURADO por familia (réplica de un correo real del BCCh; Python puro, sin
 # LLM). Cada familia escribe en SU carpeta: data/parquet_reports/curated/<familia>/
 python scripts/build_family_report.py                           # lista familias
-python scripts/build_family_report.py --family fx               # ffmm | afp | nr | fx | dcv
+python scripts/build_family_report.py --family fx               # ffmm | afp | nr | fx | dcv | cambiarioam
 python scripts/build_family_report.py --all
 # Para acotar el período de UN gráfico: date_from/date_to (ISO) en su ReportBlock
 # del spec. Recorta el PARQUET antes de la transform, así la "última fecha" del
 # gráfico, sus ventanas 7d/30d y su párrafo de texto respetan el recorte.
+# El texto editable va UNA vez por TÓPICO (debajo del banner de sección), NO bajo el
+# título de cada gráfico: slot <familia>:sec:<slug> (curated_report.section_slot_ids).
+# fill_report_texts.py concatena en ese slot los párrafos de todos los datasets de
+# la sección, en el orden del spec (curated_report.section_text_slots).
+
+# Informe Cambiario AM (familia cambiarioam): sus datos NO vienen de los parquets
+# del DW sino del Excel "Datos BI Informe Cambiario.xlsm" + 7 consultas al DW. Este
+# script los convierte en los 41 parquets que consume el spec (correr EN EL SERVIDOR,
+# donde viven el Excel y el módulo Get_Data). Después, refresh_catalog_dates.py.
+python scripts/build_cambiario_parquets.py --out data_pipeline/parquet
+python scripts/build_cambiario_parquets.py --emit-catalog   # entradas YAML, sin datos
+# Si el Excel/DW no están a mano pero alguien ya volcó las variables del script
+# original a .xlsx (df1.xlsx + clp_intra1..4.xlsx + Excel_cache2.xlsx, una hoja por
+# dataset), --from-cache los lee en vez del origen y produce los MISMOS 41 parquets:
+python scripts/build_cambiario_parquets.py --from-cache "<carpeta con los xlsx>" --out data_pipeline/parquet
 
 # Informe curado → correo .eml. El .eml ADJUNTA tu HTML final tal cual (SVG +
 # tooltips) y pone en el CUERPO una versión plana (SVG→PNG cid:, sin JS, CSS inline)
@@ -142,7 +165,9 @@ Noticias_scrapping/*.json  (paquete aislado jarvis_news)
 
 - **CrossEncoderReranker usa lazy import**: `from sentence_transformers import CrossEncoder` solo en `load()`.
 
-- **Catálogo de datasets en `sql_catalog/parquet_catalog.yaml`**: 144 datasets sobre parquets en `data_pipeline/parquet/`, con esquema completo (columnas, tipos, valores de enum, `date_range`) y **`chart_type` canónico** (del diccionario del tablero: `stacked_area`, `grouped_bar`, `market_monitor_table`, …). El LLM elige `dataset_id` + columnas/filtros vía `discover_query`/`execute_query`/analytics; **la SQL la arma siempre la tool** (`_parquet_query.build_fetch_sql`) — el LLM NUNCA escribe SQL. Algunos datasets del catálogo pueden no tener parquet local todavía (llegan en la próxima copia); las tools devuelven error controlado y los tests de integración los saltan.
+- **`parquet_catalog.yaml` = diccionario auto-generado + capa curada; se FUSIONA, no se pisa**: `sql_catalog/diccionario_parquets_IA.yaml` lo reescribe el pipeline cada vez que cambia un parquet en las bases y es la fuente de verdad del **esquema real** (renombres de dataset y de columna, tipos, enums, `date_range`). Lo que NO conoce es nuestra capa curada: los 41 datasets `cam_*` (los produce `build_cambiario_parquets.py`, no existen en el tablero), `value_scale`/`value_kind`/`facts`, los ids de-duplicados (el diccionario emite el MISMO id una vez por segmento — `posicion_spot_derivados` aparece 5 veces — y el loader indexa por id) y el `segment` en snake_case (a veces trae la etiqueta de sección: "Stocks", "Flujos por fondo"). Copiarlo encima del catálogo borra todo eso: usar **`python scripts/merge_parquet_catalog.py --write`**, que toma el diccionario como base, saca las `columns` del PARQUET REAL cuando está en disco y reinyecta el overlay solo (guards en `tests/unit/test_merge_parquet_catalog.py`). El diccionario crudo además **no parsea**: dumpea las `values` de las columnas payload (`_sparkline_json`/`_range_json`) con JSON sin escapar — el merger las descarta.
+
+- **Catálogo de datasets en `sql_catalog/parquet_catalog.yaml`**: 250 datasets sobre parquets en `data_pipeline/parquet/`, con esquema completo (columnas, tipos, valores de enum, `date_range`) y **`chart_type` canónico** (del diccionario del tablero: `stacked_area`, `grouped_bar`, `market_monitor_table`, …). El LLM elige `dataset_id` + columnas/filtros vía `discover_query`/`execute_query`/analytics; **la SQL la arma siempre la tool** (`_parquet_query.build_fetch_sql`) — el LLM NUNCA escribe SQL. Algunos datasets del catálogo pueden no tener parquet local todavía (llegan en la próxima copia); las tools devuelven error controlado y los tests de integración los saltan.
 
 - **`chart_type` del catálogo manda en los gráficos**: el mapping canónico → familia renderizable (`line`/`area`/`bar`/`grouped_bar`/`stacked_bar`/`point`/`pie`/`table`) vive SOLO en `domain/agent/chart_types.py` (`chart_family`, `vega_mark`) — no duplicarlo. `plot_series` usa el `chart_type` del dataset como default (el LLM solo puede forzar marcas simples); `execute_query`/analytics pasan `chart_hint=dataset.chart_type` a `state.add_series`, e `infer_chart_type` lo respeta cuando la forma del dato lo permite (categórico → bar; familias de barra con muchas observaciones degradan a línea). `/v1/catalog` y `/v1/query/{id}` exponen `chart_type` para que el frontend construya el gráfico consistente con el tablero. Tipos desconocidos degradan a `line` (guard en `tests/unit/test_catalog_chart_types.py`).
 
