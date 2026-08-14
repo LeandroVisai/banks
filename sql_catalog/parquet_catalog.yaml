@@ -2686,6 +2686,51 @@ datasets:
       - {"name": "Sector", "type": "VARCHAR", "values": ["AFP", "Bancos", "CB", "CS", "FFMM", "Mandantes", "Otros"]}
       - {"name": "Moneda", "type": "VARCHAR", "values": ["CLP", "UF"]}
       - {"name": "Stock_USD", "type": "DOUBLE"}
+  - id: duracion_iif
+    file: duracion_iif.parquet
+    chart_type: "scatter"
+    name: "Duracion hoy intermediacion financiera por instrumento y sector"
+    description: >
+      Serie de duracion hoy intermediacion financiera por instrumento y sector para el seguimiento del segmento de DCV: análisis de posiciones. Se desagrega por Tipo (DAP, PDBC), Moneda (CLP, EURO, UF, USD), Sector (AFP, Bancos, CB, CS, FFMM, Mandantes, Otros). Incluye las métricas Duracion. Es un SNAPSHOT (solo la fecha de hoy, sin histórico). La unidad principal de análisis es Años. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: "dcv"
+    unit: "Años"
+    date_range: ["2026-08-06", "2026-08-06"]
+    columns:
+      - {"name": "Fecha", "type": "TIMESTAMP"}
+      - {"name": "Tipo", "type": "VARCHAR", "values": ["DAP", "PDBC"]}
+      - {"name": "Moneda", "type": "VARCHAR", "values": ["CLP", "EURO", "UF", "USD"]}
+      - {"name": "Sector", "type": "VARCHAR", "values": ["AFP", "Bancos", "CB", "CS", "FFMM", "Mandantes", "Otros"]}
+      - {"name": "Duracion", "type": "DOUBLE"}
+  - id: duracion_rf
+    file: duracion_rf.parquet
+    chart_type: "scatter"
+    name: "Duracion hoy renta fija por instrumento y sector"
+    description: >
+      Serie de duracion hoy renta fija por instrumento y sector para el seguimiento del segmento de DCV: análisis de posiciones. Se desagrega por Tipo (BB, BCCh, BE, BTP, BTU, Letras MdH, Otros), Moneda (CLP, UF, USD), Sector (AFP, Bancos, CB, CS, FFMM, Mandantes, Otros). Incluye las métricas Duracion. Es un SNAPSHOT (solo la fecha de hoy, sin histórico). La unidad principal de análisis es Años. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: "dcv"
+    unit: "Años"
+    date_range: ["2026-08-06", "2026-08-06"]
+    columns:
+      - {"name": "Fecha", "type": "TIMESTAMP"}
+      - {"name": "Tipo", "type": "VARCHAR", "values": ["BB", "BCCh", "BE", "BTP", "BTU", "Letras MdH", "Otros"]}
+      - {"name": "Moneda", "type": "VARCHAR", "values": ["CLP", "UF", "USD"]}
+      - {"name": "Sector", "type": "VARCHAR", "values": ["AFP", "Bancos", "CB", "CS", "FFMM", "Mandantes", "Otros"]}
+      - {"name": "Duracion", "type": "DOUBLE"}
+  - id: vencimientos_cinco_dias
+    file: vencimientos_cinco_dias.parquet
+    chart_type: "stacked_bar"
+    name: "Vencimientos acumulados próximos cinco días por instrumento y sector"
+    description: >
+      Serie de vencimientos próximos cinco días por instrumento y sector para el seguimiento del segmento de DCV: análisis de posiciones. Se desagrega por Tipo (DAP, Otros, PDBC), Moneda (CLP, EURO, UF, USD), Sector (AFP, Bancos, CB, CS, FFMM, Mandantes, Otros). Incluye las métricas Stock_USD. Es un SNAPSHOT (solo la fecha de hoy, sin histórico): acumulado de lo que vence en los próximos 5 días corridos. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: "dcv"
+    unit: "Millones de USD"
+    date_range: ["2026-08-06", "2026-08-06"]
+    columns:
+      - {"name": "Fecha", "type": "TIMESTAMP"}
+      - {"name": "Tipo", "type": "VARCHAR", "values": ["DAP", "Otros", "PDBC"]}
+      - {"name": "Sector", "type": "VARCHAR", "values": ["AFP", "Bancos", "CB", "CS", "FFMM", "Mandantes", "Otros"]}
+      - {"name": "Moneda", "type": "VARCHAR", "values": ["CLP", "EURO", "UF", "USD"]}
+      - {"name": "Stock_USD", "type": "DOUBLE"}
   - id: vencimientos_futuros_instrumento
     file: vencimientos_futuros_instrumento.parquet
     chart_type: "stacked_bar"
@@ -2715,6 +2760,36 @@ datasets:
       - {"name": "Año", "type": "VARCHAR"}
       - {"name": "Mes_label", "type": "VARCHAR", "values": ["abr", "ago", "dic", "ene", "feb", "jul", "jun", "mar", "may", "nov", "oct", "sep"]}
       - {"name": "Tipo", "type": "VARCHAR", "values": ["BB", "BCCh", "BE", "BTP", "BTU", "DAP", "Letras MdH", "Otros", "PDBC"]}
+      - {"name": "Sector", "type": "VARCHAR", "values": ["AFP", "Bancos", "CB", "CS", "FFMM", "Mandantes", "Otros"]}
+      - {"name": "Moneda", "type": "VARCHAR", "values": ["CLP", "EURO", "UF", "USD"]}
+      - {"name": "Stock_USD", "type": "DOUBLE"}
+  - id: vencimientos_hoy
+    file: vencimientos_hoy.parquet
+    chart_type: "stacked_bar"
+    name: "Vencimientos hoy por instrumento y sector"
+    description: >
+      Serie de vencimientos hoy por instrumento y sector para el seguimiento del segmento de DCV: análisis de posiciones. Se desagrega por Tipo (DAP, Otros, PDBC), Moneda (CLP, EURO, UF, USD), Sector (AFP, Bancos, CB, CS, FFMM, Mandantes, Otros). Incluye las métricas Stock_USD. Es un SNAPSHOT (solo la fecha de hoy, sin histórico): lo que vence HOY (T). La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: "dcv"
+    unit: "Millones de USD"
+    date_range: ["2026-08-10", "2026-08-10"]
+    columns:
+      - {"name": "Vencimiento", "type": "TIMESTAMP"}
+      - {"name": "Tipo", "type": "VARCHAR", "values": ["DAP", "Otros", "PDBC"]}
+      - {"name": "Sector", "type": "VARCHAR", "values": ["AFP", "Bancos", "CB", "CS", "FFMM", "Mandantes", "Otros"]}
+      - {"name": "Moneda", "type": "VARCHAR", "values": ["CLP", "EURO", "UF", "USD"]}
+      - {"name": "Stock_USD", "type": "DOUBLE"}
+  - id: vencimientos_t_mas_uno
+    file: vencimientos_t_mas_uno.parquet
+    chart_type: "stacked_bar"
+    name: "Vencimientos T+1 por instrumento y sector"
+    description: >
+      Serie de vencimientos t+1 por instrumento y sector para el seguimiento del segmento de DCV: análisis de posiciones. Se desagrega por Tipo (DAP, Otros, PDBC), Moneda (CLP, EURO, UF, USD), Sector (AFP, Bancos, CB, CS, FFMM, Mandantes, Otros). Incluye las métricas Stock_USD. Es un SNAPSHOT (solo la fecha de hoy, sin histórico): lo que vence MAÑANA (T+1). La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: "dcv"
+    unit: "Millones de USD"
+    date_range: ["2026-08-11", "2026-08-11"]
+    columns:
+      - {"name": "Vencimiento", "type": "TIMESTAMP"}
+      - {"name": "Tipo", "type": "VARCHAR", "values": ["DAP", "Otros", "PDBC"]}
       - {"name": "Sector", "type": "VARCHAR", "values": ["AFP", "Bancos", "CB", "CS", "FFMM", "Mandantes", "Otros"]}
       - {"name": "Moneda", "type": "VARCHAR", "values": ["CLP", "EURO", "UF", "USD"]}
       - {"name": "Stock_USD", "type": "DOUBLE"}

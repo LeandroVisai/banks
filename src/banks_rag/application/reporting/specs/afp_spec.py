@@ -29,6 +29,7 @@ _S_RF = "Renta Fija (DCV)"
 _S_FX = "Mercado cambiario"
 _S_TASAS = "Derivados de tasas (swaps)"
 _S_ATTR = "Atribución de retorno"
+_S_EXTRAS = "Produccion Temporales"
 
 _BLOCKS: tuple[ReportBlock, ...] = (
     # ── Allocation y patrimonio ──────────────────────────────────────────────
@@ -82,6 +83,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
                     "allocation por clase de activo en el eje izquierdo (%).*"
                     ),
                 ),
+                
     ReportBlock(
                     section=_S_ALLOC,
                     title="Allocation activos - Fondo C",
@@ -134,49 +136,10 @@ _BLOCKS: tuple[ReportBlock, ...] = (
                                 ),
                             ),
 
-
-
-    ReportBlock(
-        section=_S_ALLOC, title="Stock de fondos por tipo (A-E)",
-        unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
-        source_id="stock_fondo_afp", transform="straight_series",
-    ),
-    # Traspaso entre multifondos — VARIACIÓN: barras agrupadas por fondo (A-E) con el
-    # flujo acumulado de la última semana y del último mes, lado a lado. Va ARRIBA del
-    # gráfico diario para leer la variación semanal/mensual de un vistazo.
-    ReportBlock(
-        section=_S_ALLOC, title="Flujo de fondos (acumulado semanal y mensual)",
-        unit="US$ Mill.", chart="grouped_bar", status=STATUS_MVP,
-        source_id="movimientos_fondos", transform="window_accum_by_cat",
-        params={"category": "Fondo", "value": "Flujos_usd",
-                "order": ["A", "B", "C", "D", "E"],
-                "windows": [["Δ T-7", 7], ["Δ T-30", 30]]},
-        note="*flujo acumulado por tipo de fondo: última semana vs. último mes",
-    ),
-    # Vista NETA: las dos ventanas (semanal / mensual) como columnas APILADAS por
-    # fondo (mismos colores que el gráfico diario). El alto neto de cada columna es
-    # el flujo neto de la ventana; muestra cómo quedaron los fondos entre sí.
-    ReportBlock(
-        section=_S_ALLOC, title="Flujo de fondos (neto apilado por fondo)",
-        unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
-        source_id="movimientos_fondos", transform="window_accum_stacked_by_cat",
-        params={"category": "Fondo", "value": "Flujos_usd",
-                "order": ["A", "B", "C", "D", "E"],
-                "windows": [["Δ T-7", 7], ["Δ T-30", 30]]},
-        note="*composición del flujo neto por fondo: semanal vs. mensual",
-        no_text=True,  # comentario único en el bloque de variación de arriba
-    ),
+    
     # Traspaso entre multifondos: barra apilada DIVERGENTE por día (flujos diarios
     # por fondo A-E), réplica de "Traspaso de fondos de FP" del tablero.
-    ReportBlock(
-        section=_S_ALLOC, title="Flujo por fondos (diario)",
-        unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
-        source_id="movimientos_fondos", transform="window_stacked_by_cat",
-        params={"category": "Fondo", "value": "Flujos_usd",
-                "order": ["A", "B", "C", "D", "E"], "last_n": 14},
-        note="*flujos diarios por tipo de fondo, últimas ~2 semanas",
-        no_text=True,  # comentario único en el bloque de variación de arriba
-    ),
+    
     # ── Renta Fija (DCV) ─────────────────────────────────────────────────────
     ReportBlock(
         section=_S_RF, title="Stock DCV de AFP por instrumento",
@@ -235,6 +198,50 @@ _BLOCKS: tuple[ReportBlock, ...] = (
                 "window": "ytd", "net": "auto"},
         note="*acumulado desde ene.; Neto = spot + derivados",
     ),
+
+    ReportBlock(
+            section=_S_FX, title="Flujos Spot",
+            unit="US$ Mill.", chart="line", status=STATUS_MVP,
+            source_id="afp_var_acum_spot", transform="category_series",
+            params={"category": "AFP", "value": "Monto",
+                    "net": "False","window":"ytd","accumulate":"cumsum"},  # + línea Neto = suma de fondos
+        ),
+
+    ReportBlock(
+            section=_S_FX, title="Posición derivados", #Identificar porque no aparece plan vital
+            unit="US$ Mill.", chart="line", status=STATUS_MVP,
+            source_id="afp_var_acum_derivados", transform="category_series",
+            params={"category": "AFP", "value": "Monto",
+                    "net": "False","window":"ytd","accumulate":"cumsum"},  # + línea Neto = suma de fondos
+        ),
+ 
+    ReportBlock(
+                section=_S_FX, title="Posición derivados",
+                unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
+                source_id="afp_posicion_derivados", transform="category_series",
+                params={"category":"Plazo","value":"Posicion",
+                       "include": ["1 a 90 dias", "91 a 360 dias", "Mayor a 360 dias"],
+                        "net": "auto"},
+                        note="*ytd",  # + línea Neto = suma de fondos
+            ),
+    
+    # AUM (RFI) queda de ÁREA en el eje izquierdo (natural, 0 a positivo);
+    # Posición cambiaria va de LÍNEA en el eje derecho, INVERTIDO (right_invert):
+    # la serie es negativa y así se mueve visualmente CON el AUM en vez de en
+    # espejo — réplica de "AUM Renta Fija internacional vs posición cambiaria".
+    ReportBlock(
+            section=_S_FX, title="AUM Renta Fija internacional vs. posición cambiaria",
+            unit="Millones de USD", chart="dual_axis", status=STATUS_MVP,
+            source_id="afp_aum_posicion_cambiaria", transform="straight_series",
+            params={"right_axis": ["Posicion"], "right_unit": "Millones de USD",
+                    "right_style": "line", "right_invert": True, "left_style": "area"},
+            note="*AUM (RFI) en el eje izquierdo; Posición cambiaria en el eje derecho, invertido",
+        ),
+
+
+
+
+
     # ── Derivados de tasas (swaps) ───────────────────────────────────────────
     ReportBlock(
         section=_S_TASAS, title="MtM de swaps por tipo de fondo",
@@ -247,22 +254,18 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         section=_S_TASAS, title="DV01 proyectado en swap por moneda",
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
         source_id="dv01_spc_afp", transform="category_series",
-        # category EXPLÍCITA (no auto-detect): el parquet trae además "fondo"
-        # (A-E); al no seleccionarlo, category_series lo colapsa sumando por
-        # fecha+moneda solo — robusto a que "fondo" esté siempre presente.
-        params={"category": "moneda", "value": "dv01", "order": ["CLP", "USD"]},
-        # moneda real: CLP/UF/USD; se excluye UF a pedido (no entra en "order")
+        params={"category":"moneda","value":"dv01","order": ["USD","CLP"]},
     ),
 
 
-    ReportBlock(
-            section=_S_TASAS, title="Posición SPC en dólares",
-            unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
-            source_id="afp_posicion_spc_usd", transform="category_series",date_from= "2023-01-01",
-            params={"category":"Plazo","value":"mmusd",
-                    "order": ["10Y", "1Y", "2Y", "5Y"], "net": "auto"},
-            note="*acumulado desde ene.; Neto = spot + derivados",
-        ),
+    #ReportBlock(
+    #        section=_S_TASAS, title="Posición SPC en dólares",
+    #        unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
+    #        source_id="afp_posicion_swap_usd", transform="category_series",date_from= "2023-01-01",
+    #        params={"category":"Plazo","value":"mmusd",
+    #                "order": ["10Y", "1Y", "2Y", "5Y"], "net": "auto"},
+    #        note="*acumulado desde ene.; Neto = spot + derivados",
+    #    ),
 
     ReportBlock(
                 section=_S_TASAS, title="Posición SPC nominal con agentes locales",
@@ -294,7 +297,120 @@ _BLOCKS: tuple[ReportBlock, ...] = (
             "Neto se presenta como línea superpuesta."
         ),
     ),
+
+
+
+
+    ReportBlock(
+            section=_S_EXTRAS, title="Flujo por fondos (diario)",
+            unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
+            source_id="movimientos_fondos", transform="window_stacked_by_cat",
+            params={"category": "Fondo", "value": "Flujos_usd",
+                    "order": ["A", "B", "C", "D", "E"], "last_n": 14},
+            note="*flujos diarios por tipo de fondo, últimas ~2 semanas",
+            no_text=True,  # comentario único en el bloque de variación de arriba
+        ),
+
+
+    ReportBlock(
+                    section=_S_EXTRAS, title="Cambio de AUM por Fondos",
+                    unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
+                    source_id="afp_var_aum_fondos",date_from="2026-01-01", transform="wide_daily_diff_ytd",
+                    params={"columns": ["A","B","C","D","E",]},
+                    note="US $ Mill; YTD",
+                    no_text=True,  # comentario único en el bloque de variación de arriba
+                ),
+
+
+    ReportBlock(
+                    section=_S_EXTRAS, title="Retornos acumulados por fondo",
+                    unit="%", chart="line", status=STATUS_MVP,
+                    source_id="retorno_acum_afp", transform="ytd_return_geom",
+                    params={"funds": "all"},  # este gráfico muestra TODOS los fondos disponibles
+                    note="*acumulada (geométrica) desde inicios de 2026",
+                ),
+
+    # Retorno mensual (ya viene compuesto en el parquet, NO un índice a diferenciar)
+    # del consolidado de la industria (AFP="Total"), desagregado por fondo (A-E) →
+    # barras agrupadas, X = mes. Réplica de "Retorno de fondos de FP mensuales".
+    ReportBlock(
+            section=_S_EXTRAS, title="Retorno de fondos de FP mensuales",
+            unit="%", chart="grouped_bar", status=STATUS_MVP,
+            source_id="retorno_mensual_afp", transform="monthly_bars_by_cat",
+            params={"category": "Fondo", "value": "Retorno",
+                    "filter_col": "AFP", "filter_val": "Total",
+                    "order": ["A", "B", "C", "D", "E"], "months": 10},
+        ),
+
+    # Rentabilidad YTD (compuesta geométricamente desde los retornos mensuales) por
+    # AFP real (se excluye el consolidado "Total") y fondo → barras agrupadas,
+    # X = fondo, una serie por AFP. Réplica de "Retornos por AFP y tipo de fondo".
+    ReportBlock(
+            section=_S_EXTRAS, title="Retornos por AFP y tipo de fondo",
+            unit="%", chart="grouped_bar", status=STATUS_MVP,
+            source_id="retorno_mensual_afp", transform="ytd_grouped_by_cat",
+            params={"category": "AFP", "group": "Fondo", "value": "Retorno",
+                    "exclude": ["Total"], "order": ["A", "B", "C", "D", "E"]},
+            note="*YTD, compuesto de los retornos mensuales",
+        ),
+
+
     
+    ReportBlock(
+        section=_S_EXTRAS, title="Stock de fondos por tipo (A-E)",
+        unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
+        source_id="stock_fondo_afp", transform="straight_series",
+    ),
+    # Traspaso entre multifondos — VARIACIÓN: barras agrupadas por fondo (A-E) con el
+    # flujo acumulado de la última semana y del último mes, lado a lado. Va ARRIBA del
+    # gráfico diario para leer la variación semanal/mensual de un vistazo.
+    ReportBlock(
+        section=_S_EXTRAS, title="Flujo de fondos (acumulado semanal y mensual)",
+        unit="US$ Mill.", chart="grouped_bar", status=STATUS_MVP,
+        source_id="movimientos_fondos", transform="window_accum_by_cat",
+        params={"category": "Fondo", "value": "Flujos_usd",
+                "order": ["A", "B", "C", "D", "E"],
+                "windows": [["Δ T-7", 7], ["Δ T-30", 30]]},
+        note="*flujo acumulado por tipo de fondo: última semana vs. último mes",
+    ),
+    # Vista NETA: las dos ventanas (semanal / mensual) como columnas APILADAS por
+    # fondo (mismos colores que el gráfico diario). El alto neto de cada columna es
+    # el flujo neto de la ventana; muestra cómo quedaron los fondos entre sí.
+    ReportBlock(
+        section=_S_EXTRAS, title="Flujo de fondos (neto apilado por fondo)",
+        unit="US$ Mill.", chart="stacked_bar", status=STATUS_MVP,
+        source_id="movimientos_fondos", transform="window_accum_stacked_by_cat",
+        params={"category": "Fondo", "value": "Flujos_usd",
+                "order": ["A", "B", "C", "D", "E"],
+                "windows": [["Δ T-7", 7], ["Δ T-30", 30]]},
+        note="*composición del flujo neto por fondo: semanal vs. mensual",
+        no_text=True,  # comentario único en el bloque de variación de arriba
+    ),
+
+
+
+
+
+
+
+ # ``afp_variacion_spc`` viene como NIVEL ACUMULADO por tramo (no un flujo a
+ # sumar): wide_monthly_diff_bars resta corte vs. corte previo por columna, en
+ # vez de wide_monthly_bars (que suma valores dentro del mes — daría un número
+ # sin sentido sobre un acumulado). Réplica de "Var. Mensual Posición AFP en SPC
+ # nominal" del tablero.
+    ReportBlock(
+            section=_S_EXTRAS, title="Var. Mensual Posición AFP en SPC nominal",
+            unit="Millones de USD", chart="stacked_bar", status=STATUS_MVP,
+            source_id="afp_variacion_spc", transform="wide_monthly_diff_bars",
+            params={"include": ["1 a 90 dias", "91 a 360 dias", "Entre 1 y 2Y", "Mayor a 2Y"],
+                    "overlay": ["Neto"], "months": 10},
+            note="*variación mes a mes por tramo (corte vs. corte previo); Neto como punto",
+        ),
+
+
+
+
+
 
 
     #ReportBlock(
@@ -331,5 +447,5 @@ AFP_SPEC = FamilyReportSpec(
     # gráfico, como el informe cambiario): el resto del informe sigue apilado
     # (``layout`` default "stack"). 11 bloques → 5 pares + el último a fila
     # completa (impar), regla automática de ``_wide_block_ids``.
-    grid_sections=frozenset({_S_ALLOC}),
+    grid_sections=frozenset({_S_ALLOC,_S_TASAS,_S_FX,_S_EXTRAS}),
 )

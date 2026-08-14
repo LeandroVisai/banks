@@ -42,6 +42,11 @@ _PALETTE = ["#0b3766", "#c8102e", "#0a8a5f", "#e08a00", "#6a3d9a", "#1f9bcf",
 # Color de la serie superpuesta "Neto"/"Total" (rojo del informe BCCh).
 _OVERLAY_COLOR = "#c8102e"
 
+# Área del eje IZQUIERDO en dual_axis (``left_style="area"``): celeste tenue,
+# distinguible del gris del área derecha (``#b9c0cc``) — así no se confunden
+# cuando el gráfico tiene área de los dos lados a la vez.
+_LEFT_AREA_COLOR = "#a9c4e0"
+
 # Paleta para las series APILADAS cuando hay overlay: sin rojo (reservado para el
 # Neto), tonos del informe (azul/tabaco/pizarra/verde/ámbar/morado).
 #
@@ -263,7 +268,7 @@ def _subsample(points: list, max_n: int = _MAX_TIP_PTS) -> list[int]:
 # "hist_range"/"point" son los ``chart_type`` canónicos del catálogo (ver
 # ``domain/agent/chart_types.py``: hist_range→bar, scatter→point) reusados tal
 # cual como ``block.chart`` del informe curado, sin inventar vocabulario nuevo.
-_CHART_NATIVE_KIND: dict[str, str] = {
+_CHART_NATIVE_KIND: dict[str, str | tuple[str, ...]] = {
     "line": "timeseries",
     "area": "timeseries",
     "stacked_area": "timeseries",
@@ -275,7 +280,10 @@ _CHART_NATIVE_KIND: dict[str, str] = {
     "composition": "snapshot",
     "pie": "snapshot",
     "hist_range": "range",
-    "point": "scatter",
+    # "point" cubre DOS formas: dispersión x/y numérica (GBI, kind='scatter') y
+    # dispersión CATEGÓRICA por grupo (Duración agentes IIF/RF del DCV,
+    # kind='grouped', ver _render_grouped_dots) — ambas se dibujan como puntos.
+    "point": ("scatter", "grouped"),
     "heatmap_table": "heatmap",
 }
 
@@ -283,12 +291,14 @@ _CHART_NATIVE_KIND: dict[str, str] = {
 def renders_natively(plot_kind: str, chart: str | None) -> bool:
     """True si ``chart`` se dibuja de forma nativa con un PlotData de ese kind
     (no es un fallback/vista preliminar)."""
-    return _CHART_NATIVE_KIND.get((chart or "").strip()) == plot_kind
+    native = _CHART_NATIVE_KIND.get((chart or "").strip())
+    return plot_kind in native if isinstance(native, tuple) else native == plot_kind
 
 
 def render_plot_svg(
     plot: PlotData, *, chart: str | None = None, width: int = _W, height: int = _H,
     right_axis: list[str] | None = None, right_unit: str = "", right_style: str = "",
+    right_invert: bool = False, left_style: str = "",
     x_label: str = "", y_label: str = "",
 ) -> str | None:
     """``PlotData`` → SVG inline (str) del tipo ``chart`` (o el natural del kind si
@@ -296,13 +306,20 @@ def render_plot_svg(
 
     ``right_axis`` (labels de series) + ``right_unit`` activan el doble eje Y para
     ``chart='dual_axis'`` (esas series van contra un eje derecho independiente);
-    ``right_style`` elige cómo se dibujan (``"area"`` por defecto, ``"line"``).
-    ``x_label``/``y_label`` rotulan los ejes del scatter (``kind='scatter'``);
-    vacío → usa ``plot.unit`` en ambos ejes."""
+    ``right_style``/``left_style`` eligen cómo se dibuja cada lado (``"line"`` por
+    defecto en ambos, salvo el derecho que por compatibilidad sigue siendo
+    ``"area"`` si no se pasa nada — ver ``_render_dual_axis``). ``right_invert``
+    da vuelta el eje derecho (0 arriba/abajo según el signo de los datos): réplica
+    de series como "Posición cambiaria (eje inv.)" del tablero, donde la serie es
+    negativa y se lee invertida para que se mueva visualmente CON la otra serie en
+    vez de en espejo. ``x_label``/``y_label`` rotulan los ejes del scatter
+    (``kind='scatter'``); vacío → usa ``plot.unit`` en ambos ejes."""
     if plot.is_empty() or plot.family == "table":
         return None
     target = (chart or "").strip()
     if plot.kind == "grouped":
+        if target == "point":
+            return _render_grouped_dots(plot, width, height)
         return _render_grouped_bars(plot, width, height, stacked=(target == "stacked_bar"))
     if plot.kind == "snapshot":
         if target == "pie":
@@ -318,7 +335,8 @@ def render_plot_svg(
     if target == "candlestick":
         return _render_candlestick(plot, width, height)
     if target == "dual_axis":
-        return _render_dual_axis(plot, width, height, right_axis, right_unit, right_style)
+        return _render_dual_axis(plot, width, height, right_axis, right_unit, right_style,
+                                 right_invert=right_invert, left_style=left_style)
     if target in ("area", "stacked_area"):
         return _render_stacked_area(plot, width, height)
     return _render_timeseries(plot, width, height)
@@ -554,24 +572,37 @@ def _render_candlestick(plot: PlotData, width: int, height: int) -> str:
 def _render_dual_axis(
     plot: PlotData, width: int, height: int,
     right_labels: list[str] | None, right_unit: str = "", right_style: str = "",
+    *, right_invert: bool = False, left_style: str = "",
 ) -> str:
     """Serie temporal con DOBLE eje Y: las series cuyo label esté en
     ``right_labels`` se escalan contra un eje derecho independiente; el resto va
-    contra el eje izquierdo como líneas. X compartido. Replica los gráficos con
-    eje secundario sin separar el gráfico en dos.
+    contra el eje izquierdo. X compartido. Replica los gráficos con eje
+    secundario sin separar el gráfico en dos.
 
-    ``right_style`` decide cómo se dibuja la serie del eje derecho:
+    ``right_style``/``left_style`` deciden cómo se dibuja cada lado:
 
-    - ``"area"`` (default) → área gris tenue, estilo "AUM" del informe BCCh. Es
-      lo correcto cuando esa serie es un VOLUMEN de fondo (monto transado,
-      inventarios) que contextualiza a la principal sin competir con ella.
-    - ``"line"`` → línea con su color de paleta, igual que las del eje izquierdo.
-      Es lo correcto cuando las dos series son magnitudes COMPARABLES que se leen
-      a la par (CLP contra cobre, contra DXY, contra su propia posición offshore):
-      pintar una de área sugiere una jerarquía que no existe.
+    - ``"area"`` → área tenue (gris a la derecha, celeste a la izquierda), estilo
+      "AUM" del informe BCCh. Es lo correcto cuando esa serie es un VOLUMEN de
+      fondo (monto transado, inventarios, AUM) que contextualiza a la principal
+      sin competir con ella.
+    - ``"line"`` → línea con su color de paleta. Es lo correcto cuando las dos
+      series son magnitudes COMPARABLES que se leen a la par (CLP contra cobre,
+      contra DXY, contra su propia posición offshore): pintar una de área sugiere
+      una jerarquía que no existe.
+
+    El DEFAULT de ``right_style`` sigue siendo ``"area"`` (compatibilidad con los
+    bloques existentes); el de ``left_style`` es ``"line"`` (el eje izquierdo
+    nunca se pintó de área hasta ahora).
+
+    ``right_invert`` da vuelta el eje derecho (el valor más negativo queda ARRIBA
+    en vez de abajo): réplica de "Posición cambiaria (eje inv. | eje der.)" del
+    tablero — una serie negativa que se lee invertida para que se mueva
+    visualmente CON la otra serie en vez de en espejo. Los ticks y el hover usan
+    la MISMA proyección, así que quedan consistentes solos.
 
     Si no hay ninguna serie para el eje derecho, cae al render de línea normal."""
     right_as_line = (right_style or "area").strip().lower() == "line"
+    left_as_area = (left_style or "line").strip().lower() == "area"
     right_set = set(right_labels or [])
     has_right = any(s.label in right_set for s in plot.series)
     if not has_right:
@@ -616,13 +647,18 @@ def _render_dual_axis(
         return top + plot_h * (1 - (v - llo) / (lhi - llo or 1.0))
 
     def pry(v: float) -> float:
-        return top + plot_h * (1 - (v - rlo) / (rhi - rlo or 1.0))
+        frac = (v - rlo) / (rhi - rlo or 1.0)
+        return top + plot_h * (frac if right_invert else (1 - frac))
 
     # JSON del hover unificado: cada serie con su propio eje (y por serie).
     by_date: dict[str, dict] = {}
     for idx, s, pts, is_right in parsed:
-        color = ("#b9c0cc" if is_right and not right_as_line
-                 else _series_style(plot, idx, s.label)[0])
+        if is_right and not right_as_line:
+            color = "#b9c0cc"
+        elif not is_right and left_as_area:
+            color = _LEFT_AREA_COLOR
+        else:
+            color = _series_style(plot, idx, s.label)[0]
         unit = right_unit if is_right else plot.unit
         yfn = pry if is_right else ply
         for o, v in pts:
@@ -666,20 +702,33 @@ def _render_dual_axis(
         f'stroke="#aaa" stroke-width="1" stroke-dasharray="4,3" display="none" pointer-events="none"/>'
     )
 
+    # Sufijo corto: la leyenda trunca a 22 caracteres (_legend_row) y "(eje inv. |
+    # eje der.)" del tablero real no entra ni con series de nombre corto.
+    right_suffix = " (eje inv.)" if right_invert else " (eje der.)"
     legend: list[tuple[int, str, str]] = []
-    # Primero las áreas del eje derecho (al fondo), luego las líneas del izquierdo.
-    for idx, s, pts, is_right in sorted(parsed, key=lambda t: not t[3]):
+    # Primero las áreas (al fondo), luego las líneas — de cualquiera de los dos ejes.
+    def _is_area(t: tuple) -> bool:
+        _idx, _s, _pts, is_r = t
+        return (is_r and not right_as_line) or (not is_r and left_as_area)
+
+    for idx, s, pts, is_right in sorted(parsed, key=lambda t: not _is_area(t)):
         if is_right and not right_as_line:
             base = top + plot_h
             up = " ".join(f"{px(o):.1f},{pry(v):.1f}" for o, v in pts)
             dn = f"{px(pts[-1][0]):.1f},{base:.1f} {px(pts[0][0]):.1f},{base:.1f}"
             out.append(f'<polygon points="{up} {dn}" fill="#c8ccd4" fill-opacity="0.55" stroke="none" data-si="{idx}"/>')
-            legend.append((idx, f"{s.label} (eje der.)", "#b9c0cc"))
+            legend.append((idx, f"{s.label}{right_suffix}", "#b9c0cc"))
         elif is_right:
             color, stroke_w = _series_style(plot, idx, s.label)
             coords = " ".join(f"{px(o):.1f},{pry(v):.1f}" for o, v in pts)
             out.append(f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="{stroke_w}" data-si="{idx}"/>')
-            legend.append((idx, f"{s.label} (eje der.)", color))
+            legend.append((idx, f"{s.label}{right_suffix}", color))
+        elif left_as_area:
+            base = top + plot_h
+            up = " ".join(f"{px(o):.1f},{ply(v):.1f}" for o, v in pts)
+            dn = f"{px(pts[-1][0]):.1f},{base:.1f} {px(pts[0][0]):.1f},{base:.1f}"
+            out.append(f'<polygon points="{up} {dn}" fill="{_LEFT_AREA_COLOR}" fill-opacity="0.55" stroke="none" data-si="{idx}"/>')
+            legend.append((idx, s.label, _LEFT_AREA_COLOR))
         else:
             color, width = _series_style(plot, idx, s.label)
             coords = " ".join(f"{px(o):.1f},{ply(v):.1f}" for o, v in pts)
@@ -869,6 +918,92 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
     legend_y = height - (20 if long_labels else 26)
     legend = [(s.label, pal[i % len(pal)]) for i, s in enumerate(series)]
     legend += [(s.label, _OVERLAY_COLOR) for s in overlays]
+    out.append(_legend_row(legend, left, legend_y, plot_w, interactive=True))
+    if plot.unit:
+        out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+def _render_grouped_dots(plot: PlotData, width: int, height: int) -> str:
+    """Dispersión CATEGÓRICA: eje X = categorías compartidas (no numérico), eje Y
+    = valor, un color por serie — varios puntos por categoría (uno por serie que
+    tenga dato ahí), SIN barras. Réplica de "Duración agentes IIF/RF" del informe
+    DCV: instrumento en X, duración en Y, un punto por agente que sostiene ese
+    instrumento (no todos lo hacen, a diferencia de las barras agrupadas donde
+    toda categoría suma sus series). Comparte el layout de eje/categorías con
+    ``_render_grouped_bars`` pero sin apilado ni negativos."""
+    cats: list[str] = []
+    seen: set[str] = set()
+    for s in plot.series:
+        for c, _v in s.points:
+            if c not in seen:
+                seen.add(c)
+                cats.append(c)
+    if not cats or not plot.series:
+        return _no_axis_message(plot, width, height)
+    lut = [{c: v for c, v in s.points} for s in plot.series]
+
+    left, right = 64, 18
+    top = 30
+    plot_w = width - left - right
+    max_len = max(len(c) for c in cats)
+    fits = max_len * _CAT_LABEL_CHAR_W <= plot_w / len(cats) - 2
+    long_labels = max_len > 9 or not fits
+    bottom = 90 if long_labels else 80
+    plot_h = height - top - bottom
+
+    allv = [lut[i][c] for i in range(len(plot.series)) for c in cats if c in lut[i]]
+    if not allv:
+        return _no_axis_message(plot, width, height)
+    dmax, dmin = max([0.0, *allv]), min([0.0, *allv])
+    if dmax == dmin:
+        dmax += 1.0
+    ticks, ymin, ymax = _nice_ticks(dmin, dmax)
+
+    def py(v: float) -> float:
+        return top + plot_h * (1 - (v - ymin) / (ymax - ymin))
+
+    group_w = plot_w / len(cats)
+    out = _svg_open(width, height, f"{plot.dataset_id} — dispersión categórica")
+
+    for tick in ticks:
+        y = py(tick)
+        emph = abs(tick) < 1e-9
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="{"#999" if emph else "#e6e6e6"}" stroke-width="1"/>')
+        out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="11" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
+
+    n = len(plot.series)
+    for ci, c in enumerate(cats):
+        gx = left + ci * group_w
+        inner = group_w * 0.7
+        step = inner / max(1, n - 1) if n > 1 else 0.0
+        x0 = gx + (group_w - inner) / 2 if n > 1 else gx + group_w / 2
+        for si, s in enumerate(plot.series):
+            v = lut[si].get(c)
+            if v is None:
+                continue
+            cx = x0 + si * step
+            col = _PALETTE[si % len(_PALETTE)]
+            attrs = _tip_attrs(col, s=s.label, k=c, v=_val_unit(v, plot.unit))
+            out.append(f'<circle cx="{cx:.1f}" cy="{py(v):.1f}" r="4" fill="{col}" stroke="#fff" stroke-width="1" data-si="{si}"{attrs}/>')
+        cx_lbl = left + ci * group_w + group_w / 2
+        if long_labels:
+            out.append(
+                f'<text transform="translate({cx_lbl:.1f},{top + plot_h + 12:.1f}) rotate(-45)" '
+                f'font-size="10" fill="#555" text-anchor="end">{_esc(c)}</text>'
+            )
+        else:
+            out.append(
+                f'<text x="{cx_lbl:.1f}" y="{top + plot_h + 16}" '
+                f'font-size="10" fill="#555" text-anchor="middle">{_esc(c)}</text>'
+            )
+
+    out.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
+    out.append(f'<line x1="{left}" y1="{top + plot_h}" x2="{left + plot_w}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
+
+    legend_y = height - (20 if long_labels else 26)
+    legend = [(s.label, _PALETTE[i % len(_PALETTE)]) for i, s in enumerate(plot.series)]
     out.append(_legend_row(legend, left, legend_y, plot_w, interactive=True))
     if plot.unit:
         out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
@@ -1569,6 +1704,31 @@ def _dcv_num(v: float | None) -> str:
     return _fmt_num(v)
 
 
+def _dcv_dur(v: float | None) -> str:
+    """Duración de la tabla DCV: SIEMPRE 2 decimales (coma chilena), a
+    diferencia de ``_fmt_num`` (decimales adaptativos según magnitud) — el
+    original muestra ``51,25``/``87,46`` con 2 decimales aunque el valor sea
+    grande. ``—`` cuando no hay dato (instrumento sin duración calculable)."""
+    if v is None:
+        return "&#8212;"
+    s = f"{v:,.2f}"
+    return s.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
+def _weighted_dur(pairs: list[tuple[float, float | None]]) -> float | None:
+    """Duración ponderada por Monto sobre pares ``(monto, duracion)``: la
+    duración NO es sumable como el monto, así que el total de una fila/columna
+    es un promedio ponderado, no una suma. ``None`` si no hay ningún par con
+    ambos datos (monto>0 y duración conocida)."""
+    num = den = 0.0
+    for m, d in pairs:
+        if d is None or not m:
+            continue
+        num += m * d
+        den += m
+    return (num / den) if den else None
+
+
 def render_dcv_portfolio_table(
     instruments: list[str],
     agents: list[str],
@@ -1577,14 +1737,18 @@ def render_dcv_portfolio_table(
     unit: str = "US$ Mill.",
     asof: str = "",
     total_label: str = "Total",
+    duracion: dict[str, dict[str, float]] | None = None,
 ) -> str:
-    """Portafolio por agente: filas = instrumento, y por cada agente dos columnas
-    (Monto y % del portafolio de ESE agente), más una columna de total.
+    """Portafolio por agente: filas = instrumento, y por cada agente dos o tres
+    columnas (Monto, Duración si hay dato, y % del portafolio de ESE agente),
+    más una columna de total.
 
     ``monto[agente][instrumento]`` en la unidad del dataset. El ``%`` se calcula
     acá sobre el total de la columna, así porcentaje y monto nunca se contradicen.
-    El correo original trae además una columna de duración por agente, que no se
-    puede reproducir con los parquets actuales (ver ``dcv_spec``)."""
+    ``duracion[agente][instrumento]`` es OPCIONAL (``None`` → sin columna de
+    duración, comportamiento histórico intacto): sale de parquets aparte (ver
+    ``dcv_spec``). La duración de la fila/columna Total es un PROMEDIO ponderado
+    por Monto (``_weighted_dur``), no una suma — duración no es aditiva."""
     th = "text-align:right;padding:5px 6px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap"
     thl = "text-align:left;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px"
     thg = "text-align:center;padding:4px 6px;background:#0b3766;color:#fff;font-size:11px;white-space:nowrap"
@@ -1597,8 +1761,36 @@ def render_dcv_portfolio_table(
     for inst in instruments:
         monto.setdefault(total_label, {})[inst] = sum(monto.get(a, {}).get(inst, 0.0) for a in agents)
 
+    has_dur = bool(duracion)
+    # Duración del Total por INSTRUMENTO (columna Total): ponderada por el Monto
+    # de cada agente en ESE instrumento.
+    dur_col_total: dict[str, float | None] = {}
+    # Duración del Total por AGENTE/columna (fila Total): ponderada por el Monto
+    # de cada instrumento en ESA columna.
+    dur_row_total: dict[str, float | None] = {}
+    if has_dur:
+        for inst in instruments:
+            dur_col_total[inst] = _weighted_dur(
+                [(monto.get(a, {}).get(inst, 0.0), duracion.get(a, {}).get(inst)) for a in agents]
+            )
+        for a in agents:
+            dur_row_total[a] = _weighted_dur(
+                [(monto.get(a, {}).get(i, 0.0), duracion.get(a, {}).get(i)) for i in instruments]
+            )
+        # Esquina Total x Total: ponderada por el Monto total de cada instrumento,
+        # sobre la duración YA promediada por instrumento (dur_col_total).
+        dur_row_total[total_label] = _weighted_dur(
+            [(monto.get(total_label, {}).get(i, 0.0), dur_col_total.get(i)) for i in instruments]
+        )
+
     # Escala de color por COLUMNA: cada agente se lee contra su propio máximo.
     vmax = {c: max((monto.get(c, {}).get(i, 0.0) for i in instruments), default=0.0) for c in cols}
+
+    def _dur_cell(c: str, inst: str) -> str:
+        if not has_dur:
+            return ""
+        d = dur_col_total.get(inst) if c == total_label else duracion.get(c, {}).get(inst)
+        return f'<td style="{tdr}">{_dcv_dur(d)}</td>'
 
     body = ""
     for inst in instruments:
@@ -1608,6 +1800,7 @@ def render_dcv_portfolio_table(
             share = (v / totals[c] * 100) if v and totals.get(c) else 0.0
             cells += (
                 f'<td style="{tdr};{_dcv_shade(v, vmax[c])}">{_dcv_num(v)}</td>'
+                f'{_dur_cell(c, inst)}'
                 f'<td style="{tdr};color:#666">{f"{share:.0f}%" if share >= 0.5 else "-"}</td>'
             )
         body += f'<tr><td style="{tdl}">{_esc(inst)}</td>{cells}</tr>'
@@ -1615,25 +1808,35 @@ def render_dcv_portfolio_table(
     tdt = ("text-align:right;padding:5px 6px;font-size:11px;font-weight:700;"
            "background:#eef3f9;border-top:2px solid #4a5a72;white-space:nowrap")
     total_cells = "".join(
-        f'<td style="{tdt}">{_dcv_num(totals[c])}</td><td style="{tdt}">-</td>' for c in cols
+        f'<td style="{tdt}">{_dcv_num(totals[c])}</td>'
+        + (f'<td style="{tdt}">{_dcv_dur(dur_row_total.get(c))}</td>' if has_dur else "")
+        + f'<td style="{tdt}">-</td>'
+        for c in cols
     )
     body += (
         f'<tr><td style="{tdl};background:#eef3f9;border-top:2px solid #4a5a72">{_esc(total_label)}</td>'
         + total_cells + "</tr>"
     )
 
+    ncols = 3 if has_dur else 2
     asof_note = f" · corte {_esc(asof)}" if asof else ""
     return (
         '<div style="overflow-x:auto;max-width:760px;margin:6px auto">'
         '<table style="width:100%;border-collapse:collapse">'
         f'<thead><tr><th style="{thl}" rowspan="2">Instrumento</th>'
-        + "".join(f'<th style="{thg}" colspan="2">{_esc(c)}</th>' for c in cols)
+        + "".join(f'<th style="{thg}" colspan="{ncols}">{_esc(c)}</th>' for c in cols)
         + "</tr><tr>"
-        + "".join(f'<th style="{th}">Monto</th><th style="{th}">% port.</th>' for _ in cols)
+        + "".join(
+            f'<th style="{th}">Monto</th>' + (f'<th style="{th}">Dur.</th>' if has_dur else "")
+            + f'<th style="{th}">% port.</th>'
+            for _ in cols
+        )
         + "</tr></thead>"
         f"<tbody>{body}</tbody></table>"
         f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)}{asof_note} · '
-        "el % es sobre el portafolio de cada agente</div></div>"
+        "el % es sobre el portafolio de cada agente"
+        + ("; la duración total es el promedio ponderado por monto" if has_dur else "")
+        + "</div></div>"
     )
 
 
@@ -1694,6 +1897,71 @@ def render_dcv_bucket_table(
         f"<tbody>{body}</tbody></table>"
         f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)}{asof_note} · '
         "escala de color sin considerar montos totales</div></div>"
+    )
+
+
+def render_dcv_maturities_grid(
+    agents: list[str],
+    columns: list[str],
+    data: dict[str, dict[str, dict[str, float]]],
+    *,
+    unit: str = "US$ Mill.",
+    rows: tuple[str, ...] = ("PDBC", "DAP $", "DAP UF", "DAP USD", "RF"),
+    total_label: str = "Total",
+) -> str:
+    """"Próximos Vencimientos": una mini-tabla POR AGENTE (``agents``, ya en
+    orden — normalmente "Totales" + los 7 agentes reales), columnas comunes
+    (``columns``, ej. T/T+1/Acum 5d./Mes) y filas de instrumento fijas
+    (``rows``) + Total. ``data[agente][columna][instrumento]``.
+
+    Se acomodan en fila con ``flex-wrap`` (como el correo, que las arma en 2
+    filas de 5+3): a diferencia de ``render_dcv_portfolio_table``/
+    ``render_dcv_bucket_table`` (una tabla ancha con scroll horizontal), acá son
+    8 tablas angostas — envolver es más legible que un scroll gigante."""
+    th = "text-align:right;padding:3px 6px;background:#4a5a72;color:#fff;font-size:10px;white-space:nowrap"
+    thl = "padding:3px 6px;background:#4a5a72;color:#fff;font-size:10px"
+    tdl = "text-align:left;padding:2px 6px;border-bottom:1px solid #eee;font-size:10px;font-weight:700"
+    tdr = "text-align:right;padding:2px 6px;border-bottom:1px solid #eee;font-size:10px;white-space:nowrap"
+    tdt = ("text-align:right;padding:3px 6px;font-size:10px;font-weight:700;"
+           "background:#eef3f9;border-top:2px solid #4a5a72;white-space:nowrap")
+    tdtl = ("text-align:left;padding:3px 6px;font-size:10px;font-weight:700;"
+            "background:#eef3f9;border-top:2px solid #4a5a72")
+    cap = ("text-align:center;padding:4px 0;background:#0b3766;color:#fff;"
+           "font-size:11px;font-weight:700")
+
+    cards: list[str] = []
+    for agent in agents:
+        agent_data = data.get(agent, {})
+        totals = {c: sum(agent_data.get(c, {}).values()) for c in columns}
+        body = ""
+        for inst in rows:
+            cells = "".join(
+                f'<td style="{tdr}">{_dcv_num(agent_data.get(c, {}).get(inst))}</td>'
+                for c in columns
+            )
+            body += f'<tr><td style="{tdl}">{_esc(inst)}</td>{cells}</tr>'
+        body += (
+            f'<tr><td style="{tdtl}">{_esc(total_label)}</td>'
+            + "".join(f'<td style="{tdt}">{_dcv_num(totals[c])}</td>' for c in columns)
+            + "</tr>"
+        )
+        cards.append(
+            '<div style="flex:1 1 200px;min-width:190px">'
+            '<table style="width:100%;border-collapse:collapse">'
+            f'<caption style="{cap}">{_esc(agent)}</caption>'
+            f'<thead><tr><th style="{thl}"></th>'
+            + "".join(f'<th style="{th}">{_esc(c)}</th>' for c in columns)
+            + "</tr></thead>"
+            f"<tbody>{body}</tbody></table></div>"
+        )
+
+    return (
+        '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:6px auto;max-width:920px">'
+        + "".join(cards) + "</div>"
+        f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)} · '
+        "RF: el dato no separa Soberano/Bancario/Corporativo · "
+        "Mes: total programado del mes en curso (no distingue lo ya vencido de lo que falta)"
+        "</div>"
     )
 
 

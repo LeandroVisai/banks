@@ -303,6 +303,85 @@ def parse_text(html: str) -> tuple[str, dict[str, str]]:
     synthesis = _balanced_div_content(html, m.end()).strip() if m else ""
     return synthesis, slots
 
+def _div_span(html: str, open_start: int) -> tuple[int, int]:
+    """``(open_end, close_end)`` del ``<div>`` que EMPIEZA en ``open_start``:
+    ``open_end`` es el final de su tag de apertura, ``close_end`` el final de su
+    ``</div>`` de cierre — respeta anidamiento igual que ``_balanced_div_content``,
+    pero devuelve también dónde termina el bloque para poder recortarlo/reemplazarlo
+    dentro del HTML que lo contiene (lo usa ``_group_grid_cards``)."""
+    open_end = _RE_DIV_TAG.match(html, open_start).end()
+    depth = 1
+    for m in _RE_DIV_TAG.finditer(html, open_end):
+        depth += -1 if m.group().startswith("</") else 1
+        if depth == 0:
+            return open_end, m.end()
+    return open_end, len(html)  # div sin cerrar (HTML malformado): resto del documento
+
+# ── Layout "grid" (2 gráficos/fila) → tabla Outlook-safe ─────────────────────
+# CSS Grid (``.cards-grid``, incluido ``grid-template-rows:subgrid`` en ``.card``,
+# ver html_render.py) no lo soporta el motor Word de Outlook AUNQUE se vuelque a
+# ``style=`` inline (a diferencia del resto del CSS, que sí se recupera así). La
+# única forma de lograr 2 gráficos por fila en el CUERPO del correo es una tabla
+# real — mismo patrón que ``_cidify_images.repl_run`` ya usa para fotos pegadas
+# lado a lado.
+_RE_CARDS_GRID_OPEN = re.compile(r'<div class="cards-grid">')
+_RE_CARD_OPEN = re.compile(r'<div class="card(?: card-wide)?"')
+
+def _grid_row(cells: list[str]) -> str:
+    """Fila de la tabla que reemplaza ``.cards-grid``: 1 celda a ancho completo
+    (``card-wide`` o el impar sobrante) o 2 celdas de 50%."""
+    if len(cells) == 1:
+        return f'<tr><td colspan="2" valign="top" style="padding:5px">{cells[0]}</td></tr>'
+    left, right = cells
+    return (
+        "<tr>"
+        f'<td width="50%" valign="top" style="padding:5px 10px 5px 5px">{left}</td>'
+        f'<td width="50%" valign="top" style="padding:5px 5px 5px 10px">{right}</td>'
+        "</tr>"
+    )
+
+def _group_grid_cards(html: str) -> str:
+    """``<div class="cards-grid">…</div>`` → ``<table>`` de 2 columnas.
+
+    Las tarjetas ``card-wide`` (el "hero" de la sección o el impar sobrante,
+    decidido en ``curated_report._wide_block_ids`` — MISMA fuente que dibujó el
+    HTML original) ocupan la fila completa; el resto se empareja de a 2 en el
+    orden en que aparece. El contenido de cada ``<div class="card">`` (título,
+    unidad, nota, el PNG ya cidificado) viaja intacto adentro de su ``<td>`` — sus
+    clases (``block-title`` etc.) siguen recibiendo el inline CSS de siempre."""
+    out: list[str] = []
+    pos = 0
+    for m in _RE_CARDS_GRID_OPEN.finditer(html):
+        out.append(html[pos:m.start()])
+        open_end, close_end = _div_span(html, m.start())
+        inner = html[open_end:close_end - len("</div>")]
+
+        rows: list[str] = []
+        pending: str | None = None
+        for cm in _RE_CARD_OPEN.finditer(inner):
+            _, c_close_end = _div_span(inner, cm.start())
+            card_html = inner[cm.start():c_close_end]
+            if "card-wide" in cm.group():
+                if pending is not None:
+                    rows.append(_grid_row([pending]))
+                    pending = None
+                rows.append(_grid_row([card_html]))
+            elif pending is None:
+                pending = card_html
+            else:
+                rows.append(_grid_row([pending, card_html]))
+                pending = None
+        if pending is not None:  # impar sin marcar wide (defensivo): fila propia igual
+            rows.append(_grid_row([pending]))
+
+        out.append(
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+            'style="margin:10px 0 26px">' + "".join(rows) + "</table>"
+        )
+        pos = close_end
+    out.append(html[pos:])
+    return "".join(out)
+
 # ── Imágenes pegadas por el usuario (data: URI) → adjunto cid: ───────────────
 # Outlook (motor Word) no renderiza <img src="data:..."> en el cuerpo del correo;
 # solo imágenes embebidas como adjunto 'related' referenciadas por cid:, igual
@@ -716,6 +795,13 @@ _CURATED_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r'<div class="placeholder-card[^"]*">'),
      "border:1px dashed #bcbcbc;background:#fafafa;color:#777;padding:18px;text-align:center;"
      "font-size:13px;max-width:760px;margin:6px auto"),
+    # ``.card``/``.card-companion``: layout "grid" (html_render.py). El PAREO en 2
+    # columnas lo arma ``_group_grid_cards`` (tabla real, Outlook no soporta CSS
+    # Grid); esto solo da el look de tarjeta (borde/fondo/padding) al contenido de
+    # cada ``<td>`` — mismo box que ``.card`` en el navegador, sin ``display:grid``.
+    (re.compile(r'<div class="card(?: card-wide)?"[^>]*>'),
+     "border:1px solid #e3e7ee;border-radius:8px;padding:12px 14px 10px;background:#fff"),
+    (re.compile(r'<div class="card-companion">'), "margin:2px 0"),
     (re.compile(r"<p>"), "margin:0 0 6px;font-size:14px"),
     (re.compile(r"<li>"), "margin:2px 0;font-size:14px"),
 ]
@@ -803,6 +889,7 @@ def process_file_passthrough(path: pathlib.Path, out_dir: str | pathlib.Path, *,
     body = strip_body_scripts(body)             # JS del tooltip: inútil en un correo
     body = strip_paste_ghost_lines(body)        # renglones fantasma del pegado a mano (solo CUERPO,
                                                  # el adjunto -attach_html=plain- no se toca)
+    body = _group_grid_cards(body)              # .cards-grid → tabla de 2 columnas (Outlook)
     body = inline_report_css(body)              # CSS del <head> → inline (Outlook)
 
     # Copia PLANA (sin interacción) agrupada por familia, igual que build_family_report.py.

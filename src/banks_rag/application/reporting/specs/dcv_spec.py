@@ -18,30 +18,39 @@ de los bloques, sus TÍTULOS y la forma de cada pieza son los del correo:
 
 Todo sale de ``variacion_stock_todos`` (Fecha x Bucket x Tipo x Sector x Moneda),
 el ÚNICO parquet que abre el stock DCV por agente e instrumento a la vez: tabla y
-gráfico de cada bloque comparten fuente y corte, así no pueden descuadrarse.
+gráfico de cada bloque comparten fuente y corte, así no pueden descuadrarse. La
+EXCEPCIÓN es la duración (ver abajo): sale de dos parquets APARTE, mismo grano.
+
+**Duración por agente e instrumento** — ``duracion_iif``/``duracion_rf``
+(Fecha x Tipo x Moneda x Sector → Duracion), un SNAPSHOT cada uno (solo la fecha
+de hoy, sin histórico). Alimentan la columna "Dur." de la tabla de portafolio
+(``dcv_portfolio_table``, promedio ponderado por monto en Total) y los dos
+gráficos de dispersión categórica "Duración agentes IIF/RF"
+(``dcv_duration_scatter`` → ``chart="point"`` sobre un ``PlotData`` de
+``kind='grouped'``; ver ``_render_grouped_dots`` en ``svg_chart.py``).
+
+**Próximos vencimientos por agente** — 3 parquets SNAPSHOT más (``vencimientos_
+hoy``/``vencimientos_t_mas_uno``/``vencimientos_cinco_dias``, mismo grano Tipo x
+Sector x Moneda) + ``vencimientos_futuros_instrumento`` (mensual, ya en el
+catálogo) filtrado al mes en curso, dan las columnas T / T+1 / Acum 5d. / Mes de
+las 8 mini-tablas (``dcv_upcoming_maturities_table`` → ``render_dcv_maturities_
+grid``). Dos diferencias de COBERTURA frente al correo (anotadas en el bloque):
+el dato trae Acum 5d., no Acum 7d.; y ninguno de los 4 parquets abre "Otros" en
+Soberano/Bancario/Corporativo (el correo sí) — queda como una sola fila "RF".
 
 **Bloques sin parquet** (``STATUS_SKIP``): se mantienen EN SU POSICIÓN del correo
 como tarjeta "Falta el parquet", para conservar la estructura del original y dejar
 a la vista qué falta traer del servidor. Su ``note`` empieza con ``"Falta parquet:"``
-y dice QUÉ serie es. Verificado contra las columnas REALES de los 174 parquets:
+y dice QUÉ serie es. Verificado contra las columnas REALES de los parquets:
 
-  - Duración agentes IIF / RF (1.jpg) — no hay ningún parquet con duración
-    abierta por agente x instrumento. Los tres ``duracion_*`` que existen son de
-    otro grano: ``duracion_ffmm`` (por tipo de fondo), ``duracion_pdbc`` (por
-    sector, solo PDBC) y ``duracion_rfl_csv`` (una sola serie).
-  - Próximos vencimientos por agente (2.jpg) — el único perfil de vencimientos es
-    ``perfil_vencimiento_dp_bb`` (Vencimiento x Bonos/DAP), sin apertura por
-    agente ni los cortes T / T+1 / Acum 7d / Acum 30d.
   - Mandantes y Depósitos de Valores, y Corredores de Bolsa y Bolsa de Valores
     (5.jpg y 6.jpg) — el ``Sector`` del parquet solo distingue AFP, Bancos, CS,
     FFMM y Otros; ambos agentes vienen agregados dentro de "Otros" y no se pueden
     separar.
 
-Tres diferencias de COBERTURA (el bloque existe y es correcto, pero el universo
+Dos diferencias de COBERTURA (el bloque existe y es correcto, pero el universo
 del parquet es más chico que el del correo); van anotadas en el bloque:
 
-  - La tabla de portafolio no lleva columna de duración por agente (mismo motivo
-    que los dos gráficos de duración): queda con Monto y % del portafolio.
   - Los tramos de plazo del parquet son 5 (Menor a 1Y, 1-2Y, 2-5Y, 5-10Y, Mayor a
     10Y) contra los 8 del correo (<=30d, <=90d, <=180d, <=360d, <=2a, <=5a, <=10a,
     >10a): el corte fino dentro del primer año no está en el dato.
@@ -50,7 +59,8 @@ del parquet es más chico que el del correo); van anotadas en el bloque:
 
 Esta es la ÚNICA pieza a editar para ajustar el informe dcv. Las transforms viven
 en ``series_transforms.py`` (``dcv_portfolio_table``, ``dcv_bucket_table``,
-``dcv_snapshot_stacked``); el render en ``svg_chart.py``.
+``dcv_snapshot_stacked``, ``dcv_duration_scatter``, ``dcv_upcoming_maturities_
+table``); el render en ``svg_chart.py``.
 """
 
 from __future__ import annotations
@@ -129,7 +139,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         section=_S_PORTAFOLIO, title="Portafolio por agente",
         unit=_UNIT, chart="heatmap_table", status=STATUS_MVP,
         source_id=_SRC, transform="dcv_portfolio_table",
-        note="*Sin columna de duración: no hay parquet con duración por agente e instrumento.",
+        note="*Duración: promedio ponderado por monto en la fila/columna Total.",
     ),
     ReportBlock(
         section=_S_PORTAFOLIO, title="Tenencia agentes por instrumento",
@@ -140,21 +150,25 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     ),
     ReportBlock(
         section=_S_PORTAFOLIO, title="Duración agentes IIF",
-        unit="Años", chart="point", status=STATUS_SKIP,
-        note="Falta parquet: duración por agente e instrumento.",
+        unit="Años", chart="point", status=STATUS_MVP,
+        source_id="duracion_iif", transform="dcv_duration_scatter",
     ),
     ReportBlock(
         section=_S_PORTAFOLIO, title="Duración agentes RF",
-        unit="Años", chart="point", status=STATUS_SKIP,
-        note="Falta parquet: duración por agente e instrumento.",
+        unit="Años", chart="point", status=STATUS_MVP,
+        source_id="duracion_rf", transform="dcv_duration_scatter",
     ),
     # ── 2.jpg — Próximos Vencimientos ────────────────────────────────────────
     ReportBlock(
         section=_S_VENCIMIENTOS,
-        title="Próximos vencimientos por agente (T, T+1, Acum. 7d, Acum. 30d)",
-        unit=_UNIT, chart="heatmap_table", status=STATUS_SKIP,
-        note="Falta parquet: el perfil de vencimientos disponible no abre por agente "
-             "ni trae los cortes T / T+1 / Acum. 7d / Acum. 30d.",
+        title="Próximos vencimientos por agente (T, T+1, Acum. 5d., Mes)",
+        unit="Millones de USD", chart="heatmap_table", status=STATUS_MVP,
+        source_id="vencimientos_hoy", transform="dcv_upcoming_maturities_table",
+        note="*Acum. 5d. (el correo trae Acum. 7d.; no hay parquet a 7 días). "
+             "Mes = total programado del mes en curso vía vencimientos_futuros_"
+             "instrumento (no una ventana móvil de 30 días; no distingue lo ya "
+             "vencido del mes de lo que falta). RF: el dato no abre Soberano/"
+             "Bancario/Corporativo.",
     ),
     ReportBlock(
         section=_S_VENCIMIENTOS, title="Vencimientos Totales",
@@ -184,4 +198,5 @@ DCV_SPEC = FamilyReportSpec(
     # corte común arrastraría las tablas de stock a la fecha del perfil de
     # vencimientos, que vive en el futuro.
     share_weekly_cutoff=False,
+    grid_sections=frozenset({"Todos los instrumentos","Bancos","Fondos de Pensiones y AFC","Fondos Mutuos","Compañías de Seguros","Mandantes","Corredores de Bolsa","Otros"})
 )

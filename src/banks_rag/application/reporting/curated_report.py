@@ -369,6 +369,8 @@ def _process_block(
         right_axis=block.params.get("right_axis"),
         right_unit=block.params.get("right_unit", ""),
         right_style=block.params.get("right_style", ""),
+        right_invert=bool(block.params.get("right_invert", False)),
+        left_style=block.params.get("left_style", ""),
         x_label=block.params.get("x_label", ""),
         y_label=block.params.get("y_label", ""),
     )

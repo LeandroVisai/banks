@@ -967,6 +967,207 @@ def wide_daily_diff_ytd(
     return None if plot.is_empty() else plot
 
 
+def _day_month_label(iso: str) -> str:
+    """``YYYY-MM-DD`` → ``29abr26`` (día + mes abreviado + año corto). Como
+    ``_month_label`` pero con el DÍA: estos reportes no siempre cortan a fin de
+    mes calendario, así que el eje X muestra la fecha real del corte, no el mes."""
+    d = date.fromisoformat(iso[:10])
+    return f"{d.day}{_MONTHS_ES[d.month - 1]}{iso[2:4]}"
+
+
+def wide_monthly_diff_bars(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Variación MES A MES de columnas ANCHAS que vienen como NIVEL ACUMULADO (no
+    un flujo a sumar): para cada columna, resta el nivel del corte contra el del
+    corte anterior → barras APILADAS (una serie por columna; ``overlay``
+    superpuesta como punto). Es la versión "sin acumular después" de
+    ``wide_daily_diff_ytd`` (que sí encadena el diff diario en un cumsum YTD) —
+    acá cada barra es la variación de UN período nomás, para leerlas de a una
+    (réplica de "Var. Mensual Posición AFP en SPC nominal" del tablero).
+
+    Agrupa por MES calendario tomando la última observación de cada uno (soporta
+    tanto un corte mensual regular como uno irregular con varias filas por mes) y
+    etiqueta el eje X con la fecha REAL de ese corte (``29abr26``), no solo el mes
+    — el reporte no siempre cae a fin de mes.
+
+    params: ``include`` (cols a apilar; default = todas menos overlay), ``overlay``
+    (cols superpuestas como punto, p.ej. ``["Neto"]``), ``months`` (int, default 10).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None or not roles.value_cols:
+            return None
+        overlay_cols = [c for c in (params.get("overlay") or []) if c in roles.value_cols]
+        include = params.get("include") or [c for c in roles.value_cols if c not in overlay_cols]
+        cols = [c for c in include if c in roles.value_cols and c not in overlay_cols]
+        if not cols:
+            return None
+        wanted = cols + overlay_cols
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, *wanted])
+    finally:
+        con.close()
+
+    # Una fila representativa por mes: la última observación (por fecha) del mes.
+    by_month: dict[str, dict] = {}
+    for r in rows:
+        iso = r.get(roles.date_col)
+        if iso is None:
+            continue
+        mk = _month_key(iso)
+        prev = by_month.get(mk)
+        if prev is None or iso > prev[roles.date_col]:
+            by_month[mk] = r
+    month_keys = sorted(by_month)
+    if len(month_keys) < 2:
+        return None
+    # El primer mes no tiene un mes previo con el que diferenciar.
+    diff_keys = month_keys[1:][-int(params.get("months", 10)):]
+
+    sd: dict[str, dict[str, float]] = {c: {} for c in wanted}
+    labels: list[str] = []
+    for k in diff_keys:
+        i = month_keys.index(k)
+        cur_row, prev_row = by_month[k], by_month[month_keys[i - 1]]
+        label = _day_month_label(str(cur_row[roles.date_col]))
+        labels.append(label)
+        for c in wanted:
+            cur_v, prev_v = cur_row.get(c), prev_row.get(c)
+            if cur_v is None or prev_v is None:
+                continue
+            try:
+                sd[c][label] = float(cur_v) - float(prev_v)
+            except (TypeError, ValueError):
+                continue
+    if not labels:
+        return None
+
+    series_order = list(cols)
+    overlay: tuple[str, ...] = ()
+    if overlay_cols:
+        series_order.append(overlay_cols[0])
+        overlay = (overlay_cols[0],)
+    last_iso = str(by_month[month_keys[-1]][roles.date_col])
+    note = f"Variación mes a mes (corte vs. corte previo) · datos hasta {_fmt_date(last_iso)}"
+    return _grouped(dataset.id, dataset.unit, sd, labels, series_order, overlay=overlay, date_note=note)
+
+
+def monthly_bars_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Valor MENSUAL ya calculado en el parquet (NO un índice a diferenciar, p.ej.
+    un retorno mensual) por categoría → barras agrupadas (X = mes, una serie por
+    categoría). A diferencia de ``monthly_returns``/``monthly_sum_by_fund``
+    (parquets ANCHOS, una columna por fondo), lee un parquet LARGO con la categoría
+    en una columna — útil cuando además hay que FILTRAR otra columna (ej. un
+    parquet Fecha x AFP x Fondo→Retorno, filtrando AFP="Total" para el consolidado).
+
+    params: ``category`` (col de la serie/eje de color), ``value`` (col numérica),
+    ``filter_col``/``filter_val`` (opcional, restringe filas), ``order`` (orden de
+    las categorías/series; sin él, alfabético), ``months`` (int, default 10).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    cat, val = params.get("category"), params.get("value")
+    if not cat or not val:
+        return None
+    fcol, fval = params.get("filter_col"), params.get("filter_val")
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None:
+            return None
+        cols = [roles.date_col, cat, val] + ([fcol] if fcol else [])
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=cols)
+    finally:
+        con.close()
+    if fcol and fval is not None:
+        rows = [r for r in rows if str(r.get(fcol)) == str(fval)]
+
+    by_cat: dict[str, dict[str, float]] = {}
+    last = ""
+    for r in rows:
+        c, iso, raw = r.get(cat), r.get(roles.date_col), r.get(val)
+        if c is None or iso is None or raw is None:
+            continue
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            continue
+        by_cat.setdefault(str(c), {})[_month_key(iso)] = v  # última fila vista por (mes, categoría)
+        last = max(last, iso)
+    if not by_cat or not last:
+        return None
+    cats = [c for c in (params.get("order") or sorted(by_cat)) if c in by_cat] or sorted(by_cat)
+    all_keys = sorted({k for d in by_cat.values() for k in d})
+    keys = all_keys[-int(params.get("months", 10)):]
+    sd = {c: {_month_label(k): by_cat[c].get(k, 0.0) for k in keys} for c in cats}
+    note = f"Datos hasta {_fmt_date(last)}"
+    return _grouped(dataset.id, dataset.unit, sd, [_month_label(k) for k in keys], cats, date_note=note)
+
+
+def ytd_grouped_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Rentabilidad YTD compuesta GEOMÉTRICAMENTE desde valores MENSUALES ya
+    calculados (no un índice a diferenciar), cruzando DOS categóricas → barras
+    agrupadas (eje X = ``group``, una serie por ``category``). Para cada
+    combinación (categoría, grupo) compone los valores del año en curso:
+    ``prod(1 + v_i/100) - 1``.
+
+    params: ``category`` (col de la serie/color, ej. AFP), ``group`` (col del eje
+    X, ej. Fondo), ``value`` (col numérica, retorno mensual en %), ``exclude``
+    (valores de ``category`` a excluir, ej. un consolidado "Total"), ``order``
+    (orden del eje X), ``year`` (default: el año del último dato).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    cat, group, val = params.get("category"), params.get("group"), params.get("value")
+    if not cat or not group or not val:
+        return None
+    exclude = {str(x) for x in (params.get("exclude") or [])}
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, cat, group, val])
+    finally:
+        con.close()
+
+    by_cat_group: dict[str, dict[str, list[tuple[str, float]]]] = {}
+    last = ""
+    for r in rows:
+        c, g, iso, raw = r.get(cat), r.get(group), r.get(roles.date_col), r.get(val)
+        if c is None or g is None or iso is None or raw is None or str(c) in exclude:
+            continue
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            continue
+        by_cat_group.setdefault(str(c), {}).setdefault(str(g), []).append((str(iso), v))
+        last = max(last, str(iso))
+    if not last:
+        return None
+    year = str(params.get("year") or last[:4])
+    all_groups = sorted({g for d in by_cat_group.values() for g in d})
+    groups = [g for g in (params.get("order") or all_groups) if g in all_groups]
+    cats = sorted(by_cat_group)
+    sd: dict[str, dict[str, float]] = {}
+    for c in cats:
+        col: dict[str, float] = {}
+        for g in groups:
+            pts = sorted(p for p in by_cat_group[c].get(g, []) if p[0][:4] == year)
+            if not pts:
+                continue
+            total = 1.0
+            for _iso, v in pts:
+                total *= 1.0 + v / 100.0
+            col[g] = (total - 1.0) * 100.0
+        sd[c] = col
+    note = f"YTD {year} (compuesto de retornos mensuales) · datos hasta {_fmt_date(last)}"
+    return _grouped(dataset.id, dataset.unit, sd, groups, cats, date_note=note)
+
 
 def wide_lines(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Multi-línea de un parquet 'ancho' (varias columnas de valor), seleccionando
@@ -1820,6 +2021,12 @@ _DCV_TIPO_ORDER = ("PDBC", "DAP", "BTP", "BTU", "BCP", "BCU", "BB", "BE", "BCCh"
 # Sufijo de moneda del correo (el original abre DAP/BB/BC por moneda).
 _DCV_CCY_SUFFIX = {"CLP": "$", "UF": "UF", "USD": "USD"}
 
+# Duración por instrumento x agente: dos parquets aparte (no ``variacion_...``),
+# mismo grano (Tipo x Moneda x Sector), cada uno un SNAPSHOT (solo trae la fecha
+# de hoy, sin histórico) — "intermediación financiera" (DAP/PDBC) y "renta fija"
+# (el resto de los instrumentos).
+_DCV_DURATION_FILES = ("duracion_iif.parquet", "duracion_rf.parquet")
+
 
 def _dcv_rows(
     dataset: ParquetDataset, parquet_dir: Path, params: dict,
@@ -1890,15 +2097,55 @@ def _dcv_order_instruments(labels: list[str]) -> list[str]:
     return sorted(dict.fromkeys(labels), key=key)
 
 
+def _dcv_snapshot_rows(parquet_dir: Path, files: tuple[str, ...] = _DCV_DURATION_FILES) -> list[dict]:
+    """Filas ``{Tipo, Moneda, Sector, v}`` del ÚLTIMO corte de cada archivo en
+    ``files``. Genérica: mismo grano que ``variacion_instrumento_todos_plazo``
+    (Tipo x Moneda x Sector) — se indexa con las MISMAS ``_dcv_instrument_label``/
+    ``_DCV_AGENTS`` de la tabla de portafolio. Cada archivo es un SNAPSHOT (trae
+    solo la fecha de hoy, sin histórico): se lee su propio último corte, no el
+    de ``variacion_...`` — pueden no coincidir exactamente si se refrescan en
+    momentos distintos del día. La usan tanto la duración (``duracion_iif``/
+    ``duracion_rf``, ``v=Duracion``) como los vencimientos (``vencimientos_hoy``/
+    ``vencimientos_t_mas_uno``/``vencimientos_cinco_dias``, ``v=Stock_USD``)."""
+    out: list[dict] = []
+    for fname in files:
+        path = parquet_dir / fname
+        if not path.exists():
+            continue
+        con = duckdb.connect()
+        try:
+            roles = detect_roles(path, con)
+            if roles.date_col is None or not roles.value_cols:
+                continue
+            dates = _distinct_dates_sorted(con, path, roles.date_col)
+            if not dates:
+                continue
+            cut = dates[-1]
+            cols = [c for c in ("Tipo", "Sector", "Moneda") if c in roles.category_cols]
+            val = roles.value_cols[0]
+            src = f"read_parquet('{path.as_posix()}')"
+            rows = con.execute(
+                f"SELECT {', '.join(cols)}, {val} AS v FROM {src} "
+                f"WHERE TRY_CAST({roles.date_col} AS DATE) = DATE '{cut}'"
+            ).df().to_dict("records")
+            out.extend({**r, "v": float(r["v"])} for r in rows if r.get("v") is not None)
+        finally:
+            con.close()
+    return out
+
+
 def dcv_portfolio_table(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
-    """Tabla "Portafolio por agente": monto y % del portafolio por instrumento
-    (filas) y agente (columnas), al último corte."""
+    """Tabla "Portafolio por agente": monto, DURACIÓN y % del portafolio por
+    instrumento (filas) y agente (columnas), al último corte. La duración sale
+    de ``_DCV_DURATION_FILES`` (parquets aparte, mismo grano): sin ellos la
+    columna simplemente no se dibuja (mismo resultado que antes)."""
     from .svg_chart import render_dcv_portfolio_table
 
     rows, cut = _dcv_rows(dataset, parquet_dir, params)
     if not rows:
         return None
-    labels = _dcv_instrument_label(rows)
+    dur_rows = _dcv_snapshot_rows(parquet_dir, params.get("duration_files") or _DCV_DURATION_FILES)
+    labels = _dcv_instrument_label(rows + dur_rows)
 
     monto: dict[str, dict[str, float]] = {}
     for r in rows:
@@ -1910,14 +2157,201 @@ def dcv_portfolio_table(dataset: ParquetDataset, parquet_dir: Path, params: dict
     if not monto:
         return None
 
+    duracion: dict[str, dict[str, float]] = {}
+    for r in dur_rows:
+        agent = _DCV_AGENTS.get(str(r.get("Sector")))
+        key = (str(r.get("Tipo")), str(r.get("Moneda") or ""))
+        if agent is None or key not in labels:
+            continue
+        duracion.setdefault(agent, {})[labels[key]] = r["v"]
+
     agents = [a for a in _DCV_AGENTS.values() if a in monto]
     instruments = _dcv_order_instruments([i for per in monto.values() for i in per])
     return HtmlTable(
         html=render_dcv_portfolio_table(
             instruments, agents, monto, unit=dataset.unit, asof=_fmt_date(cut),
+            duracion=duracion or None,
         ),
         dataset_id=dataset.id,
     )
+
+
+# ── Informe DCV: Próximos Vencimientos por agente (T / T+1 / Acum 5d. / Mes) ──
+#
+# Tres parquets SNAPSHOT (mismo grano Tipo x Sector x Moneda que la duración,
+# leídos con ``_dcv_snapshot_rows``) + uno mensual (``vencimientos_futuros_
+# instrumento``, Año x Mes_label, YA en el catálogo) para el mes en curso. El
+# correo real trae Acum 7d./Acum 30d.; el dato disponible es Acum 5d. (no 7) y
+# un total MENSUAL sin resolución diaria (no un rolling 30d) — documentado en
+# la nota del bloque, mismo criterio que las demás diferencias de cobertura.
+
+_DCV_MATURITY_SNAPSHOT_FILES: dict[str, str] = {
+    "T": "vencimientos_hoy.parquet",
+    "T+1": "vencimientos_t_mas_uno.parquet",
+    "Acum 5d.": "vencimientos_cinco_dias.parquet",
+}
+_DCV_MATURITY_MONTHLY_FILE = "vencimientos_futuros_instrumento.parquet"
+_DCV_MATURITY_MONTHLY_LABEL = "Mes"
+# Filas fijas de la tabla de vencimientos (a diferencia del portafolio, acá el
+# correo repite el MISMO template de filas en las 8 mini-tablas): PDBC y DAP
+# siempre abiertos por moneda; cualquier otro instrumento (los ``vencimientos_*``
+# solo declaran "Otros"; el mensual trae más detalle -BB/BCCh/BE/BTP/BTU/Letras
+# MdH- que acá se colapsa por consistencia) cae en "RF" — el correo real abre
+# esa fila en Soberano/Bancario/Corporativo, apertura que el dato no trae.
+_DCV_MATURITY_ROWS = ("PDBC", "DAP $", "DAP UF", "DAP USD", "RF")
+_DCV_MES_LABEL_ES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+def _dcv_maturity_label(tipo: str, moneda: str) -> str:
+    """Tipo/Moneda → fila de "Próximos Vencimientos" (ver ``_DCV_MATURITY_ROWS``:
+    PDBC y DAP quedan tal cual — SIEMPRE con sufijo de moneda, a diferencia de
+    ``_dcv_instrument_label`` que solo lo agrega si hay más de una moneda —
+    porque acá el template de filas es fijo e igual en las 8 mini-tablas;
+    cualquier otro instrumento colapsa en "RF"."""
+    if tipo == "PDBC":
+        return "PDBC"
+    if tipo == "DAP":
+        suffix = _DCV_CCY_SUFFIX.get(moneda, moneda)
+        return f"DAP {suffix}".strip() if suffix else "DAP"
+    return "RF"
+
+
+def _dcv_current_month_rows(parquet_dir: Path, fname: str, as_of: str | None = None) -> list[dict]:
+    """Filas ``{Tipo, Sector, Moneda, v}`` de ``vencimientos_futuros_instrumento``
+    (mensual: Año x Mes_label) para el mes de ``as_of`` (default: hoy). Total
+    PROGRAMADO del mes — el dato no trae resolución diaria, así que no distingue
+    lo ya vencido dentro del mes de lo que falta."""
+    path = parquet_dir / fname
+    if not path.exists():
+        return []
+    today = date.fromisoformat(as_of[:10]) if as_of else date.today()
+    year, mes_label = str(today.year), _DCV_MES_LABEL_ES[today.month - 1]
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        cols = [c for c in ("Tipo", "Sector", "Moneda") if c in roles.category_cols]
+        if not cols or not roles.value_cols:
+            return []
+        val = roles.value_cols[0]
+        src = f"read_parquet('{path.as_posix()}')"
+        rows = con.execute(
+            f"SELECT {', '.join(cols)}, {val} AS v FROM {src} "
+            f'WHERE CAST("Año" AS VARCHAR) = \'{year}\' AND "Mes_label" = \'{mes_label}\''
+        ).df().to_dict("records")
+    finally:
+        con.close()
+    return [{**r, "v": float(r["v"])} for r in rows if r.get("v") is not None]
+
+
+def dcv_upcoming_maturities_table(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
+    """Tabla "Próximos Vencimientos" por agente: 8 mini-tablas (Totales + 7
+    agentes), columnas T / T+1 / Acum 5d. / Mes, filas = instrumento + Total.
+
+    ``dataset`` es solo UNO de los cuatro parquets (``vencimientos_hoy``, el
+    bloque del spec); los otros tres se leen directo del ``parquet_dir`` (igual
+    que la duración) — ver ``_DCV_MATURITY_SNAPSHOT_FILES``/
+    ``_DCV_MATURITY_MONTHLY_FILE``. ``params["as_of"]`` (ISO) fija el "mes en
+    curso" de la columna Mes; sin él, hoy."""
+    from .svg_chart import render_dcv_maturities_grid
+
+    columns = ["T", "T+1", "Acum 5d.", _DCV_MATURITY_MONTHLY_LABEL]
+    data: dict[str, dict[str, dict[str, float]]] = {}
+    any_data = False
+
+    for col, fname in _DCV_MATURITY_SNAPSHOT_FILES.items():
+        for r in _dcv_snapshot_rows(parquet_dir, (fname,)):
+            agent = _DCV_AGENTS.get(str(r.get("Sector")))
+            if agent is None:
+                continue
+            inst = _dcv_maturity_label(str(r.get("Tipo")), str(r.get("Moneda") or ""))
+            per_col = data.setdefault(agent, {}).setdefault(col, {})
+            per_col[inst] = per_col.get(inst, 0.0) + r["v"]
+            any_data = True
+
+    for r in _dcv_current_month_rows(parquet_dir, _DCV_MATURITY_MONTHLY_FILE, params.get("as_of")):
+        agent = _DCV_AGENTS.get(str(r.get("Sector")))
+        if agent is None:
+            continue
+        inst = _dcv_maturity_label(str(r.get("Tipo")), str(r.get("Moneda") or ""))
+        per_col = data.setdefault(agent, {}).setdefault(_DCV_MATURITY_MONTHLY_LABEL, {})
+        per_col[inst] = per_col.get(inst, 0.0) + r["v"]
+        any_data = True
+
+    if not any_data:
+        return None
+
+    agents = [a for a in _DCV_AGENTS.values() if a in data]
+    # "Totales" = suma de los 7 agentes reales, primero en la grilla.
+    totales: dict[str, dict[str, float]] = {}
+    for a in agents:
+        for col, per_inst in data[a].items():
+            tot = totales.setdefault(col, {})
+            for inst, v in per_inst.items():
+                tot[inst] = tot.get(inst, 0.0) + v
+    data_with_total = {"Totales": totales, **{a: data[a] for a in agents}}
+
+    return HtmlTable(
+        html=render_dcv_maturities_grid(["Totales", *agents], columns, data_with_total, unit=dataset.unit),
+        dataset_id=dataset.id,
+    )
+
+
+def dcv_duration_scatter(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Duración por instrumento y agente → dispersión CATEGÓRICA (X = instrumento,
+    color = agente, un punto por agente que tenga dato en ese instrumento).
+    Réplica de "Duración agentes IIF/RF" del informe DCV.
+
+    El parquet (``duracion_iif``/``duracion_rf``) es un SNAPSHOT — trae solo la
+    fecha de hoy, sin histórico — así que se lee su propio último corte, sin
+    ventana ni corte común con el resto del informe (igual que las tablas de
+    portafolio/tramo, que también son snapshots del stock)."""
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        if roles.date_col is None or not roles.value_cols:
+            return None
+        dates = _distinct_dates_sorted(con, path, roles.date_col)
+        if not dates:
+            return None
+        cut = dates[-1]
+        cols = [c for c in ("Tipo", "Sector", "Moneda") if c in roles.category_cols]
+        val = roles.value_cols[0]
+        src = f"read_parquet('{path.as_posix()}')"
+        rows = con.execute(
+            f"SELECT {', '.join(cols)}, {val} AS v FROM {src} "
+            f"WHERE TRY_CAST({roles.date_col} AS DATE) = DATE '{cut}'"
+        ).df().to_dict("records")
+    finally:
+        con.close()
+    rows = [{**r, "v": float(r["v"])} for r in rows if r.get("v") is not None]
+    if not rows:
+        return None
+    labels = _dcv_instrument_label(rows)
+
+    by_agent: dict[str, dict[str, float]] = {}
+    insts: list[str] = []
+    for r in rows:
+        agent = _DCV_AGENTS.get(str(r.get("Sector")))
+        if agent is None:
+            continue
+        inst = labels[(str(r.get("Tipo")), str(r.get("Moneda") or ""))]
+        by_agent.setdefault(agent, {})[inst] = r["v"]
+        if inst not in insts:
+            insts.append(inst)
+    if not by_agent:
+        return None
+
+    order = _dcv_order_instruments(insts)
+    agents = [a for a in _DCV_AGENTS.values() if a in by_agent]
+    series = [
+        PlotSeries(label=a, points=[(i, by_agent[a][i]) for i in order if i in by_agent[a]])
+        for a in agents
+    ]
+    return PlotData(dataset.id, "grouped_bar", "grouped", dataset.unit, series,
+                    date_note=f"Corte: {_fmt_date(cut)}")
 
 
 def dcv_bucket_table(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
@@ -3556,6 +3990,8 @@ _REGISTRY: dict[str, Transform | None] = {
     "monthly_diff": monthly_diff,
     # Genéricas reutilizables (NR / AFP).
     "category_series": category_series,
+    "monthly_bars_by_cat": monthly_bars_by_cat,
+    "ytd_grouped_by_cat": ytd_grouped_by_cat,
     "wide_lines": wide_lines,
     "window_grouped": window_grouped,
     "wide_window_bars": wide_window_bars,
@@ -3577,6 +4013,8 @@ _REGISTRY: dict[str, Transform | None] = {
     "dcv_heatmap": dcv_heatmap,
     # Informe DCV (familia dcv): tablas por agente / tramo + su gráfico apilado.
     "dcv_portfolio_table": dcv_portfolio_table,
+    "dcv_duration_scatter": dcv_duration_scatter,
+    "dcv_upcoming_maturities_table": dcv_upcoming_maturities_table,
     "dcv_bucket_table": dcv_bucket_table,
     "dcv_snapshot_stacked": dcv_snapshot_stacked,
     "fx_sector_flow_table": fx_sector_flow_table,
@@ -3587,6 +4025,7 @@ _REGISTRY: dict[str, Transform | None] = {
     "fx_tasas_scatter": fx_tasas_scatter,
     "allocation_wide_by_fund":allocation_wide_by_fund,
     "wide_daily_diff_ytd": wide_daily_diff_ytd,
+    "wide_monthly_diff_bars": wide_monthly_diff_bars,
     # Informe Cambiario AM (familia cambiarioam): el parquet trae el dato crudo y
     # la transform calcula lo derivado (Bollinger, percentiles S/R, base 100, spreads).
     "cam_lines": cam_lines,

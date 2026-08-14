@@ -38,9 +38,11 @@ from banks_rag.application.reporting.series_transforms import (
     daily_wide_stacked,
     dcv_bucket_table,
     dcv_cut_dates,
+    dcv_duration_scatter,
     dcv_heatmap,
     dcv_portfolio_table,
     dcv_snapshot_stacked,
+    dcv_upcoming_maturities_table,
     filter_fund,
     fx_agent_delta_table,
     fx_sector_flow_table,
@@ -254,6 +256,99 @@ class TestTransforms:
         assert round(mes["BB"], 1) == -10.0   # 120 - 130
         assert round(ytd["BB"], 1) == 20.0     # 120 - 100 (inicio del año)
 
+    def _retorno_mensual_afp_parquet(self, path) -> None:
+        """Réplica de la forma REAL de ``retorno_mensual_afp`` (Fecha x AFP x Fondo
+        → Retorno, ya el retorno MENSUAL, no un índice a diferenciar). Incluye una
+        fila de dic-2025 (año previo) para ejercitar el recorte YTD."""
+        rows = [
+            "(DATE '2025-12-31', 'Capital', 'A', 5.0)",
+            # ene-2026
+            "(DATE '2026-01-31', 'Total',   'A',  1.0)", "(DATE '2026-01-31', 'Total',   'B',  2.0)",
+            "(DATE '2026-01-31', 'Capital', 'A',  1.0)", "(DATE '2026-01-31', 'Capital', 'B',  2.0)",
+            "(DATE '2026-01-31', 'Cuprum',  'A',  1.5)", "(DATE '2026-01-31', 'Cuprum',  'B',  2.5)",
+            # feb-2026
+            "(DATE '2026-02-28', 'Total',   'A', -1.0)", "(DATE '2026-02-28', 'Total',   'B',  0.5)",
+            "(DATE '2026-02-28', 'Capital', 'A', -1.0)", "(DATE '2026-02-28', 'Capital', 'B',  0.5)",
+            "(DATE '2026-02-28', 'Cuprum',  'A',  0.0)", "(DATE '2026-02-28', 'Cuprum',  'B',  1.0)",
+            # mar-2026 (último mes)
+            "(DATE '2026-03-31', 'Total',   'A',  2.0)", "(DATE '2026-03-31', 'Total',   'B', -0.5)",
+            "(DATE '2026-03-31', 'Capital', 'A',  2.0)", "(DATE '2026-03-31', 'Capital', 'B', -0.5)",
+            "(DATE '2026-03-31', 'Cuprum',  'A',  1.0)", "(DATE '2026-03-31', 'Cuprum',  'B',  0.5)",
+        ]
+        _write(path, "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, AFP, Fondo, Retorno)")
+
+    def test_monthly_bars_by_cat_filters_and_groups_by_month(self, tmp_path):
+        """``monthly_returns`` (índice ANCHO a diferenciar) no sirve para un parquet
+        LARGO donde el valor YA es el retorno del mes — por eso esta transform
+        aparte: filtra AFP=Total y desagrupa por Fondo, X=mes."""
+        from banks_rag.application.reporting.series_transforms import monthly_bars_by_cat
+
+        p = tmp_path / "retorno_mensual_afp.parquet"
+        self._retorno_mensual_afp_parquet(p)
+        ds = _ds("retorno_mensual_afp.parquet", id="retorno_mensual_afp", unit="%")
+        plot = monthly_bars_by_cat(ds, tmp_path, {
+            "category": "Fondo", "value": "Retorno",
+            "filter_col": "AFP", "filter_val": "Total",
+            "order": ["A", "B"], "months": 10,
+        })
+        assert plot.kind == "grouped"
+        assert [s.label for s in plot.series] == ["A", "B"]  # orden pedido, Capital/Cuprum afuera
+        a = dict(next(s for s in plot.series if s.label == "A").points)
+        b = dict(next(s for s in plot.series if s.label == "B").points)
+        assert list(a.values()) == pytest.approx([1.0, -1.0, 2.0])   # ene, feb, mar (Total)
+        assert list(b.values()) == pytest.approx([2.0, 0.5, -0.5])
+        assert len(a) == 3  # dic-2025 no se cuela (era Capital, no Total)
+
+    def test_ytd_grouped_by_cat_compounds_current_year_excludes_total(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import ytd_grouped_by_cat
+
+        p = tmp_path / "retorno_mensual_afp.parquet"
+        self._retorno_mensual_afp_parquet(p)
+        ds = _ds("retorno_mensual_afp.parquet", id="retorno_mensual_afp", unit="%")
+        plot = ytd_grouped_by_cat(ds, tmp_path, {
+            "category": "AFP", "group": "Fondo", "value": "Retorno",
+            "exclude": ["Total"], "order": ["A", "B"],
+        })
+        assert plot.kind == "grouped"
+        assert set(s.label for s in plot.series) == {"Capital", "Cuprum"}  # Total excluido
+        capital = dict(next(s for s in plot.series if s.label == "Capital").points)
+        cuprum = dict(next(s for s in plot.series if s.label == "Cuprum").points)
+        # Capital A: dic-2025 (5.0) NO cuenta — solo ene/feb/mar 2026: 1.0,-1.0,2.0
+        assert capital["A"] == pytest.approx(((1.01 * 0.99 * 1.02) - 1) * 100, abs=1e-6)
+        assert capital["B"] == pytest.approx(((1.02 * 1.005 * 0.995) - 1) * 100, abs=1e-6)
+        assert cuprum["A"] == pytest.approx(((1.015 * 1.0 * 1.01) - 1) * 100, abs=1e-6)
+        assert cuprum["B"] == pytest.approx(((1.025 * 1.01 * 1.005) - 1) * 100, abs=1e-6)
+
+    def test_wide_monthly_diff_bars_diffs_cumulative_levels_not_sums_them(self, tmp_path):
+        """``afp_variacion_spc`` viene como NIVEL acumulado por tramo, con cortes
+        irregulares (no siempre fin de mes calendario) — la barra de cada mes es
+        el corte vs. el corte previo, NO la suma de valores dentro del mes
+        (wide_monthly_bars daría un número sin sentido sobre un acumulado)."""
+        from banks_rag.application.reporting.series_transforms import wide_monthly_diff_bars
+
+        p = tmp_path / "afp_variacion_spc.parquet"
+        rows = [
+            "(DATE '2026-01-15', 100.0, 50.0, 150.0)",
+            "(DATE '2026-02-20', 120.0, 40.0, 160.0)",
+            "(DATE '2026-03-10',  90.0, 70.0, 160.0)",
+        ]
+        _write(p, "SELECT * FROM (VALUES " + ", ".join(rows)
+               + ') t(Fecha, "1 a 90 dias", "91 a 360 dias", Neto)')
+        ds = _ds("afp_variacion_spc.parquet", id="afp_variacion_spc", unit="Millones de USD")
+        plot = wide_monthly_diff_bars(ds, tmp_path, {
+            "include": ["1 a 90 dias", "91 a 360 dias"], "overlay": ["Neto"], "months": 10,
+        })
+        assert plot.kind == "grouped"
+        assert plot.overlay == ("Neto",)
+        assert [s.label for s in plot.series] == ["1 a 90 dias", "91 a 360 dias", "Neto"]
+        b1 = dict(next(s for s in plot.series if s.label == "1 a 90 dias").points)
+        b2 = dict(next(s for s in plot.series if s.label == "91 a 360 dias").points)
+        neto = dict(next(s for s in plot.series if s.label == "Neto").points)
+        # ene-2026 (primer corte) no tiene previo con qué diferenciar: no aparece.
+        assert list(b1.keys()) == ["20feb26", "10mar26"]
+        assert list(b1.values()) == pytest.approx([20.0, -30.0])   # 120-100, 90-120
+        assert list(b2.values()) == pytest.approx([-10.0, 30.0])   # 40-50, 70-40
+        assert list(neto.values()) == pytest.approx([10.0, 0.0])   # 160-150, 160-160
 
     def test_dcv_cut_dates_returns_html_table(self, tmp_path):
         p = tmp_path / "stock.parquet"
@@ -1474,6 +1569,69 @@ def _dcv_parquet(path) -> None:
            ") t(Fecha, Bucket, Tipo, Sector, Moneda, Stock_USD)")
 
 
+def _dcv_duration_parquets(dir_path) -> None:
+    """``duracion_iif.parquet`` (PDBC, DAP) + ``duracion_rf.parquet`` (BTP):
+    mismos instrumentos/agentes/monedas que ``_dcv_parquet``, para poder cruzar
+    Monto x Duración en la tabla de portafolio. Snapshot de una sola fecha (como
+    el dato real: "duración hoy", sin histórico)."""
+    iif_rows = [
+        "(DATE '2026-07-20', 'PDBC', 'Bancos', 'CLP', 0.5)",
+        "(DATE '2026-07-20', 'PDBC', 'AFP', 'CLP', 1.5)",
+        "(DATE '2026-07-20', 'DAP', 'Bancos', 'CLP', 2.0)",
+        "(DATE '2026-07-20', 'DAP', 'AFP', 'CLP', 3.0)",
+        "(DATE '2026-07-20', 'DAP', 'Bancos', 'UF', 4.0)",
+        "(DATE '2026-07-20', 'DAP', 'AFP', 'UF', 5.0)",
+    ]
+    _write(dir_path / "duracion_iif.parquet",
+           "SELECT * FROM (VALUES " + ", ".join(iif_rows) + ") t(Fecha, Tipo, Sector, Moneda, Duracion)")
+    rf_rows = [
+        "(DATE '2026-07-20', 'BTP', 'Bancos', 'CLP', 6.0)",
+        "(DATE '2026-07-20', 'BTP', 'AFP', 'CLP', 7.0)",
+    ]
+    _write(dir_path / "duracion_rf.parquet",
+           "SELECT * FROM (VALUES " + ", ".join(rf_rows) + ") t(Fecha, Tipo, Sector, Moneda, Duracion)")
+
+
+def _dcv_maturity_parquets(dir_path) -> None:
+    """4 parquets de "Próximos Vencimientos": 3 snapshots (T/T+1/Acum 5d.) +
+    ``vencimientos_futuros_instrumento`` (mensual), con filas de agosto-2026,
+    septiembre-2026 y agosto-2025 (para probar que el filtro de mes en curso
+    -``as_of``- solo toma el mes/año pedido)."""
+    hoy_rows = [
+        "(DATE '2026-08-10', 'PDBC', 'Bancos', 'CLP', 100.0)",
+        "(DATE '2026-08-10', 'PDBC', 'AFP', 'CLP', 50.0)",
+        "(DATE '2026-08-10', 'DAP', 'Bancos', 'CLP', 20.0)",
+        "(DATE '2026-08-10', 'DAP', 'AFP', 'UF', 10.0)",
+        "(DATE '2026-08-10', 'Otros', 'Bancos', 'CLP', 30.0)",
+    ]
+    _write(dir_path / "vencimientos_hoy.parquet",
+           "SELECT * FROM (VALUES " + ", ".join(hoy_rows) + ") t(Vencimiento, Tipo, Sector, Moneda, Stock_USD)")
+
+    t1_rows = [
+        "(DATE '2026-08-11', 'PDBC', 'Bancos', 'CLP', 40.0)",
+        "(DATE '2026-08-11', 'Otros', 'AFP', 'CLP', 15.0)",
+    ]
+    _write(dir_path / "vencimientos_t_mas_uno.parquet",
+           "SELECT * FROM (VALUES " + ", ".join(t1_rows) + ") t(Vencimiento, Tipo, Sector, Moneda, Stock_USD)")
+
+    c5_rows = [
+        "(DATE '2026-08-06', 'PDBC', 'Bancos', 'CLP', 200.0)",
+        "(DATE '2026-08-06', 'DAP', 'Bancos', 'UF', 25.0)",
+    ]
+    _write(dir_path / "vencimientos_cinco_dias.parquet",
+           "SELECT * FROM (VALUES " + ", ".join(c5_rows) + ") t(Fecha, Tipo, Sector, Moneda, Stock_USD)")
+
+    mensual_rows = [
+        "('2026', 'ago', 'PDBC', 'Bancos', 'CLP', 500.0)",
+        "('2026', 'sep', 'PDBC', 'Bancos', 'CLP', 999.0)",   # otro mes: no debe entrar
+        "('2026', 'ago', 'BB', 'Bancos', 'CLP', 300.0)",     # -> RF
+        "('2025', 'ago', 'PDBC', 'Bancos', 'CLP', 111.0)",   # otro año: no debe entrar
+    ]
+    _write(dir_path / "vencimientos_futuros_instrumento.parquet",
+           "SELECT * FROM (VALUES " + ", ".join(mensual_rows)
+           + ') t("Año", Mes_label, Tipo, Sector, Moneda, Stock_USD)')
+
+
 @pytest.mark.unit
 class TestDcvTransforms:
     @pytest.fixture
@@ -1529,6 +1687,125 @@ class TestDcvTransforms:
         assert dcv_bucket_table(ds, tmp_path, {}) is None
         assert dcv_snapshot_stacked(ds, tmp_path, {}) is None
 
+    def test_portfolio_table_without_duration_files_omits_the_column(self, ds, tmp_path):
+        """Comportamiento histórico intacto: sin duracion_iif/duracion_rf en el
+        directorio, la tabla queda igual que antes (solo Monto y % port.)."""
+        html = dcv_portfolio_table(ds, tmp_path, {}).html
+        assert "Dur." not in html
+
+    def test_portfolio_table_adds_weighted_average_duration(self, ds, tmp_path):
+        """La columna Dur. cruza Monto (variacion_instrumento_todos_plazo) con
+        Duración (duracion_iif/duracion_rf, parquets aparte, mismo grano). El
+        Total de fila/columna es un PROMEDIO PONDERADO por Monto, no una suma."""
+        _dcv_duration_parquets(tmp_path)
+        html = dcv_portfolio_table(ds, tmp_path, {}).html
+        assert "Dur." in html
+        # Bancos: PDBC=100·0,5 + DAP$=40·2,0 + DAP UF=10·4,0 + BTP=25·6,0 = 320 / 175
+        assert "1,83" in html
+        # AFP: 200·1,5 + 80·3,0 + 20·5,0 + 50·7,0 = 990 / 350
+        assert "2,83" in html
+        # Columna Total, fila PDBC: 100·0,5 + 200·1,5 = 350 / 300 (Monto total PDBC)
+        assert "1,17" in html
+
+    def test_dcv_duration_scatter_builds_categorical_points_by_agent(self, tmp_path):
+        _dcv_duration_parquets(tmp_path)
+        ds_iif = _ds("duracion_iif.parquet", id="duracion_iif", unit="Años")
+        plot = dcv_duration_scatter(ds_iif, tmp_path, {})
+        assert plot.kind == "grouped"
+        assert {s.label for s in plot.series} == {"Bancos", "FP y AFC"}
+        bancos = dict(next(s for s in plot.series if s.label == "Bancos").points)
+        assert bancos == {"PDBC": pytest.approx(0.5), "DAP $": pytest.approx(2.0),
+                          "DAP UF": pytest.approx(4.0)}
+        # eje X en el orden del correo (PDBC antes que DAP)
+        cats = [c for c, _ in next(s for s in plot.series if s.label == "Bancos").points]
+        assert cats == ["PDBC", "DAP $", "DAP UF"]
+
+    def test_dcv_duration_scatter_missing_parquet_returns_none(self, tmp_path):
+        ds = _ds("no_existe.parquet", id="duracion_iif")
+        assert dcv_duration_scatter(ds, tmp_path, {}) is None
+
+    def test_render_plot_svg_draws_dots_not_bars_for_point_chart(self, tmp_path):
+        """``chart='point'`` sobre un PlotData ``kind='grouped'`` (duración por
+        agente) dibuja puntos, no barras — a diferencia de ``grouped_bar``."""
+        from banks_rag.application.reporting.svg_chart import renders_natively
+
+        _dcv_duration_parquets(tmp_path)
+        ds_iif = _ds("duracion_iif.parquet", id="duracion_iif", unit="Años")
+        plot = dcv_duration_scatter(ds_iif, tmp_path, {})
+        svg = render_plot_svg(plot, chart="point")
+        # 2 agentes x 3 instrumentos (PDBC, DAP $, DAP UF) = 6 puntos, sin barras
+        # (los <rect> que aparecen son el fondo blanco + los swatches de leyenda).
+        assert svg.count("<circle") == 6
+        assert "Bancos" in svg and "FP y AFC" in svg
+        assert renders_natively("grouped", "point") is True
+
+    def test_real_dcv_duration_blocks_render_natively_end_to_end(self, tmp_path):
+        """Extremo a extremo con los bloques REALES de DCV_SPEC (no sintéticos)."""
+        _dcv_parquet(tmp_path / "variacion_instrumento_todos_plazo.parquet")
+        _dcv_duration_parquets(tmp_path)
+        wanted = {"Portafolio por agente", "Duración agentes IIF", "Duración agentes RF"}
+        blocks = tuple(b for b in DCV_SPEC.blocks if b.title in wanted)
+        assert len(blocks) == 3
+        entries = [
+            _ds("variacion_instrumento_todos_plazo.parquet",
+                id="variacion_instrumento_todos_plazo", unit="US$ Mill."),
+            _ds("duracion_iif.parquet", id="duracion_iif", unit="Años"),
+            _ds("duracion_rf.parquet", id="duracion_rf", unit="Años"),
+        ]
+        spec = FamilyReportSpec(family="t", title="T", blocks=blocks)
+        report = build_curated_report(spec, entries=entries, parquet_dir=tmp_path)
+        for cb in report.blocks:
+            assert cb.render_kind == "chart", cb.block.title
+            assert cb.preliminary is False, cb.block.title
+        portafolio = next(cb for cb in report.blocks if cb.block.title == "Portafolio por agente")
+        assert "Dur." in portafolio.body_html
+
+    def test_dcv_maturity_label_collapses_non_pdbc_dap_to_rf(self):
+        from banks_rag.application.reporting.series_transforms import _dcv_maturity_label
+
+        assert _dcv_maturity_label("PDBC", "CLP") == "PDBC"
+        assert _dcv_maturity_label("DAP", "CLP") == "DAP $"
+        assert _dcv_maturity_label("DAP", "UF") == "DAP UF"
+        assert _dcv_maturity_label("Otros", "CLP") == "RF"
+        # instrumento más fino del parquet mensual (vencimientos_futuros_instrumento
+        # trae BB/BCCh/BE/BTP/BTU/Letras MdH): igual colapsa, por consistencia con
+        # los 3 snapshots (que solo declaran "Otros").
+        assert _dcv_maturity_label("BB", "CLP") == "RF"
+
+    def test_upcoming_maturities_table_builds_grid_with_month_filter(self, tmp_path):
+        _dcv_maturity_parquets(tmp_path)
+        ds = _ds("vencimientos_hoy.parquet", id="vencimientos_hoy", unit="Millones de USD")
+        html = dcv_upcoming_maturities_table(ds, tmp_path, {"as_of": "2026-08-15"}).html
+        assert "Totales" in html and "Bancos" in html and "FP y AFC" in html
+        assert "100,0" in html      # T · PDBC · Bancos
+        assert "40,0" in html       # T+1 · PDBC · Bancos
+        assert "200,0" in html      # Acum 5d. · PDBC · Bancos
+        assert "500,0" in html      # Mes · PDBC · Bancos (agosto-2026, el mes de as_of)
+        assert "999,0" not in html  # septiembre-2026: otro mes, no entra
+        assert "111,0" not in html  # agosto-2025: otro año, no entra
+        assert "RF" in html         # Otros (T/T+1) y BB (Mes) colapsan ahí
+        assert "DAP $" in html and "DAP UF" in html
+
+    def test_upcoming_maturities_table_missing_all_parquets_returns_none(self, tmp_path):
+        ds = _ds("vencimientos_hoy.parquet", id="vencimientos_hoy")
+        assert dcv_upcoming_maturities_table(ds, tmp_path, {}) is None
+
+    def test_real_dcv_maturities_block_renders_natively_end_to_end(self, tmp_path):
+        """Extremo a extremo con el bloque REAL de DCV_SPEC. Sin ``as_of``
+        explícito (el bloque real tampoco lo fija, usa ``date.today()``): solo
+        se verifican las columnas T/T+1/Acum 5d. (snapshots, no dependen del mes
+        en curso), no la columna Mes."""
+        _dcv_maturity_parquets(tmp_path)
+        block = next(b for b in DCV_SPEC.blocks if b.title.startswith("Próximos vencimientos por agente"))
+        entries = [_ds("vencimientos_hoy.parquet", id="vencimientos_hoy", unit="Millones de USD")]
+        spec = FamilyReportSpec(family="t", title="T", blocks=(block,))
+        report = build_curated_report(spec, entries=entries, parquet_dir=tmp_path)
+        cb = report.blocks[0]
+        assert cb.render_kind == "chart"
+        assert cb.preliminary is False
+        assert "100,0" in cb.body_html
+        assert "Acum 5d." in cb.body_html
+
 
 @pytest.mark.unit
 class TestDcvSpec:
@@ -1568,8 +1845,10 @@ class TestDcvSpec:
     def test_skip_blocks_say_which_parquet_is_missing(self):
         # un SKIP sin explicación es indistinguible de un bug: la nota debe decir qué falta
         skipped = [b for b in DCV_SPEC.blocks if b.status == STATUS_SKIP]
-        # 2 duraciones + tabla de vencimientos por agente + 2 agentes x 2 bloques.
-        assert len(skipped) == 7
+        # sin bloques SKIP: duración y próximos vencimientos ya tienen parquet
+        # (duracion_iif/duracion_rf, vencimientos_hoy/t_mas_uno/cinco_dias +
+        # vencimientos_futuros_instrumento) y pasaron a MVP.
+        assert len(skipped) == 0
         for b in skipped:
             assert b.note.startswith("Falta parquet:"), b.title
 
@@ -2394,6 +2673,87 @@ class TestDualAxisRightStyle:
 
     def test_unknown_style_falls_back_to_area(self):
         assert "<polygon" in self._svg(right_style="zigzag")
+
+
+def _polyline_points_for_index(svg: str, idx: int) -> list[tuple[float, float]]:
+    """``[(x, y), ...]`` de la ``<polyline data-si="idx">`` (asume ``style="line"``)."""
+    m = re.search(rf'<polyline points="([^"]+)"[^>]*data-si="{idx}"', svg)
+    assert m, svg
+    return [(float(x), float(y)) for x, y in (p.split(",") for p in m.group(1).split())]
+
+
+@pytest.mark.unit
+class TestDualAxisInvertAndLeftStyle:
+    """``right_invert`` (réplica de "Posición cambiaria (eje inv.)") y
+    ``left_style="area"`` (réplica de "AUM Renta Fija internacional")."""
+
+    def _plot(self):
+        # CLP (eje derecho, índice 1): 900 → 950 → 930, para leer sin ambigüedad
+        # quién quedó "arriba" (y de SVG más chico) según se invierta o no.
+        pts = [("2026-07-01", 1.0), ("2026-07-02", 2.0), ("2026-07-03", 1.5)]
+        rpts = [("2026-07-01", 900.0), ("2026-07-02", 950.0), ("2026-07-03", 930.0)]
+        return PlotData("t", "line", "timeseries", "USD/lb", [
+            PlotSeries(label="Cobre", points=pts),
+            PlotSeries(label="CLP", points=rpts),
+        ])
+
+    def _svg(self, **kw):
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        return render_plot_svg(self._plot(), chart="dual_axis", right_axis=["CLP"], **kw)
+
+    def test_without_invert_the_highest_value_lands_near_the_top(self):
+        svg = self._svg(right_style="line")
+        by_val = {v: y for (_x, y), v in zip(_polyline_points_for_index(svg, 1),
+                                              [900.0, 950.0, 930.0], strict=True)}
+        assert by_val[950.0] < by_val[900.0]  # más alto = y de SVG más chico = arriba
+
+    def test_right_invert_flips_it_the_lowest_value_lands_near_the_top(self):
+        svg = self._svg(right_style="line", right_invert=True)
+        by_val = {v: y for (_x, y), v in zip(_polyline_points_for_index(svg, 1),
+                                              [900.0, 950.0, 930.0], strict=True)}
+        assert by_val[900.0] < by_val[950.0]  # invertido: más bajo queda arriba
+
+    def test_right_invert_marks_the_legend_as_inverted(self):
+        assert "CLP (eje inv.)" in self._svg(right_invert=True)
+
+    def test_without_invert_legend_says_plain_eje_der(self):
+        svg = self._svg()
+        assert "CLP (eje der.)" in svg and "eje inv." not in svg
+
+    def test_left_style_area_draws_the_left_series_as_area_too(self):
+        svg = self._svg(left_style="area")
+        assert svg.count("<polygon") == 2      # eje der. (área default) + eje izq. (área)
+        assert 'fill="#a9c4e0"' in svg          # celeste del área izquierda
+        assert "Cobre (eje der.)" not in svg    # Cobre sigue en el eje IZQUIERDO
+
+    def test_left_style_defaults_to_line_unchanged(self):
+        assert self._svg().count("<polygon") == 1  # comportamiento histórico: solo el área derecha
+
+    def test_real_afp_block_renders_inverted_without_legend_truncation(self, tmp_path):
+        """Extremo a extremo con el bloque REAL de AFP_SPEC (no uno sintético): la
+        leyenda trunca a 22 caracteres (_legend_row) — "Posicion" (8) + el sufijo
+        corto entra bien, cosa que "(eje inv. | eje der.)" del tablero real no
+        lograba ni con una serie de 3 letras (ver los tests de arriba)."""
+        block = next(b for b in AFP_SPEC.blocks if b.source_id == "afp_aum_posicion_cambiaria")
+        assert block.params.get("right_invert") is True
+        assert block.params.get("left_style") == "area"
+
+        rows = [
+            "(DATE '2026-01-31', -10000.0, 30000.0)",
+            "(DATE '2026-02-28', -15000.0, 32000.0)",
+            "(DATE '2026-03-31', -12000.0, 34000.0)",
+        ]
+        _write(tmp_path / "afp_aum_posicion_cambiaria.parquet",
+               "SELECT * FROM (VALUES " + ", ".join(rows) + ") t(Fecha, Posicion, AUM)")
+        entries = [_ds("afp_aum_posicion_cambiaria.parquet", id="afp_aum_posicion_cambiaria",
+                       unit="Millones de USD")]
+        spec = FamilyReportSpec(family="t", title="T", blocks=(block,))
+        report = build_curated_report(spec, entries=entries, parquet_dir=tmp_path)
+        cb = report.blocks[0]
+        assert cb.render_kind == "chart"
+        assert "Posicion (eje inv.)" in cb.body_html   # sin truncar
+        assert 'fill="#a9c4e0"' in cb.body_html        # AUM como área celeste en el eje izquierdo
 
 
 @pytest.mark.unit

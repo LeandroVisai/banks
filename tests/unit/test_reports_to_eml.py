@@ -116,6 +116,71 @@ class TestInlineCss:
         assert r2e._extract_title(_SAMPLE) == "Informe FFMM"
 
 
+def _card(source_id: str, title: str, *, wide: bool = False) -> str:
+    cls = "card card-wide" if wide else "card"
+    return (
+        f'<div class="{cls}" data-block-status="mvp" data-source="{source_id}">'
+        f'<div class="card-head"><div class="block-title">{title}</div></div>'
+        f'<div class="card-body">{_CURATED_SVG}</div></div>'
+    )
+
+
+@pytest.mark.unit
+class TestGroupGridCards:
+    """``.cards-grid`` (layout de dashboard) → tabla de 2 columnas Outlook-safe:
+    CSS Grid no lo soporta el motor Word de Outlook aunque se inline-e."""
+
+    def test_pairs_two_regular_cards_side_by_side(self) -> None:
+        html = f'<div class="cards-grid">{_card("a", "A")}{_card("b", "B")}</div>'
+        out = r2e._group_grid_cards(html)
+        assert '<div class="cards-grid">' not in out
+        assert out.count('<td width="50%"') == 2
+        assert out.index('data-source="a"') < out.index('data-source="b"')  # orden preservado
+
+    def test_wide_card_gets_its_own_full_row(self) -> None:
+        html = f'<div class="cards-grid">{_card("hero", "Hero", wide=True)}{_card("a", "A")}{_card("b", "B")}</div>'
+        out = r2e._group_grid_cards(html)
+        assert '<td colspan="2"' in out  # la wide ocupa la fila completa
+        assert out.count('<td width="50%"') == 2  # a+b se emparejan aparte
+
+    def test_odd_trailing_card_without_wide_still_gets_full_row(self) -> None:
+        """Defensivo: si por lo que sea la última no viene marcada ``card-wide``
+        (debería, vía ``_wide_block_ids``), igual no queda huérfana a media fila."""
+        html = f'<div class="cards-grid">{_card("a", "A")}{_card("b", "B")}{_card("c", "C")}</div>'
+        out = r2e._group_grid_cards(html)
+        assert out.count('<td width="50%"') == 2       # a+b
+        assert out.count('<td colspan="2"') == 1        # c sola
+
+    def test_multiple_grid_sections_are_all_converted(self) -> None:
+        html = (
+            f'<div class="cards-grid">{_card("a", "A")}{_card("b", "B")}</div>'
+            "<div class=\"section-banner\">Otra sección</div>"
+            f'<div class="cards-grid">{_card("c", "C")}{_card("d", "D")}</div>'
+        )
+        out = r2e._group_grid_cards(html)
+        assert out.count('<div class="cards-grid">') == 0
+        assert out.count('<table role="presentation"') == 2
+
+    def test_content_and_balance_preserved(self) -> None:
+        html = f'<div class="cards-grid">{_card("a", "Título A")}{_card("b", "Título B")}</div>'
+        out = r2e._group_grid_cards(html)
+        assert "Título A" in out and "Título B" in out
+        assert out.count("<svg") == 2  # ningún gráfico se pierde en el reordenamiento
+        assert out.count("<div") == out.count("</div>")
+
+    def test_no_grid_sections_is_noop(self) -> None:
+        assert r2e._group_grid_cards(_CURATED_SAMPLE) == _CURATED_SAMPLE
+
+    def test_card_box_style_gets_inlined(self) -> None:
+        """El pareo en tabla no alcanza solo: sin esta regla, ``.card`` queda sin
+        estilo en el cuerpo (Outlook ignora el <style> del <head>)."""
+        # el marcador ``section-banner`` decide el set CURADO de reglas (donde vive .card)
+        html = r2e.inline_report_css(
+            '<div class="section-banner">S</div><div class="card" data-source="a">x</div>'
+        )
+        assert 'style="border:1px solid' in html
+
+
 @pytest.mark.unit
 class TestProcessFilePassthrough:
     def test_writes_eml_and_plain_html(self, tmp_path: pathlib.Path) -> None:
