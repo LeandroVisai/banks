@@ -36,6 +36,7 @@ DEFAULT_WIDTH = 1240        # ancho CSS: deja el .page en sus 1200px con gutter
 DEFAULT_SCALE = 2.0         # HiDPI: nítido aunque el cliente lo reescale
 DEFAULT_MAX_HEIGHT = 24_000  # techo de la ventana de medición (px CSS)
 DEFAULT_TIMEOUT = 240
+_CAPTURE_PAD = 24     # px CSS de aire entre lo medido y la ventana de captura
 
 # Separador entre fragmentos en una captura por lotes. Magenta puro no aparece en
 # ningún informe, así que una fila entera de este color marca un corte sin ambigüedad.
@@ -159,24 +160,31 @@ def _run(browser: pathlib.Path, args: list[str], out: pathlib.Path, timeout: int
 
 # ── Recorte / medición ───────────────────────────────────────────────────────
 
-def _trim_bottom(img):
+def _trim_bottom(img, background=None):
     """Recorta las filas de fondo del final. Devuelve ``(img, tocó_el_techo)``.
 
-    El fondo se toma de la ÚLTIMA fila, no del píxel de arriba a la izquierda: la
-    ventana se pide deliberadamente más alta que la página, así que abajo siempre
-    sobra fondo, mientras que arriba puede empezar cualquier cosa (en la captura por
-    lotes, sin ir más lejos, empieza con una banda separadora magenta).
+    Con ``background`` el color de fondo se da por sabido; sin él se deduce de la
+    ÚLTIMA fila (no del píxel de arriba a la izquierda: la ventana se pide más alta que
+    la página, así que abajo siempre sobra fondo, mientras que arriba puede empezar
+    cualquier cosa). Deducirlo NO sirve cuando la página termina en algo de color a
+    ras del borde —la captura por lotes cierra con una banda separadora magenta—:
+    ahí el separador se tomaría POR fondo y se borraría junto con el último fragmento.
 
-    Si la última fila NO es de un solo color, la página era más alta que la ventana:
+    Si la última fila no es fondo, la página era más alta que la ventana:
     ``tocó_el_techo`` sale ``True`` y ``capture_html`` reintenta con el doble de alto.
     """
     import numpy as np
 
     arr = np.asarray(img)
     bottom = arr[-1]
-    if not (bottom == bottom[0]).all():
-        return img, True
-    bg = bottom[0]
+    if background is None:
+        if not (bottom == bottom[0]).all():
+            return img, True
+        bg = bottom[0]
+    else:
+        bg = np.array(background, dtype=arr.dtype)
+        if not (bottom == bg).all():
+            return img, True
     rows = np.flatnonzero((arr != bg).any(axis=(1, 2)))
     if not rows.size:
         return img.crop((0, 0, img.width, 1)), False
@@ -232,6 +240,7 @@ def capture_html(
     width: int = DEFAULT_WIDTH,
     scale: float = DEFAULT_SCALE,
     max_height: int = DEFAULT_MAX_HEIGHT,
+    background: tuple[int, int, int] | None = None,
     browser: pathlib.Path | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ):
@@ -271,7 +280,7 @@ def capture_html(
                  probe, timeout)
             if not probe.exists():
                 raise HeadlessError(f"{browser.name} no generó la captura de medición")
-            trimmed, clipped = _trim_bottom(_open_rgb(probe))
+            trimmed, clipped = _trim_bottom(_open_rgb(probe), background)
             content_height = trimmed.height
             probe.unlink(missing_ok=True)
             if not clipped:
@@ -280,9 +289,11 @@ def capture_html(
         else:
             logger.warning("el informe supera %spx de alto: se captura truncado", probe_height)
 
-        # Pasada 2 — capturar a escala. +2px de aire para no comer la última línea.
+        # Pasada 2 — capturar a escala. El aire NO es cosmético: la maquetación redondea
+        # distinto a 1x que a 2x y la página puede salir unos píxeles más alta que lo
+        # medido; sin margen, eso corta el final.
         shot = tmpdir / "shot.png"
-        _run(browser, [*_flags(profile), f"--window-size={width},{content_height + 2}",
+        _run(browser, [*_flags(profile), f"--window-size={width},{content_height + _CAPTURE_PAD}",
                        f"--force-device-scale-factor={scale:g}", f"--screenshot={shot}", url],
              shot, timeout)
         if not shot.exists():
@@ -349,10 +360,18 @@ def capture_fragments(
     sep = (f'<div style="height:{_SEP_PX}px;background:rgb({_SEP_RGB[0]},{_SEP_RGB[1]},'
            f'{_SEP_RGB[2]});margin:0"></div>')
     blocks = sep.join(f'<div style="width:{w}px;padding:6px 0">{f}</div>' for f, w in fragments)
+    # Colchón blanco al final: sin él la banda separadora de cierre queda pegada al
+    # borde inferior y ``_trim_bottom`` —que deduce el fondo de la última fila— la toma
+    # POR fondo y la borra, con lo que se pierde el último fragmento. Aparece solo
+    # cuando el redondeo del alto deja la banda justo en el borde, así que sin el
+    # colchón el error es intermitente y depende de la escala.
+    tail = f'<div style="height:{_SEP_PX * 4}px;background:#fff"></div>'
     doc = (f'<!doctype html><html><head><meta charset="utf-8">{head_css}</head>'
-           f'<body style="margin:0;background:#fff;width:{page}px">{sep}{blocks}{sep}</body></html>')
+           f'<body style="margin:0;background:#fff;width:{page}px">'
+           f'{sep}{blocks}{sep}{tail}</body></html>')
 
-    full = capture_html(doc, width=page, scale=scale, browser=browser, timeout=timeout)
+    full = capture_html(doc, width=page, scale=scale, background=(255, 255, 255),
+                        browser=browser, timeout=timeout)
     arr = np.asarray(full)
     sep_rgb = np.array(_SEP_RGB, dtype=arr.dtype)
     is_sep = (arr == sep_rgb).all(axis=2).all(axis=1)

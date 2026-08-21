@@ -66,14 +66,21 @@ _FORCE_FONT = {t: f"font-family:{_FONT}" for t in
 
 # ── Modo pixel ───────────────────────────────────────────────────────────────
 
-def _strip_img(cid: str, max_width: int) -> str:
-    """Una tira de la captura. ``line-height``/``font-size`` en 0 y ``display:block``
-    matan el hueco que Word deja debajo de una imagen (espacio para el descendente
-    de la línea de texto): sin eso aparece una franja blanca entre tira y tira."""
+def _strip_img(cid: str) -> str:
+    """Una tira de la captura, a ancho completo del cuerpo.
+
+    ``line-height``/``font-size`` en 0 y ``display:block`` matan el hueco que Word deja
+    debajo de una imagen (espacio para el descendente de la línea de texto): sin eso
+    aparece una franja blanca entre tira y tira.
+
+    SIN ``max-width``: el cuerpo tiene que acomodarse al ancho que cada destinatario
+    tenga abierto el panel de lectura. Todas las tiras escalan por el mismo factor, así
+    que las costuras siguen calzando, y como el PNG viene a 2x aguanta el estirón.
+    """
     return (
         f'<tr><td style="padding:0;margin:0;line-height:0;font-size:0" bgcolor="#ffffff">'
         f'<img src="cid:{cid}" width="100%" alt="" border="0" '
-        f'style="display:block;width:100%;max-width:{max_width}px;height:auto;border:0"></td></tr>'
+        f'style="display:block;width:100%;height:auto;border:0"></td></tr>'
     )
 
 
@@ -93,7 +100,7 @@ def body_pixel(html: str, images: dict, *, width: int, scale: float, strip_heigh
     for strip in strips:
         cid = headless.new_cid("page")
         images[cid] = ("png", headless.to_png(strip))
-        rows.append(_strip_img(cid, width))
+        rows.append(_strip_img(cid))
 
     return (
         '<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
@@ -101,8 +108,8 @@ def body_pixel(html: str, images: dict, *, width: int, scale: float, strip_heigh
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="border-collapse:collapse;background:#ffffff"><tr>'
         '<td align="center" style="padding:0">'
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'style="border-collapse:collapse;width:100%;max-width:{width}px">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;width:100%">'
         + "".join(rows) +
         "</table></td></tr></table></body></html>"
     ), len(strips)
@@ -110,34 +117,53 @@ def body_pixel(html: str, images: dict, *, width: int, scale: float, strip_heigh
 
 # ── Modo híbrido ─────────────────────────────────────────────────────────────
 
-def _email_img(cid: str, css_width: int, *, margin: str = "6px 0") -> str:
-    """Imagen del correo a su tamaño NATIVO y centrada.
+def _email_img(cid: str, css_width: int, slot_width: int, *, margin: str = "6px auto") -> str:
+    """Imagen del correo con ancho **relativo**, para que el cuerpo sea fluido.
 
-    El ancho va como ATRIBUTO en píxeles, no ``width="100%"``: Word prioriza el
-    atributo y con "100%" estira la imagen a todo el panel de lectura, que es
-    justo lo que hace que un gráfico de 760px o una tabla angosta se vean
-    deformados respecto del informe. ``max-width:100%`` en el style deja que los
-    clientes que sí leen CSS la achiquen en pantallas chicas.
+    Ni píxeles fijos ni ``width="100%"`` a secas sirven:
 
-    El centrado va en un contenedor con ``align``: Word no entiende ``margin:auto``.
+    - En píxeles fijos el correo no se adapta — al angostar el panel de lectura de
+      Outlook aparece scroll horizontal, y al ensancharlo queda una franja vacía.
+    - Con ``width="100%"`` todo se estira al panel entero, así que una tabla angosta
+      (los percentiles, 460px sobre 1200) se muestra con el triple de tamaño que en
+      el informe.
+
+    La medida que respeta las dos cosas es el **porcentaje del hueco**: Word entiende
+    ``width="63%"`` en una tabla, y ese 63% es exactamente la proporción que la imagen
+    ocupa en el informe original. El resultado escala con el panel conservando el
+    diseño. ``slot_width`` es el ancho del hueco donde cae la imagen (la página, o la
+    tarjeta si está en la grilla de 2 columnas).
     """
+    pct = max(10, min(100, round(100 * css_width / max(slot_width, 1))))
     return (
-        f'<div align="center" style="text-align:center;margin:{margin}">'
-        f'<img data-email-final src="cid:{cid}" width="{css_width}" alt="" border="0" '
-        f'style="max-width:100%;height:auto;display:inline-block;border:0"></div>'
+        f'<table data-email-final role="presentation" width="{pct}%" align="center" '
+        f'cellpadding="0" cellspacing="0" border="0" '
+        f'style="border-collapse:collapse;width:{pct}%;margin:{margin}">'
+        f'<tr><td style="padding:0;line-height:0;font-size:0">'
+        f'<img data-email-final src="cid:{cid}" width="100%" alt="" border="0" '
+        f'style="display:block;width:100%;height:auto;border:0"></td></tr></table>'
     )
 
 
-def rasterize_charts(html: str, images: dict, *, scale: float) -> tuple[str, int]:
+_RE_SVG_OPEN = re.compile(r"<svg\b", re.I)
+
+
+def rasterize_charts(html: str, images: dict, *, page_width: int, scale: float) -> tuple[str, int]:
     """``<svg>`` inline → PNG ``cid:`` con PyMuPDF. Outlook no dibuja SVG: sin esto
     los gráficos desaparecen del cuerpo. Se rasteriza el SVG TAL CUAL quedó en el
     HTML (no se redibuja desde los datos), así el correo lleva el gráfico que se
-    revisó en el navegador, ediciones a mano incluidas."""
+    revisó en el navegador, ediciones a mano incluidas.
+
+    Los huecos se calculan ANTES de reemplazar nada: ``rasterize_inline_svgs`` sustituye
+    en orden de aparición pero no dice en qué posición estaba cada SVG, y sin eso no se
+    sabe si el gráfico va a la página entera o a media tarjeta."""
+    slots = [_slot_width(html, m.start(), page_width) for m in _RE_SVG_OPEN.finditer(html)]
+    pending = iter(slots)
 
     def emit(png: bytes, width: int, _height: int) -> str:
         cid = headless.new_cid("grafico")
         images[cid] = ("png", png)
-        return _email_img(cid, width)
+        return _email_img(cid, width, next(pending, page_width - _GUTTER))
 
     return rasterize_inline_svgs(html, emit, scale=scale)
 
@@ -148,7 +174,10 @@ _RE_BODY = re.compile(r"(<body\b[^>]*>)(.*)(</body>)", re.S | re.I)
 _RE_TABLE_OPEN = re.compile(r"<table\b(?![^>]*\bcellpadding=)", re.I)
 
 
-def _table_spans(html: str) -> list[tuple[int, int]]:
+_RE_BLOCK_TABLE = re.compile(r'<div\b[^>]*\bclass="[^"]*\bblock-table\b[^"]*"[^>]*>', re.I)
+
+
+def _top_level_tables(html: str) -> list[tuple[int, int]]:
     """Rangos de las ``<table>`` de primer nivel (las anidadas viajan adentro)."""
     spans, depth, start = [], 0, 0
     for m in _RE_TABLE_TAG.finditer(html):
@@ -163,24 +192,38 @@ def _table_spans(html: str) -> list[tuple[int, int]]:
     return spans
 
 
+def _table_spans(html: str) -> list[tuple[int, int]]:
+    """Fragmentos a rasterizar: el ``<div class="block-table">`` ENTERO cuando existe,
+    y si no, la ``<table>`` suelta.
+
+    Va el bloque completo y no cada tabla por separado porque el ancho de una tabla no
+    se puede deducir de sus clases: el wrapper trae su propio inline (``max-width:100%``
+    con ``width:auto;min-width:100%`` en el portafolio por agente, ``max-width:960px``
+    con una grilla de 4 tablas en los vencimientos, ``max-width:760px`` en las matrices
+    Δ). Adivinar esas medidas cortaba columnas. Rasterizando el bloque entero al ancho
+    de su ÁREA, el layout lo resuelve Chrome — igual que en el informe."""
+    blocks = []
+    for m in _RE_BLOCK_TABLE.finditer(html):
+        _open_end, close_end = v1._div_span(html, m.start())
+        blocks.append((m.start(), close_end))
+
+    # Tablas que no viven dentro de un block-table (informes sin ese wrapper).
+    sueltas = [(a, b) for a, b in _top_level_tables(html)
+               if not any(lo <= a < hi for lo, hi in blocks)]
+    return sorted(blocks + sueltas)
+
+
 # Anchos del informe curado (``curated_report.py``): la página son 1200px con 20px de
 # gutter, la grilla parte en 2 columnas con 20px de separación, y cada tarjeta lleva
-# 14px de padding por lado. Las tablas se rasterizan al ancho REAL de su contenedor:
-# una tabla ``width:100%`` dibujada a 760px y mostrada dentro de una tarjeta de 560
-# queda con la letra un 26% más chica que en el informe.
+# 14px de padding por lado. Es lo único que hay que saber de la plantilla: define el
+# ÁREA de cada bloque, y el contenido dentro de esa área lo maqueta el navegador.
 _GUTTER, _GAP, _CARD_PAD = 40, 20, 28
-_BLOCK_MAX = 760            # .report-chart / el wrapper de tabla, max-width del template
 
 _RE_OPEN_DIV = re.compile(r'<div\b[^>]*\bclass="([^"]*)"[^>]*>|<div\b[^>]*>|</div>', re.I)
 
 
-def _container_width(html: str, position: int, page_width: int) -> int:
-    """Ancho en px del contenedor de la tabla que empieza en ``position``.
-
-    Se recorre la pila de ``<div>`` abiertos hasta ese punto: dentro de una tarjeta a
-    fila completa manda el ancho de la página, dentro de una tarjeta normal la mitad
-    de la grilla, y suelta en la sección el ``max-width`` del bloque."""
-    page = page_width - _GUTTER
+def _ancestor_classes(html: str, position: int) -> set[str]:
+    """Clases de todos los ``<div>`` abiertos en ``position`` (la pila de contenedores)."""
     stack: list[str] = []
     for m in _RE_OPEN_DIV.finditer(html, 0, position):
         if m.group(0).startswith("</"):
@@ -188,12 +231,23 @@ def _container_width(html: str, position: int, page_width: int) -> int:
                 stack.pop()
         else:
             stack.append(m.group(1) or "")
-    classes = {c for entry in stack for c in entry.split()}
+    return {c for entry in stack for c in entry.split()}
+
+
+def _slot_width(html: str, position: int, page_width: int) -> int:
+    """Ancho del ÁREA del informe donde vive lo que empieza en ``position``.
+
+    Es a la vez el ancho al que se rasteriza (para que Chrome lo maquete como en el
+    informe) y el hueco contra el que se calcula el porcentaje del correo. No hace
+    falta saber más: cuánto ocupa el contenido DENTRO de esa área lo decide el CSS
+    propio del bloque, y ``trim_margins`` lo mide después sobre la captura."""
+    page = page_width - _GUTTER
+    classes = _ancestor_classes(html, position)
     if "card-wide" in classes:
         return page - _CARD_PAD
     if "card" in classes:
         return (page - _GAP) // 2 - _CARD_PAD
-    return min(_BLOCK_MAX, page)
+    return page
 
 
 def rasterize_tables(html: str, images: dict, *, page_width: int, scale: float,
@@ -216,7 +270,7 @@ def rasterize_tables(html: str, images: dict, *, page_width: int, scale: float,
     # que en el navegador (hoy usan estilos inline, pero así no depende de eso).
     head_css = "\n".join(_RE_STYLE_INNER.findall(html))
     shots = headless.capture_fragments(
-        [(html[a:b], _container_width(html, a, page_width)) for a, b in spans],
+        [(html[a:b], _slot_width(html, a, page_width)) for a, b in spans],
         head_css=f"<style>{head_css}</style>" if head_css.strip() else "",
         scale=scale, browser=browser,
     )
@@ -226,13 +280,13 @@ def rasterize_tables(html: str, images: dict, *, page_width: int, scale: float,
         cid = headless.new_cid("tabla")
         images[cid] = ("png", headless.to_png(shot))
         out.append(html[cursor:a])
-        out.append(_email_img(cid, round(shot.width / scale)))
+        out.append(_email_img(cid, round(shot.width / scale), _slot_width(html, a, page_width)))
         cursor = b
     out.append(html[cursor:])
     return "".join(out), len(spans)
 
 
-_RE_CID_IMG = re.compile(r'<img\b(?=[^>]*src="cid:)', re.I)
+_RE_CID_IMG = re.compile(r'<img\b(?![^>]*data-email-final)(?=[^>]*src="cid:)', re.I)
 
 
 def _mark_final_images(html: str) -> str:
@@ -241,11 +295,15 @@ def _mark_final_images(html: str) -> str:
     return _RE_CID_IMG.sub("<img data-email-final", html)
 
 
-def _wrap_for_word(html: str, *, max_width: int) -> str:
-    """Encierra el cuerpo en la tabla contenedora que Word necesita para centrar y
-    acotar el ancho (un ``<div>`` con ``margin:auto`` y ``max-width`` no le sirve),
-    y le pone a cada ``<table>`` los atributos que el motor de Word mira de verdad
-    (``cellpadding``/``cellspacing``/``border``) en vez del CSS equivalente."""
+def _wrap_for_word(html: str) -> str:
+    """Encierra el cuerpo en la tabla contenedora que Word necesita (un ``<div>`` con
+    ``margin:auto`` no le sirve) y le pone a cada ``<table>`` los atributos que el motor
+    de Word mira de verdad (``cellpadding``/``cellspacing``/``border``).
+
+    El contenedor va a **ancho completo, sin tope**: el informe se acomoda al panel de
+    lectura de cada destinatario. Un ``max-width`` acá sería peor que inútil — Word lo
+    ignora igual, y solo lograría que la vista previa en el navegador mienta sobre cómo
+    se ve el correo de verdad."""
     html = _RE_TABLE_OPEN.sub('<table cellpadding="0" cellspacing="0" border="0"', html)
 
     match = _RE_BODY.search(html)
@@ -256,7 +314,7 @@ def _wrap_for_word(html: str, *, max_width: int) -> str:
         'style="border-collapse:collapse;background:#ffffff"><tr>'
         '<td align="center" style="padding:0">'
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'style="border-collapse:collapse;width:100%;max-width:{max_width}px">'
+        f'style="border-collapse:collapse;width:100%">'
         f'<tr><td style="padding:0 20px;font-family:{_FONT};font-size:14px;color:#1f1f1f">'
         f"{match.group(2)}"
         "</td></tr></table></td></tr></table>"
@@ -268,14 +326,14 @@ def body_hybrid(html: str, images: dict, *, page_width: int, scale: float,
                 browser: pathlib.Path | None) -> tuple[str, dict[str, int]]:
     """Cuerpo del correo con el texto en HTML real y lo que Word rompe, en imagen."""
     body, n_tables = rasterize_tables(html, images, page_width=page_width, scale=scale, browser=browser)
-    body, n_svg = rasterize_charts(body, images, scale=scale)   # SVG → PNG (PyMuPDF)
+    body, n_svg = rasterize_charts(body, images, page_width=page_width, scale=scale)
     body = v1._cidify_images(body, images)               # data: (fotos pegadas) → cid:
     body = v1.strip_body_scripts(body)                   # el JS no corre en un correo
     body = v1.strip_paste_ghost_lines(body)              # renglones fantasma del pegado
     body = v1._group_grid_cards(body)                    # CSS Grid → tabla de 2 columnas
     body = _mark_final_images(body)                      # lo ya resuelto no se re-estiliza
     body = inline_css(body, extra=_FORCE_FONT)           # <style> → style= por elemento
-    body = _wrap_for_word(body, max_width=page_width)
+    body = _wrap_for_word(body)
     return body, {"tablas": n_tables, "graficos": n_svg}
 
 

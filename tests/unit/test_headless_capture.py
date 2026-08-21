@@ -87,6 +87,19 @@ def test_trim_bottom_toma_el_fondo_de_abajo_no_del_borde_superior():
     assert (out.height, clipped) == (6, False)
 
 
+def test_trim_bottom_con_fondo_explicito_no_se_come_el_cierre_de_color():
+    # La captura por lotes termina en una banda separadora magenta: si el fondo se
+    # dedujera de la última fila, esa banda pasaría por fondo y se borraría con el
+    # último fragmento adentro.
+    img = _img(20, 100)
+    img.paste((0, 0, 0), (0, 0, 20, 40))
+    img.paste((255, 0, 255), (0, 40, 20, 100))       # cierra en magenta, a ras del borde
+    _out, clipped = headless._trim_bottom(img, (255, 255, 255))
+    assert clipped                                   # no hay fondo abajo: falta página
+    sin_fondo, _ = headless._trim_bottom(img)
+    assert sin_fondo.height == 40                    # deduciéndolo, se pierde la banda
+
+
 def test_trim_margins_recorta_los_cuatro_lados():
     img = _img(100, 60)
     img.paste((0, 0, 0), (30, 10, 70, 40))
@@ -146,6 +159,22 @@ def test_capture_fragments_corta_por_las_bandas_magenta(monkeypatch):
     monkeypatch.setattr(headless, "capture_html", lambda *a, **k: page)
     out = headless.capture_fragments([("<table>a</table>", 40), ("<table>b</table>", 40)], scale=1.0)
     assert [im.height for im in out] == [14, 24]
+
+
+def test_capture_fragments_deja_fondo_despues_de_la_ultima_banda(monkeypatch):
+    # Si la banda de cierre queda pegada al borde inferior, _trim_bottom la toma por
+    # fondo y se come el último fragmento (falla intermitente, según la escala).
+    visto = {}
+
+    def _fake(html, **kwargs):
+        visto["html"] = html
+        return _img(40, 40)
+
+    monkeypatch.setattr(headless, "capture_html", _fake)
+    with pytest.raises(headless.HeadlessError):
+        headless.capture_fragments([("<table>a</table>", 40)], scale=1.0)
+    cuerpo = visto["html"].split("</body>")[0]
+    assert cuerpo.rstrip().endswith('background:#fff"></div>')
 
 
 def test_capture_fragments_falla_si_no_calzan_las_bandas(monkeypatch):

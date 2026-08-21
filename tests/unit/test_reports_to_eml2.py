@@ -57,45 +57,78 @@ def test_table_spans_ignora_las_tablas_anidadas():
     assert html[spans[0][0]:spans[0][1]].count("<table") == 2
 
 
-def test_container_width_segun_la_tarjeta_que_la_contiene():
+def test_slot_width_segun_la_tarjeta_que_lo_contiene():
     suelta = '<div class="block"><table>x</table></div>'
     card = '<div class="cards-grid"><div class="card"><table>x</table></div></div>'
     wide = '<div class="cards-grid"><div class="card card-wide"><table>x</table></div></div>'
-    ancho_suelta = r2._container_width(suelta, suelta.index("<table"), 1240)
-    ancho_card = r2._container_width(card, card.index("<table"), 1240)
-    ancho_wide = r2._container_width(wide, wide.index("<table"), 1240)
-    # Una tabla width:100% dibujada al ancho equivocado queda con la letra de otro
-    # tamaño que en el informe: cada contenedor tiene que dar una medida distinta.
-    assert ancho_card < ancho_suelta < ancho_wide
-    assert ancho_suelta == r2._BLOCK_MAX
+    ancho_card = r2._slot_width(card, card.index("<table"), 1240)
+    ancho_wide = r2._slot_width(wide, wide.index("<table"), 1240)
+    ancho_suelta = r2._slot_width(suelta, suelta.index("<table"), 1240)
+    # Media tarjeta < tarjeta a fila completa ≤ página: el área manda el ancho al que
+    # se rasteriza y el porcentaje con que viaja al correo.
+    assert ancho_card < ancho_wide < ancho_suelta == 1240 - r2._GUTTER
 
 
-def test_container_width_cierra_bien_los_div():
+def test_slot_width_cierra_bien_los_div():
     # La tarjeta ya cerró antes de la tabla: no debe contarla como contenedor.
     html = '<div class="cards-grid"><div class="card">g</div><table>x</table></div>'
-    assert r2._container_width(html, html.index("<table"), 1240) == r2._BLOCK_MAX
+    assert r2._slot_width(html, html.index("<table"), 1240) == 1240 - r2._GUTTER
 
 
-def test_email_img_usa_ancho_en_pixeles_y_va_centrada():
-    # width="100%" haría que Word estire la imagen a todo el panel de lectura.
-    tag = r2._email_img("x@banks", 560)
-    assert 'width="560"' in tag and 'width="100%"' not in tag
+def test_table_spans_toma_el_bloque_entero_no_cada_tabla():
+    # Un block-table puede traer VARIAS tablas maquetadas en grilla por su propio CSS
+    # (los vencimientos son 4 tablas en una fila): partirlo por <table> las rasterizaría
+    # sueltas y al ancho equivocado.
+    html = ('<div class="block-table"><div style="display:grid">'
+            "<table>a</table><table>b</table></div></div>")
+    spans = r2._table_spans(html)
+    assert len(spans) == 1
+    assert html[spans[0][0]:spans[0][1]] == html
+
+
+def test_table_spans_toma_las_tablas_sueltas_igual():
+    html = "<div><table>a</table></div>"
+    spans = r2._table_spans(html)
+    assert len(spans) == 1 and html[spans[0][0]:spans[0][1]] == "<table>a</table>"
+
+
+def test_email_img_usa_ancho_relativo_al_hueco():
+    # Ni píxeles fijos (scroll horizontal al angostar el panel) ni 100% a secas (una
+    # tabla angosta se mostraría al triple de su tamaño): porcentaje del hueco.
+    tag = r2._email_img("x@banks", 760, 1200)
+    assert 'width="63%"' in tag
+    assert "width:63%" in tag and "760px" not in tag
     assert 'align="center"' in tag
-    assert "max-width:100%" in tag
     assert "data-email-final" in tag
 
 
-def test_mark_final_images_solo_toca_las_cid():
-    html = '<img src="cid:a@b"><img src="https://x/y.png">'
+def test_email_img_llena_el_hueco_cuando_lo_ocupa_entero():
+    assert 'width="100%"' in r2._email_img("x@banks", 562, 562)
+
+
+def test_email_img_nunca_se_pasa_del_hueco():
+    # Un redondeo hacia arriba dejaría la imagen desbordando su celda.
+    assert 'width="100%"' in r2._email_img("x@banks", 2000, 1200)
+
+
+def test_mark_final_images_solo_toca_las_cid_sin_marcar():
+    html = ('<img src="cid:a@b"><img src="https://x/y.png">'
+            '<img data-email-final src="cid:c@d">')
     out = r2._mark_final_images(html)
-    assert out.count("data-email-final") == 1
+    assert out.count("data-email-final") == 2   # la ya marcada no se duplica
 
 
 def test_wrap_for_word_agrega_los_atributos_de_tabla():
-    out = r2._wrap_for_word("<body><table style='x'><tr><td>1</td></tr></table></body>",
-                            max_width=1200)
+    out = r2._wrap_for_word("<body><table style='x'><tr><td>1</td></tr></table></body>")
     assert 'cellpadding="0"' in out and 'cellspacing="0"' in out and 'border="0"' in out
     assert 'align="center"' in out
+
+
+def test_el_cuerpo_no_lleva_tope_de_ancho():
+    # Con tope, el correo no se acomoda al panel de lectura de cada destinatario (y la
+    # vista previa en el navegador miente, porque Word ignora max-width igual).
+    out = r2._wrap_for_word("<body><p>x</p></body>")
+    assert "max-width" not in out
 
 
 # ── Cuerpos ──────────────────────────────────────────────────────────────────
@@ -113,6 +146,13 @@ def test_body_pixel_arma_una_tira_por_corte(monkeypatch):
     assert "Portafolio por agente" not in body
 
 
+def test_body_pixel_es_fluido(monkeypatch):
+    monkeypatch.setattr(r2.headless, "capture_html", lambda *a, **k: _img(2480, 6000))
+    body, _ = r2.body_pixel(_REPORT, {}, width=1240, scale=2.0, strip_height=1000, browser=None)
+    assert "max-width" not in body
+    assert body.count('width="100%"') >= 3    # todas las tiras escalan igual: sin costuras
+
+
 def test_body_pixel_mata_el_hueco_bajo_la_imagen(monkeypatch):
     # Sin line-height/font-size en 0, Word deja una franja blanca entre tira y tira.
     monkeypatch.setattr(r2.headless, "capture_html", lambda *a, **k: _img(2480, 6000))
@@ -127,21 +167,20 @@ def test_body_hybrid_deja_el_texto_y_pasa_tablas_y_graficos_a_imagen(monkeypatch
     body, counts = r2.body_hybrid(_REPORT, images, page_width=1240, scale=2.0, browser=None)
 
     assert counts["tablas"] == 1
-    assert "<table" not in body.split("</body>")[0].replace(
-        '<table role="presentation"', "")            # la del informe se fue a imagen
-    assert "Portafolio por agente" in body           # el texto sigue siendo texto
+    assert "PDBC" not in body and "9.773" not in body   # la tabla del informe se fue a imagen
+    assert "Portafolio por agente" in body              # el texto sigue siendo texto
     assert "<svg" not in body                        # Outlook no dibuja SVG
     assert "<style>" not in body                     # el CSS quedó inline
     assert "font-family:Arial" in body
 
 
-def test_body_hybrid_conserva_el_ancho_de_las_imagenes_que_inyecta(monkeypatch):
-    # El normalizador borra max-width de todo… menos de lo que ya resolvimos nosotros.
+def test_body_hybrid_conserva_la_proporcion_de_las_imagenes_que_inyecta(monkeypatch):
+    # El normalizador no debe tocar lo que ya resolvimos nosotros para el correo.
     monkeypatch.setattr(r2.headless, "capture_fragments",
                         lambda frags, **k: [_img(1120, 200) for _ in frags])
     body, _ = r2.body_hybrid(_REPORT, {}, page_width=1240, scale=2.0, browser=None)
-    assert 'width="560"' in body                     # 1120 px a escala 2 → 560 CSS
-    assert "max-width:100%" in body
+    # 1120px a escala 2 = 560 CSS, en un bloque suelto cuyo hueco es la página (1200).
+    assert 'width="47%"' in body
 
 
 def test_el_eml_lleva_las_imagenes_inline_y_el_html_original_adjunto(monkeypatch, tmp_path):
