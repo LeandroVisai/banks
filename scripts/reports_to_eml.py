@@ -55,6 +55,8 @@ from email.message import EmailMessage
 from email.policy import SMTP as _SMTP_POLICY  # serializa con CRLF (RFC 5322) — Outlook lo exige
 from email.utils import formatdate, make_msgid
 
+from pathlib import Path
+
 import matplotlib
 
 matplotlib.use("Agg")  # backend sin display (offline / servidor)
@@ -504,8 +506,11 @@ def strip_paste_ghost_lines(html: str) -> str:
     return html
 
 def _img_tag(cid: str, *, width: str) -> str:
+    # ``width`` como ATRIBUTO HTML (no solo CSS): el motor Word de Outlook escala
+    # la imagen de forma fluida al ancho de su contenedor real solo si el atributo
+    # width="100%" está presente — el style equivalente por sí solo NO alcanza.
     return (
-        f'<img src="cid:{cid}" alt="" '
+        f'<img src="cid:{cid}" width="{width}" alt="" '
         f'style="width:{width};max-width:100%;height:auto;display:block;margin:6px auto">'
     )
 
@@ -521,8 +526,16 @@ def _cidify_charts(html: str, images: dict[str, tuple[str, bytes]]) -> tuple[str
     def emit(png: bytes, width: int, _height: int) -> str:
         cid = f"chart{uuid.uuid4().hex[:8]}@banks"
         images[cid] = ("png", png)
+        # width="100%" como ATRIBUTO (no un número fijo de px): Outlook (motor Word)
+        # prioriza el atributo HTML por sobre el CSS, así que un width="760" fijo
+        # ignora el ancho real disponible y el gráfico queda con su tamaño nativo
+        # aunque el panel de lectura sea más angosto (se corta / aparece scroll
+        # horizontal). Con el atributo en "100%" escala fluido al contenedor;
+        # ``max-width:{width}px`` en el style evita que se agrande de más en
+        # pantallas anchas (más allá de su resolución nativa) en los clientes que
+        # sí leen CSS (todos menos Outlook desktop).
         return (
-            f'<img src="cid:{cid}" width="{width}" alt="" '
+            f'<img src="cid:{cid}" width="100%" alt="" '
             f'style="width:100%;max-width:{width}px;height:auto;display:block;margin:6px auto">'
         )
     return rasterize_inline_svgs(html, emit)
@@ -734,7 +747,7 @@ def process_file_from_spec(path: pathlib.Path, out_dir: str | pathlib.Path, *, s
         subject=subject, sender=sender, to=to, html_body=body, images=images,
         attach_name=path.name, attach_html=path.read_text(encoding="utf-8"),
     )
-    eml_out = _resolve_family_dir(out_dir, fam)
+    eml_out = Path(out_dir)
     eml_out.mkdir(parents=True, exist_ok=True)
     out = eml_out / f"{path.stem}.eml"
     out.write_bytes(eml)
@@ -906,7 +919,7 @@ def process_file_passthrough(path: pathlib.Path, out_dir: str | pathlib.Path, *,
         # recibe el correo espera abrir el informe que editaste, no la copia plana.
         attach_name=path.name, attach_html=plain,
     )
-    eml_out = _resolve_family_dir(out_dir, fam)
+    eml_out = Path(out_dir)
     eml_out.mkdir(parents=True, exist_ok=True)
     out = eml_out / f"{path.stem}.eml"
     out.write_bytes(eml)

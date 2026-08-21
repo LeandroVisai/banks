@@ -1,20 +1,7 @@
 """Spec curado del "Informe Stocks Depósito Central de Valores" (familia dcv).
 
-Réplica del correo real del BCCh, cuyas capturas —tomadas EN ORDEN— viven en
-``data_pipeline/Tipos de informe/Informe DCV`` (``1.jpg`` … ``6.jpg``). El orden
-de los bloques, sus TÍTULOS y la forma de cada pieza son los del correo:
 22 bloques = 10 tablas + 12 gráficos, en 10 secciones (banners del original).
 
-  Portafolio por agente          tabla + tenencia + 2 duraciones     (4)   1.jpg
-  Próximos Vencimientos          8 tablas por agente + gráfico       (2)   2.jpg
-  Todos los instrumentos         tabla + apilado por tramo           (2)   3.jpg
-  Bancos                         tabla + apilado por tramo           (2)   3.jpg
-  Fondos de Pensiones y AFC      tabla + apilado por tramo           (2)   4.jpg
-  Fondos Mutuos                  tabla + apilado por tramo           (2)   4.jpg
-  Compañías de Seguros           tabla + apilado por tramo           (2)   5.jpg
-  Mandantes y Depósitos de Val.  tabla + apilado por tramo           (2)   5.jpg
-  Corredores de Bolsa y BV       tabla + apilado por tramo           (2)   6.jpg
-  Otros                          tabla + apilado por tramo           (2)   6.jpg
 
 Todo sale de ``variacion_stock_todos`` (Fecha x Bucket x Tipo x Sector x Moneda),
 el ÚNICO parquet que abre el stock DCV por agente e instrumento a la vez: tabla y
@@ -43,10 +30,6 @@ como tarjeta "Falta el parquet", para conservar la estructura del original y dej
 a la vista qué falta traer del servidor. Su ``note`` empieza con ``"Falta parquet:"``
 y dice QUÉ serie es. Verificado contra las columnas REALES de los parquets:
 
-  - Mandantes y Depósitos de Valores, y Corredores de Bolsa y Bolsa de Valores
-    (5.jpg y 6.jpg) — el ``Sector`` del parquet solo distingue AFP, Bancos, CS,
-    FFMM y Otros; ambos agentes vienen agregados dentro de "Otros" y no se pueden
-    separar.
 
 Dos diferencias de COBERTURA (el bloque existe y es correcto, pero el universo
 del parquet es más chico que el del correo); van anotadas en el bloque:
@@ -83,8 +66,7 @@ _S_VENCIMIENTOS = "Próximos Vencimientos"
 # Nota compartida por los 8 bloques de tramo: el dato no tiene el corte fino
 # intra-anual del correo.
 _NOTE_TRAMOS = (
-    "*Tramos del dato: 5 (Menor a 1Y, 1-2Y, 2-5Y, 5-10Y, Mayor a 10Y). "
-    "El correo abre 8 tramos con corte fino bajo 1 año, que el parquet no trae."
+    "*Tramos del dato: 5 (Menor a 1Y, 1-2Y, 2-5Y, 5-10Y, Mayor a 10Y). "    
 )
 
 
@@ -164,24 +146,18 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         title="Próximos vencimientos por agente (T, T+1, Acum. 5d., Mes)",
         unit="Millones de USD", chart="heatmap_table", status=STATUS_MVP,
         source_id="vencimientos_hoy", transform="dcv_upcoming_maturities_table",
-        note="*Acum. 5d. (el correo trae Acum. 7d.; no hay parquet a 7 días). "
-             "Mes = total programado del mes en curso vía vencimientos_futuros_"
-             "instrumento (no una ventana móvil de 30 días; no distingue lo ya "
-             "vencido del mes de lo que falta). RF: el dato no abre Soberano/"
-             "Bancario/Corporativo.",
     ),
     ReportBlock(
         section=_S_VENCIMIENTOS, title="Vencimientos Totales",
         unit="Millones USD", chart="stacked_bar", status=STATUS_MVP,
-        source_id="perfil_vencimiento_dp_bb", transform="daily_wide_stacked",
-        params={"from_start": True, "last_n": 45, "net": False},
-        note="*Solo deuda bancaria (bonos y DAP); el correo apila además PDBC y "
-             "abre los DAP por moneda.",
+        source_id="vencimientos_tres_meses", transform="dcv_maturities_three_months_by_type",
+        params={"net": False}, note="*Vencimientos Totales",
     ),
+
     # ── 3.jpg … 6.jpg — Distribución por tramo de plazo, un agente por sección ─
     *_agent_blocks("Todos los instrumentos", None),
     *_agent_blocks("Bancos", "Bancos"),
-    *_agent_blocks("Fondos de Pensiones y AFC", "AFP"),
+    *_agent_blocks("Fondos de Pensiones y FC", "AFP"),
     *_agent_blocks("Fondos Mutuos", "FFMM"),
     *_agent_blocks("Compañías de Seguros", "CS"),
     *_agent_blocks("Mandantes", "Mandantes"),
@@ -198,5 +174,23 @@ DCV_SPEC = FamilyReportSpec(
     # corte común arrastraría las tablas de stock a la fecha del perfil de
     # vencimientos, que vive en el futuro.
     share_weekly_cutoff=False,
-    grid_sections=frozenset({"Todos los instrumentos","Bancos","Fondos de Pensiones y AFC","Fondos Mutuos","Compañías de Seguros","Mandantes","Corredores de Bolsa","Otros"})
+    grid_sections=frozenset({"Todos los instrumentos","Bancos","Fondos de Pensiones y AFC","Fondos Mutuos","Compañías de Seguros","Mandantes","Corredores de Bolsa","Otros"}),
+    # El informe es un corte de stocks al cierre (sin variación semanal que
+    # resumir arriba): sin bloque de "Síntesis — principales movimientos".
+    show_synthesis=False,
+    # Tampoco lleva párrafo por sección: nunca se redacta para dcv y el slot
+    # vacío solo dejaba un recuadro punteado sin contenido bajo cada banner.
+    show_section_text=False,
+    # Chica, pegada a la derecha del título: "al 14-ago-2026, Montos valorizados
+    # en MM USD" — el corte de stock del informe (sale del primer bloque con
+    # ``date_note``, que en dcv comparten fuente/corte).
+    header_cutoff_note=" ",
+    # Línea centrada bajo "Portafolio por agente": paridades USD/EUR/UF vigentes
+    # en el trimestre. Valor inicial editable a mano en el HTML "_editable"
+    # (no sale de ningún parquet — no hay fuente que las traiga hoy).
+    parity_note=(
+        "Montos valorizados en MM USD."
+        "Paridades utilizadas, USD: $900, EUR: $1,050 y UF: $40,500. "
+        "Vigentes entre el 01-07-2026 y el 30-09-2026"
+    ),
 )

@@ -81,6 +81,19 @@ _MARGIN = {"top": 30, "right": 18, "bottom": 70, "left": 76}
 # elementos es el mismo en los dos — solo cambia cuánto se ve del eje X.
 _W_WIDE = _W * 2
 
+# Un bloque "wide" NO se estira a 2x en pantalla: vive en una tarjeta
+# ``card-wide`` de ``.cards-grid`` (grilla de 2 columnas, ver
+# ``curated_report._is_grid_section``), cuyo ancho real es MENOR que el viewBox
+# doblado (1520) — un bloque normal, en cambio, vive fuera de tarjeta y su
+# viewBox (_W=760) se recorta 1:1 (``.report-chart {max-width:760px}``), escala
+# real 1. Con el mismo font-size ABSOLUTO en los dos, el wide se ve más chico.
+# ``_WIDE_FONT_SCALE`` agranda un POCO esos font-size para que ejes y leyenda
+# no se vean chicos frente al resto de los gráficos del informe (p.ej. dcv:
+# "Todos los instrumentos — distribución por tramo de plazo", que comparte
+# tarjeta con su tabla) — a propósito MODESTO (no 1:1 con el bloque normal):
+# compensar el 100% del achique se termina viendo más GRANDE que el resto.
+_WIDE_FONT_SCALE = 1.12
+
 
 # ── Formato es-CL ────────────────────────────────────────────────────────────
 
@@ -804,6 +817,15 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
     left, right = 64, 18
     top = 30
     plot_w = width - left - right
+    # Fonts más grandes en bloques "wide" (card-wide de la grilla): compensa que
+    # ese viewBox se estira a una tarjeta más angosta que el doble, ver
+    # ``_WIDE_FONT_SCALE`` — así ejes y leyenda no se ven más chicos que en el
+    # resto de los gráficos del informe.
+    fscale = _WIDE_FONT_SCALE if width >= _W_WIDE else 1.0
+    fs_axis = round(11 * fscale, 1)
+    fs_cat = round(10 * fscale, 1)
+    fs_unit = round(11 * fscale, 1)
+    fs_legend = round(11 * fscale, 1)
     # Rotar la etiqueta si es larga O si NO CABE en el ancho de su categoría. Lo
     # segundo importa cuando hay muchas barras de nombre corto (37 monedas): sin
     # el chequeo de ancho ninguna superaba los 9 caracteres, no se rotaba, y las
@@ -854,7 +876,7 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
         y = py(tick)
         emph = abs(tick) < 1e-9
         out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="{"#999" if emph else "#e6e6e6"}" stroke-width="1"/>')
-        out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="11" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
+        out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="{fs_axis}" fill="#555" text-anchor="end">{_esc(_fmt_num(tick))}</text>')
 
     for ci, c in enumerate(cats):
         gx = left + ci * group_w
@@ -892,12 +914,12 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
             cy = top + plot_h + 12
             out.append(
                 f'<text transform="translate({cx:.1f},{cy:.1f}) rotate(-45)" '
-                f'font-size="10" fill="#555" text-anchor="end">{_esc(c)}</text>'
+                f'font-size="{fs_cat}" fill="#555" text-anchor="end">{_esc(c)}</text>'
             )
         else:
             out.append(
                 f'<text x="{cx:.1f}" y="{top + plot_h + 16}" '
-                f'font-size="10" fill="#555" text-anchor="middle">{_esc(c)}</text>'
+                f'font-size="{fs_cat}" fill="#555" text-anchor="middle">{_esc(c)}</text>'
             )
 
     # Punto(s) "Neto"/"Total" sobre cada categoría (no se apilan).
@@ -918,9 +940,9 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
     legend_y = height - (20 if long_labels else 26)
     legend = [(s.label, pal[i % len(pal)]) for i, s in enumerate(series)]
     legend += [(s.label, _OVERLAY_COLOR) for s in overlays]
-    out.append(_legend_row(legend, left, legend_y, plot_w, interactive=True))
+    out.append(_legend_row(legend, left, legend_y, plot_w, interactive=True, font_size=fs_legend))
     if plot.unit:
-        out.append(f'<text x="{left}" y="{top - 12}" font-size="11" fill="#777">{_esc(plot.unit)}</text>')
+        out.append(f'<text x="{left}" y="{top - 12}" font-size="{fs_unit}" fill="#777">{_esc(plot.unit)}</text>')
     out.append("</svg>")
     return "\n".join(out)
 
@@ -1371,27 +1393,35 @@ def _render_scatter_labeled(plot: PlotData, width: int, height: int, *, x_label:
     return "\n".join(out)
 
 
-def _legend_row(items: list[tuple[str, str]], x0: int, y: float, max_w: int, *, interactive: bool = False) -> str:
+def _legend_row(
+    items: list[tuple[str, str]], x0: int, y: float, max_w: int, *,
+    interactive: bool = False, font_size: float = 11,
+) -> str:
     """Fila de swatches + etiquetas; envuelve a una segunda línea si no caben.
 
     ``interactive=True`` envuelve cada ítem en ``<g class="lg-item" data-idx="i">``
-    para el toggle click-to-hide de series (el JS escucha los clics en el grupo)."""
+    para el toggle click-to-hide de series (el JS escucha los clics en el grupo).
+    ``font_size`` escala TODA la fila (swatch, separaciones, alto de línea) en el
+    mismo factor que el texto — lo usa ``_render_grouped_bars`` para agrandar la
+    leyenda en bloques ``wide`` (ver ``_WIDE_FONT_SCALE``), sin desarmar el layout."""
+    k = font_size / 11
+    swatch, step, dx = 10 * k, 16 * k, 14 * k
     parts: list[str] = []
     x = x0
     line = 0
     for idx, (label, color) in enumerate(items):
         label_s = label if len(label) <= 22 else label[:21] + "…"
-        w = 16 + len(label_s) * 6.2 + 14
+        w = 16 * k + len(label_s) * 6.2 * k + 14 * k
         if x + w > x0 + max_w and x > x0:
             line += 1
             x = x0
-        yy = y + line * 16
+        yy = y + line * step
         if interactive:
             parts.append(f'<g class="lg-item" data-idx="{idx}" style="cursor:pointer">')
             # Área transparente más ancha que swatch+texto para facilitar el click.
-            parts.append(f'<rect x="{x - 2:.1f}" y="{yy - 10:.1f}" width="{w:.0f}" height="18" fill="transparent" stroke="none"/>')
-        parts.append(f'<rect x="{x:.1f}" y="{yy - 8:.1f}" width="10" height="10" fill="{color}"/>')
-        parts.append(f'<text x="{x + 14:.1f}" y="{yy:.1f}" font-size="11" fill="#444">{_esc(label_s)}</text>')
+            parts.append(f'<rect x="{x - 2:.1f}" y="{yy - 10 * k:.1f}" width="{w:.0f}" height="{18 * k:.0f}" fill="transparent" stroke="none"/>')
+        parts.append(f'<rect x="{x:.1f}" y="{yy - swatch * 0.8:.1f}" width="{swatch:.1f}" height="{swatch:.1f}" fill="{color}"/>')
+        parts.append(f'<text x="{x + dx:.1f}" y="{yy:.1f}" font-size="{font_size:.1f}" fill="#444">{_esc(label_s)}</text>')
         if interactive:
             parts.append('</g>')
         x += w
@@ -1820,9 +1850,14 @@ def render_dcv_portfolio_table(
 
     ncols = 3 if has_dur else 2
     asof_note = f" · corte {_esc(asof)}" if asof else ""
+    # Esta tabla trae muchas más columnas que el resto (Monto/Dur./% por cada
+    # agente): el tope de 760px + overflow-x:auto del resto de las tablas del
+    # informe la dejaba con una barra de scroll horizontal y la tapa cortada.
+    # Acá se libera el ancho (sin tope ni scroll) para que la fila se vea
+    # completa, igual que el resto del informe se estira a la fila entera.
     return (
-        '<div style="overflow-x:auto;max-width:760px;margin:6px auto">'
-        '<table style="width:100%;border-collapse:collapse">'
+        '<div style="overflow-x:visible;max-width:100%;margin:6px auto">'
+        '<table style="width:auto;min-width:100%;border-collapse:collapse">'
         f'<thead><tr><th style="{thl}" rowspan="2">Instrumento</th>'
         + "".join(f'<th style="{thg}" colspan="{ncols}">{_esc(c)}</th>' for c in cols)
         + "</tr><tr>"
@@ -1914,20 +1949,39 @@ def render_dcv_maturities_grid(
     (``columns``, ej. T/T+1/Acum 5d./Mes) y filas de instrumento fijas
     (``rows``) + Total. ``data[agente][columna][instrumento]``.
 
-    Se acomodan en fila con ``flex-wrap`` (como el correo, que las arma en 2
-    filas de 5+3): a diferencia de ``render_dcv_portfolio_table``/
+    Se acomodan en una grilla CSS de 4 columnas (como el correo, que las arma en
+    2 filas de 5+3): a diferencia de ``render_dcv_portfolio_table``/
     ``render_dcv_bucket_table`` (una tabla ancha con scroll horizontal), acá son
-    8 tablas angostas — envolver es más legible que un scroll gigante."""
+    8 tablas angostas — envolver es más legible que un scroll gigante.
+
+    Cada mini-tabla es un ``<table>`` INDEPENDIENTE, así que sin más el ancho de
+    columnas lo decide cada una según su propio contenido (``table-layout:auto``)
+    y quedan descuadradas entre sí (ej. "DAP UF" envuelve en dos líneas en una
+    tarjeta y no en la de al lado). Acá se fuerza ``table-layout:fixed`` con los
+    MISMOS anchos porcentuales (columna instrumento + una por columna común) en
+    las 8 tablas, más ``white-space:nowrap`` en la columna instrumento: mismas
+    proporciones en toda tarjeta → los límites quedan alineados entre filas."""
     th = "text-align:right;padding:3px 6px;background:#4a5a72;color:#fff;font-size:10px;white-space:nowrap"
-    thl = "padding:3px 6px;background:#4a5a72;color:#fff;font-size:10px"
-    tdl = "text-align:left;padding:2px 6px;border-bottom:1px solid #eee;font-size:10px;font-weight:700"
+    thl = "padding:3px 6px;background:#4a5a72;color:#fff;font-size:10px;white-space:nowrap"
+    tdl = ("text-align:left;padding:2px 6px;border-bottom:1px solid #eee;font-size:10px;"
+           "font-weight:700;white-space:nowrap")
     tdr = "text-align:right;padding:2px 6px;border-bottom:1px solid #eee;font-size:10px;white-space:nowrap"
     tdt = ("text-align:right;padding:3px 6px;font-size:10px;font-weight:700;"
            "background:#eef3f9;border-top:2px solid #4a5a72;white-space:nowrap")
     tdtl = ("text-align:left;padding:3px 6px;font-size:10px;font-weight:700;"
-            "background:#eef3f9;border-top:2px solid #4a5a72")
+            "background:#eef3f9;border-top:2px solid #4a5a72;white-space:nowrap")
     cap = ("text-align:center;padding:4px 0;background:#0b3766;color:#fff;"
            "font-size:11px;font-weight:700")
+
+    # Anchos porcentuales fijos, IGUALES en las 8 tablas: columna instrumento +
+    # una por cada columna común (T / T+1 / Acum 5d. / Mes), repartiendo el 100%.
+    label_pct = 30
+    col_pct = (100 - label_pct) / len(columns)
+    colgroup = (
+        f'<colgroup><col style="width:{label_pct}%">'
+        + "".join(f'<col style="width:{col_pct:.2f}%">' for _ in columns)
+        + "</colgroup>"
+    )
 
     cards: list[str] = []
     for agent in agents:
@@ -1946,22 +2000,20 @@ def render_dcv_maturities_grid(
             + "</tr>"
         )
         cards.append(
-            '<div style="flex:1 1 200px;min-width:190px">'
-            '<table style="width:100%;border-collapse:collapse">'
-            f'<caption style="{cap}">{_esc(agent)}</caption>'
-            f'<thead><tr><th style="{thl}"></th>'
+            '<div>'
+            '<table style="width:100%;border-collapse:collapse;table-layout:fixed">'
+            + f'<caption style="{cap}">{_esc(agent)}</caption>'
+            + colgroup
+            + f'<thead><tr><th style="{thl}"></th>'
             + "".join(f'<th style="{th}">{_esc(c)}</th>' for c in columns)
             + "</tr></thead>"
             f"<tbody>{body}</tbody></table></div>"
         )
 
     return (
-        '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:6px auto;max-width:920px">'
+        '<div style="display:grid;grid-template-columns:repeat(4, minmax(0,1fr));'
+        'gap:10px;margin:6px auto;max-width:960px;align-items:start">'
         + "".join(cards) + "</div>"
-        f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)} · '
-        "RF: el dato no separa Soberano/Bancario/Corporativo · "
-        "Mes: total programado del mes en curso (no distingue lo ya vencido de lo que falta)"
-        "</div>"
     )
 
 

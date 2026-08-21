@@ -449,7 +449,20 @@ def composition_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: di
 def stacked_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Variación de la ventana (default 7d) del stock DCV por plazo → barras
     apiladas (X = plazo, una serie por instrumento). ``net_as_overlay`` agrega un
-    punto "Neto" = suma de instrumentos por plazo (como el informe)."""
+    punto "Neto" = suma de instrumentos por plazo (como el informe).
+
+    Nota: en parquets sin columna ``Bucket``/``Plazo`` real (ej.
+    ``variacion_sector_todos``, que solo tiene ``Tipo``/``Sector``),
+    ``_bucket_tipo_series`` usa la primera categoría como eje X ("bucket") y la
+    segunda como serie apilada — acá el eje X termina siendo ``Tipo`` y la serie
+    ``Sector``. Por eso hay DOS filtros independientes:
+
+    - ``buckets`` (opcional): lista de valores del eje X a incluir/ordenar (ej.
+      instrumentos ``["BB", "BE", "BTP", "BTU"]`` cuando el eje X es ``Tipo``).
+    - ``order`` (opcional): lista de series (segunda categoría, ej. ``Sector``)
+      a incluir/ordenar. Si no se pasa, se usan las top series por magnitud
+      (``_top_tipos``), igual que antes.
+    """
     bt, last = _bucket_tipo_series(dataset, parquet_dir)
     if not bt:
         return None
@@ -460,6 +473,10 @@ def stacked_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) 
     asof = str(params.get("weekly_asof") or last)
     start = (date.fromisoformat(asof[:10]) - timedelta(days=days)).isoformat()
     buckets = _order_buckets(bt)
+    if params.get("buckets"):
+        wanted_buckets = [b for b in params["buckets"] if b in buckets]
+        if wanted_buckets:
+            buckets = wanted_buckets
     sd: dict[str, dict[str, float]] = {}
     for b in buckets:
         for t, s in bt[b].items():
@@ -468,7 +485,8 @@ def stacked_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) 
             wd = weekly_delta(s, asof, days=days, is_flow=False)
             if wd is not None:
                 sd.setdefault(t, {})[b] = wd["cambio_absoluto"]
-    tipos = _top_tipos(sd)
+    default_tipos = _top_tipos(sd)
+    tipos = [t for t in (params.get("order") or default_tipos) if t in sd] or default_tipos
     out = {t: sd[t] for t in tipos}
     series_order = list(tipos)
     overlay: tuple[str, ...] = ()
@@ -1417,6 +1435,66 @@ def window_stacked_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: di
                     date_note=note)
 
 
+def window_stacked_diff_by_cat(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Variación DIARIA (nivel[t] - nivel[t-1]) de un parquet LARGO de STOCK
+    (fecha + categoría + nivel) → barras apiladas DIVERGENTES por día (últimos
+    N), una serie por categoría; opcional punto "Neto" = suma del día.
+
+    A diferencia de ``window_stacked_by_cat`` (que apila el VALOR crudo del
+    parquet, pensado para uno que YA es flujo, ej. ``movimientos_fondos``/
+    ``Flujos_usd``): acá el valor de entrada es un NIVEL/stock (ej.
+    ``stock_nivel_afp``/``Stock_USD``) y la función DIFERENCIA día a día antes
+    de apilar, así la barra muestra cuánto cambió cada categoría, no el stock
+    acumulado.
+
+    params: ``category`` / ``value`` (si faltan, ``detect_roles``), ``last_n``
+    (días de VARIACIÓN a mostrar, default 14 — internamente se lee un día extra
+    de nivel para poder diferenciar el primero de la ventana), ``order`` (orden
+    de categorías), ``net`` (bool, agrega "Neto" como punto superpuesto).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(path, con)
+        cat = params.get("category") or (roles.category_cols[0] if roles.category_cols else None)
+        val = params.get("value") or (roles.value_cols[0] if roles.value_cols else None)
+        if roles.date_col is None or not cat or not val:
+            return None
+        rows = _read_series_rows(con, path, date_col=roles.date_col, columns=[roles.date_col, cat, val])
+    finally:
+        con.close()
+    by_cat = _aggregate_by_category(rows, roles.date_col, cat, val)  # {cat: [(iso, nivel)]}
+    by_cat = {c: dict(s) for c, s in by_cat.items()}
+    all_dates = sorted({d for s in by_cat.values() for d in s})
+    last_n = int(params.get("last_n", 14))
+    sel = all_dates[-(last_n + 1):]  # un día extra de NIVEL para diferenciar el primero
+    if len(sel) < 2:
+        return None
+    diff_dates = sel[1:]
+    labels = [_daymon(d) for d in diff_dates]
+    cats = [c for c in (params.get("order") or sorted(by_cat)) if c in by_cat]
+    sd: dict[str, dict[str, float]] = {
+        c: {
+            labels[i]: by_cat[c].get(diff_dates[i], 0.0) - by_cat[c].get(sel[i], 0.0)
+            for i in range(len(diff_dates))
+        }
+        for c in cats
+    }
+    series_order = list(cats)
+    overlay: tuple[str, ...] = ()
+    if params.get("net"):
+        sd["Neto"] = {
+            labels[i]: sum(sd[c][labels[i]] for c in cats) for i in range(len(diff_dates))
+        }
+        series_order.append("Neto")
+        overlay = ("Neto",)
+    note = f"Variación diaria (nivel t vs. t-1) · {_fmt_date(diff_dates[0])} → {_fmt_date(diff_dates[-1])}"
+    return _grouped(dataset.id, dataset.unit, sd, labels, series_order, overlay=overlay,
+                    date_note=note)
+
+
 def _accum_windows(
     dataset: ParquetDataset, parquet_dir: Path, params: dict,
 ) -> tuple[list[str], dict[str, dict[str, float]], list[tuple[str, str, str]]] | None:
@@ -1578,7 +1656,9 @@ def window_pivot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dic
     params: ``group`` (eje X), ``type_col`` (col de tipo), ``values`` (valores de tipo
     → serie, en orden de apilado), ``value`` (col de monto), ``overlay`` (valores que
     van como punto, p.ej. ``["Neto"]``), ``order`` (orden del eje X), ``window_days``
-    (default 7), ``weekly_asof`` (corte común opcional).
+    (default 7), ``weekly_asof`` (corte común EXPLÍCITO; si se omite, se usa el corte
+    común implícito = mínimo de los últimos días con dato de cada tipo en ``values``,
+    para que ningún tipo quede con ventana truncada/sesgada).
     """
     path = dataset.parquet_path(parquet_dir)
     if not path.exists():
@@ -1598,9 +1678,22 @@ def window_pivot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dic
     isos = [str(r[roles.date_col]) for r in rows if r.get(roles.date_col)]
     if not isos:
         return None
-    last = str(params.get("weekly_asof") or max(isos))
-    start = (date.fromisoformat(last[:10]) - timedelta(days=int(params.get("window_days", 7)))).isoformat()
     wanted = set(values)
+    # Corte común: la fecha más reciente en que TODOS los tipos pedidos (ej.
+    # Spot y Forward) tienen dato. Si se ancla al máximo global (el tipo que
+    # reporta más rápido), el/los tipo(s) rezagados quedan con una ventana
+    # truncada (menos días reales sumados) y la punta del gráfico sale sesgada
+    # hacia el tipo más adelantado. Usando el mínimo de los máximos por tipo,
+    # la ventana de ``window_days`` es completa y comparable para todos.
+    per_type_last: dict[str, str] = {}
+    for r in rows:
+        t, d = r.get(tcol), r.get(roles.date_col)
+        if t is None or d is None or str(t) not in wanted:
+            continue
+        per_type_last[str(t)] = max(per_type_last.get(str(t), ""), str(d))
+    common_last = min(per_type_last.values()) if per_type_last else max(isos)
+    last = str(params.get("weekly_asof") or common_last)
+    start = (date.fromisoformat(last[:10]) - timedelta(days=int(params.get("window_days", 7)))).isoformat()
     agg: dict[str, dict[str, float]] = {}
     for r in rows:
         d, g, t = r.get(roles.date_col), r.get(group), r.get(tcol)
@@ -2006,7 +2099,7 @@ def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Htm
 # Sector del parquet → nombre del agente en el correo DCV.
 _DCV_AGENTS = {
     "Bancos": "Bancos",
-    "AFP": "FP y AFC",
+    "AFP": "FP y FC",
     "FFMM": "FFMM",
     "CS": "CSV",
     "Mandantes": "Mandantes",
@@ -3179,6 +3272,91 @@ def allocation_wide_by_fund(
     return None if plot.is_empty() else plot
 
 
+# DCV especifico:
+def _short_maturity_date_label(value: object) -> str:
+    """
+    Formatea Vencimiento para eje X:
+    2026-08-19 00:00:00 -> 19-08-26
+    """
+    s = str(value)
+    try:
+        d = date.fromisoformat(s[:10])
+        return f"{d.day:02d}-{d.month:02d}" #-{str(d.year)[2:]}
+    except ValueError:
+        return s[:10]
+
+def dcv_maturities_three_months_by_type(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """
+    Vencimientos próximos tres meses por Tipo.
+    Eje X = fecha corta de vencimiento.
+    Series = Tipo.
+    Valor = suma Stock_USD.
+    """
+    parquet_path = dataset.parquet_path(parquet_dir)
+    if not parquet_path.exists():
+        return None
+
+    con = duckdb.connect()
+    try:
+        rows = con.execute(f"""
+            SELECT
+                CAST(Vencimiento AS DATE) AS Vencimiento,
+                Tipo,
+                SUM(CAST(Stock_USD AS DOUBLE)) AS value
+            FROM read_parquet('{parquet_path.as_posix()}')
+            WHERE Stock_USD IS NOT NULL
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+        """).df().to_dict("records")
+    finally:
+        con.close()
+
+    if not rows:
+        return None
+
+    tipo_order = ["PDBC", "DAP", "BB", "BE", "BTP", "Letras MdH", "Otros"]
+
+    raw_dates = sorted({str(r["Vencimiento"])[:10] for r in rows})
+    date_labels = {
+        iso: _short_maturity_date_label(iso)
+        for iso in raw_dates
+    }
+
+    cat_order = [date_labels[iso] for iso in raw_dates]
+
+    series_dict: dict[str, dict[str, float]] = {}
+
+    for r in rows:
+        tipo = str(r["Tipo"])
+        iso = str(r["Vencimiento"])[:10]
+        label = date_labels[iso]
+        value = float(r["value"] or 0.0)
+
+        series_dict.setdefault(tipo, {})
+        series_dict[tipo][label] = series_dict[tipo].get(label, 0.0) + value
+
+    series_order = [
+        t for t in tipo_order
+        if t in series_dict
+    ] + sorted(
+        t for t in series_dict
+        if t not in tipo_order
+    )
+
+    overlay = ("Neto",) if params.get("net") is True else ()
+
+    return _grouped(
+        dataset.id,
+        dataset.unit,
+        series_dict,
+        cat_order,
+        series_order,
+        overlay=overlay,
+        date_note="Vencimientos próximos tres meses"
+    )
+
+
+
 
 # ── Informe Cambiario AM (familia cambiarioam) ───────────────────────────────
 #
@@ -3997,6 +4175,7 @@ _REGISTRY: dict[str, Transform | None] = {
     "wide_window_bars": wide_window_bars,
     "wide_monthly_bars": wide_monthly_bars,
     "window_stacked_by_cat": window_stacked_by_cat,
+    "window_stacked_diff_by_cat": window_stacked_diff_by_cat,
     "window_accum_by_cat": window_accum_by_cat,
     "window_accum_stacked_by_cat": window_accum_stacked_by_cat,
     "window_grouped_long": window_grouped_long,
@@ -4026,6 +4205,8 @@ _REGISTRY: dict[str, Transform | None] = {
     "allocation_wide_by_fund":allocation_wide_by_fund,
     "wide_daily_diff_ytd": wide_daily_diff_ytd,
     "wide_monthly_diff_bars": wide_monthly_diff_bars,
+    #dcv
+    "dcv_maturities_three_months_by_type": dcv_maturities_three_months_by_type,
     # Informe Cambiario AM (familia cambiarioam): el parquet trae el dato crudo y
     # la transform calcula lo derivado (Bollinger, percentiles S/R, base 100, spreads).
     "cam_lines": cam_lines,

@@ -91,6 +91,30 @@ python scripts/build_cambiario_parquets.py --from-cache "<carpeta con los xlsx>"
 python scripts/reports_to_eml.py --src data/parquet_reports/curated/fx      # una familia
 python scripts/reports_to_eml.py --src data/parquet_reports/curated         # todas (recursivo)
 
+# reports_to_eml2.py — mismo objetivo, pero el correo se ve IGUAL que en el navegador.
+# El v1 traduce el CSS con un mapa hardcodeado clase→estilo: lo que no está en la lista
+# se pierde (empezando por `body`, de ahí el Times New Roman) y las tablas —que se
+# sostienen sobre max-width/overflow-x, que Word descarta— llegan irreconocibles.
+#   --mode pixel    cuerpo = el informe RASTERIZADO con Chrome/Edge headless, en tiras
+#                   cid:. Idéntico por construcción; el texto del cuerpo no se copia.
+#   --mode hibrido  texto como HTML real (CSS volcado con un inliner GENÉRICO que
+#                   parsea el <style> de verdad) y a imagen solo lo que Word rompe:
+#                   gráficos SVG y TABLAS (cada una al ancho de SU contenedor).
+#   --mode ambos    (default) emite los dos: <nombre>.pixel.eml y <nombre>.hibrido.eml
+# Los dos adjuntan tu HTML original intacto y dejan la copia plana autocontenida.
+# Necesita Chrome o Edge en la máquina (en Windows msedge.exe ya viene); ruta manual
+# con BANKS_HEADLESS_BROWSER. Si el .eml pesa de más, bajar --scale (default 2).
+python scripts/reports_to_eml2.py --src data/parquet_reports/curated/dcv
+python scripts/reports_to_eml2.py --src data/parquet_reports/curated --mode pixel
+
+# Parquets con datos FICTICIOS para ver cómo queda un informe cuando todavía no
+# llegaron los parquets reales. El esquema NO se inventa: sale del catálogo
+# (columnas, tipos, enums, date_range), así que las transforms se ejercitan igual.
+# ⚠️ Las cifras son al azar: marcar SIEMPRE la salida y nunca mandarla como del BCCh.
+python scripts/make_demo_parquets.py --family dcv --out data_pipeline/demo/parquet
+# …y después construir el informe apuntando ahí:
+#   build_curated_report(get_spec("dcv"), parquet_dir=Path("data_pipeline/demo/parquet"))
+
 # Evaluación
 make eval          # golden set completo → eval_report.md
 make eval-ci       # gate CI recall@5
@@ -170,6 +194,8 @@ Noticias_scrapping/*.json  (paquete aislado jarvis_news)
 - **Catálogo de datasets en `sql_catalog/parquet_catalog.yaml`**: 250 datasets sobre parquets en `data_pipeline/parquet/`, con esquema completo (columnas, tipos, valores de enum, `date_range`) y **`chart_type` canónico** (del diccionario del tablero: `stacked_area`, `grouped_bar`, `market_monitor_table`, …). El LLM elige `dataset_id` + columnas/filtros vía `discover_query`/`execute_query`/analytics; **la SQL la arma siempre la tool** (`_parquet_query.build_fetch_sql`) — el LLM NUNCA escribe SQL. Algunos datasets del catálogo pueden no tener parquet local todavía (llegan en la próxima copia); las tools devuelven error controlado y los tests de integración los saltan.
 
 - **`chart_type` del catálogo manda en los gráficos**: el mapping canónico → familia renderizable (`line`/`area`/`bar`/`grouped_bar`/`stacked_bar`/`point`/`pie`/`table`) vive SOLO en `domain/agent/chart_types.py` (`chart_family`, `vega_mark`) — no duplicarlo. `plot_series` usa el `chart_type` del dataset como default (el LLM solo puede forzar marcas simples); `execute_query`/analytics pasan `chart_hint=dataset.chart_type` a `state.add_series`, e `infer_chart_type` lo respeta cuando la forma del dato lo permite (categórico → bar; familias de barra con muchas observaciones degradan a línea). `/v1/catalog` y `/v1/query/{id}` exponen `chart_type` para que el frontend construya el gráfico consistente con el tablero. Tipos desconocidos degradan a `line` (guard en `tests/unit/test_catalog_chart_types.py`).
+
+- **Fidelidad del correo: rasterizar, no traducir CSS** (`reports_to_eml2.py`): Outlook de escritorio renderiza con el motor de **Word**, que ignora el `<style>` del `<head>` y no entiende `grid`, `max-width`, `overflow`, `calc()/min()` ni SVG. Traducir ese CSS a mano (el mapa `clase → estilo` del `reports_to_eml.py` v1) siempre se queda corto — deja afuera `body` (todo cae a Times New Roman) y las tablas, que dependen justo de lo que Word descarta. El v2 tiene dos caminos: `--mode pixel` rasteriza el informe con el navegador del sistema (`reporting/headless.py`, Chrome/Edge por CLI, sin dependencias nuevas) y manda esas tiras como `cid:`, con lo cual la fidelidad es exacta por construcción; `--mode hibrido` vuelca el CSS con un inliner **genérico** que parsea el `<style>` real (`reporting/email_css.py`: selectores, especificidad, `var()` de `:root`) y rasteriza solo gráficos y tablas. Dos acoplamientos a cuidar: `headless.py` **no** puede usar `--dump-dom` ni `--virtual-time-budget` (cuelgan en `--headless=new`) y espera el chunk `IEND` del PNG en vez de esperar al proceso; y los anchos `_GUTTER`/`_GAP`/`_CARD_PAD`/`_BLOCK_MAX` de `reports_to_eml2.py` replican el CSS de `curated_report.py` — si cambia la grilla del informe, hay que actualizarlos o las tablas salen con la letra de otro tamaño.
 
 - **`data_pipeline/` ya NO extrae de SQL**: la extracción en vivo del DW (`dw_store`, `extract.py`), los snapshots y `series_catalog.yaml` fueron eliminados. Los parquets en `data_pipeline/parquet/` son la única fuente; se regeneran fuera del repo y se copian. No quedan tools que consulten el SQL Server (la antigua `historical_series` se eliminó). **Tras cada copia de parquets nuevos, correr `python scripts/refresh_catalog_dates.py`** para actualizar los `date_range` del catálogo desde los datos reales: si quedan desactualizados, el agente en modo thinking se los toma literal, acota sus queries a la fecha vieja y responde con datos antiguos aunque el parquet tenga filas más recientes.
 
