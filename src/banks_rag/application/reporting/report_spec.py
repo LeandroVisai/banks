@@ -86,14 +86,20 @@ class ReportBlock:
     # ``spec_date_filters``), así prosa y gráfico hablan siempre del mismo período.
     date_from: str = ""
     date_to: str = ""
-    # Solo aplica con ``FamilyReportSpec.layout == "grid"``: el bloque ocupa la FILA
-    # COMPLETA en vez de media. Réplica del ``hero`` del dashboard original, donde
-    # la pieza que abre una sección (y la tabla-resumen de la portada) va a ancho
-    # completo y el resto se acomoda de a dos.
+    # El bloque ocupa TODO el ancho de la página, con el gráfico dibujado en el
+    # viewBox ancho (``svg_chart._W_WIDE``) para que gane resolución horizontal en
+    # vez de solo estirarse.
     #
-    # No hace falta marcarlo para cerrar una fila impar: el renderer ya ensancha
-    # la ÚLTIMA tarjeta cuando las que quedan en automático son impares (misma
-    # regla de paridad del original), así ninguna queda huérfana a media fila.
+    # - En una sección en GRILLA: la tarjeta toma la fila completa en vez de media.
+    #   Réplica del ``hero`` del dashboard original, donde la pieza que abre una
+    #   sección (y la tabla-resumen de la portada) va a ancho completo. No hace falta
+    #   marcarlo para cerrar una fila impar: el renderer ya ensancha la ÚLTIMA tarjeta
+    #   cuando las que quedan en automático son impares (misma regla de paridad del
+    #   original), así ninguna queda huérfana a media fila.
+    # - En una sección APILADA: el gráfico se libera del ``max-width:760px`` de
+    #   ``.report-chart`` y llega al mismo borde que las tablas grandes. Útil para una
+    #   serie con muchas observaciones —"Vencimientos Totales" del dcv apila ~65 días
+    #   hábiles— donde 760px dejan las barras y las fechas del eje ilegibles.
     full_width: bool = False
 
 

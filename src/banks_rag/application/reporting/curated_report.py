@@ -77,6 +77,11 @@ class CuratedBlock:
     # en otro backend (p.ej. PNG matplotlib para el cuerpo de un correo). ``None`` en
     # placeholders/skip o cuando el resultado fue HTML inline (tablas heatmap).
     plot: object | None = None
+    # El gráfico se dibujó en el viewBox ancho (``ReportBlock.full_width`` o última
+    # tarjeta impar de una grilla). Se guarda acá para que el HTML no vuelva a
+    # deducirlo: quien decide el viewBox y quien decide la CSS tienen que coincidir,
+    # o el SVG ancho termina encajado en un contenedor de 760px.
+    wide: bool = False
 
 
 @dataclass
@@ -288,6 +293,11 @@ def _wide_block_ids(spec: FamilyReportSpec) -> set[str]:
                 wide.update(bb.title for bb in c)
         if len(rest) % 2 == 1:
             wide.update(bb.title for bb in rest[-1])
+    # Secciones APILADAS: no hay grilla que repartir, pero un bloque marcado
+    # ``full_width`` igual se dibuja ancho y llega al borde de la página (ver
+    # ``ReportBlock.full_width``).
+    wide.update(b.title for b in spec.blocks
+                if b.full_width and not _is_grid_section(spec, b.section))
     return wide
 
 
@@ -342,7 +352,7 @@ def _process_block(
 
     # Resultado HTML inline (tablas con color — heatmap DCV).
     if isinstance(result, HtmlTable):
-        return CuratedBlock(block, "chart", result.html, preliminary=False, plot=result)
+        return CuratedBlock(block, "chart", result.html, wide=wide, preliminary=False, plot=result)
 
     plot = result
     if plot is None or plot.is_empty():
@@ -379,7 +389,7 @@ def _process_block(
     # Preliminar solo si la forma del dato NO permite el tipo objetivo (cae a
     # línea/composición). Con su transform propia, el bloque sale en su tipo final.
     preliminary = not renders_natively(plot.kind, block.chart)
-    return CuratedBlock(block, "chart", svg, preliminary=preliminary,
+    return CuratedBlock(block, "chart", svg, wide=wide, preliminary=preliminary,
                         date_note=plot.date_note, plot=plot)
 
 
@@ -544,6 +554,9 @@ _SHELL = """<!DOCTYPE html>
   .section-text p { margin:0 0 6px; }
   .section-text p:last-child { margin-bottom:0; }
   .report-chart { display:block; max-width:760px; margin:6px auto; }
+  /* Bloque a ancho completo (ReportBlock.full_width) fuera de la grilla: el gráfico
+     llega al mismo borde que las tablas grandes en vez de topar en 760px. */
+  .chart-wide .report-chart { max-width:100%; }
   .placeholder-card { border:1px dashed #bcbcbc; background:#fafafa; color:var(--muted); border-radius:6px; padding:18px; text-align:center; font-size:13px; max-width:760px; margin:6px auto; }
   .placeholder-card .kind { font-weight:700; color:#9a4b00; }
   .placeholder-card.skip .kind { color:#8a8a8a; }
@@ -833,6 +846,12 @@ def _card_head_body_html(cb: CuratedBlock, *, show_title: bool = True) -> tuple[
         # sin adivinar por el atributo style ni tocar el HTML de la tabla.
         if isinstance(cb.plot, HtmlTable):
             body.append(f'<div class="block-table">{cb.body_html}</div>')
+        elif cb.wide:
+            # ``.report-chart`` topa en 760px; un bloque ancho ya trae el viewBox
+            # doblado, así que sin liberarlo se vería igual de chico pero con la
+            # letra más finita. Dentro de una tarjeta la CSS de la grilla ya hacía
+            # esto; la clase lo extiende a las secciones apiladas.
+            body.append(f'<div class="chart-wide">{cb.body_html}</div>')
         else:
             body.append(cb.body_html)
     elif cb.render_kind == "skip":

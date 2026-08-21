@@ -17,6 +17,7 @@ from banks_rag.application.reporting import (
 )
 from banks_rag.application.reporting.curated_report import (
     _scale_plot,
+    _wide_block_ids,
     fill_synthesis_slot,
     fill_text_slots,
     section_slot_ids,
@@ -3099,3 +3100,43 @@ class TestAfpAllocationGrid:
         for sec in AFP_SPEC.sections():
             if sec != "Allocation y patrimonio":
                 assert not _is_grid_section(AFP_SPEC, sec), sec
+
+
+class TestFullWidthBlocks:
+    """``ReportBlock.full_width`` fuera de la grilla: el gráfico llega al borde de la
+    página en vez de topar en los 760px de ``.report-chart``."""
+
+    @staticmethod
+    def _spec(**kwargs) -> FamilyReportSpec:
+        return FamilyReportSpec(
+            family="x", title="X",
+            blocks=(
+                ReportBlock(section="S", title="normal", chart="line", status=STATUS_MVP),
+                ReportBlock(section="S", title="ancho", chart="stacked_bar",
+                            status=STATUS_MVP, full_width=True),
+            ),
+            **kwargs,
+        )
+
+    def test_marca_el_bloque_de_una_seccion_apilada(self):
+        # Antes solo se miraban las secciones en grilla, así que en un informe
+        # apilado (dcv) marcar full_width no hacía absolutamente nada.
+        assert _wide_block_ids(self._spec()) == {"ancho"}
+
+    def test_no_arrastra_a_los_demas_bloques_de_la_seccion(self):
+        assert "normal" not in _wide_block_ids(self._spec())
+
+    def test_sin_full_width_no_hay_bloques_anchos_en_stack(self):
+        spec = FamilyReportSpec(
+            family="x", title="X",
+            blocks=(ReportBlock(section="S", title="a", chart="line", status=STATUS_MVP),),
+        )
+        assert _wide_block_ids(spec) == set()
+
+    def test_el_html_libera_al_grafico_ancho_del_tope_de_760(self, tmp_path):
+        # El viewBox ancho y la CSS tienen que ir juntos: un SVG dibujado a 1520
+        # dentro de un contenedor de 760px se ve igual de chico pero con la letra
+        # más finita que el resto del informe.
+        report = build_curated_report(self._spec(), entries=[], parquet_dir=tmp_path)
+        html = render_curated_html(report)
+        assert ".chart-wide .report-chart { max-width:100%; }" in html

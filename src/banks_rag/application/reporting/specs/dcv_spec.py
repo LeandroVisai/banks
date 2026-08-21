@@ -152,6 +152,9 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         unit="Millones USD", chart="stacked_bar", status=STATUS_MVP,
         source_id="vencimientos_tres_meses", transform="dcv_maturities_three_months_by_type",
         params={"net": False}, note="*Vencimientos Totales",
+        # Apila ~65 días hábiles: a 760px las barras y las fechas del eje quedan
+        # ilegibles. A ancho completo llega al mismo borde que las tablas grandes.
+        full_width=True,
     ),
 
     # ── 3.jpg … 6.jpg — Distribución por tramo de plazo, un agente por sección ─
