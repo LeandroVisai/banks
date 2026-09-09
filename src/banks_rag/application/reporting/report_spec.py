@@ -23,6 +23,9 @@ ChartKind = str  # "line" | "area" | "composition" | "grouped_bar" | "stacked_ba
 #                  | "stacked_area" | "pie" | "dual_line" | "bar_time" | "heatmap_table"
 #                  | "hist_range" (caja mín/máx + promedio + "hoy" por categoría)
 #                  | "point" (dispersión x/y etiquetada, con cruce en 0)
+#                  | "treemap" (dos niveles: rectángulo exterior con rectángulos
+#                    interiores; área = tamaño, color = escala divergente centrada
+#                    en 0 — ver PlotData.kind='hierarchy' en parquet_facts.py)
 
 # Estado del bloque respecto del MVP.
 STATUS_MVP = "mvp"    # el renderer actual lo dibuja ahora

@@ -11,8 +11,10 @@ from banks_rag.application.reporting.parquet_facts import PlotData, PlotSeries
 from banks_rag.application.reporting.svg_chart import (
     _SCATTER_HIGHLIGHT_COLOR,
     _SCATTER_POINT_COLOR,
+    _diverging_color,
     _fmt_date,
     _fmt_num,
+    _squarify,
     render_mini_table_html,
     render_plot_svg,
     renders_natively,
@@ -349,3 +351,99 @@ class TestRenderScatterLabeled:
 
     def test_empty_plot_returns_none(self):
         assert render_plot_svg(PlotData("fx", "point", "scatter", "", [])) is None
+
+
+# ── kind="hierarchy": treemap (réplica "Canasta IPC por división y grupo") ───
+
+def _treemap(node_color=None) -> PlotData:
+    series = [
+        PlotSeries("Alimentos", [("Alimentos", 20.0), ("Bebidas", 2.0)]),
+        PlotSeries("Vivienda", [("Arriendo", 10.0)]),
+    ]
+    return PlotData("ipc_treemap", "pie", "hierarchy", "%", series,
+                    node_color=node_color if node_color is not None else
+                    {"Alimentos": [1.5, 0.9], "Vivienda": [-0.4]},
+                    node_color_unit="%")
+
+
+@pytest.mark.unit
+class TestSquarify:
+    def test_covers_full_target_area(self):
+        rects = _squarify([22.15, 14.2, 10.5, 9.1, 8.0, 7.3, 6.5, 5.9, 5.0, 4.2, 3.1, 2.5, 1.53],
+                          0, 0, 1000, 400)
+        assert round(sum(w * h for _x, _y, w, h in rects), 3) == round(1000 * 400, 3)
+
+    def test_preserves_order_and_count(self):
+        rects = _squarify([5.0, 1.0, 3.0], 0, 0, 100, 50)
+        assert len(rects) == 3
+        # el más grande (5.0, primero en la lista) debe quedar con más área que
+        # el más chico (1.0, segundo), sin importar que internamente se reordene.
+        area = [w * h for _x, _y, w, h in rects]
+        assert area[0] > area[1]
+
+    def test_single_size_fills_whole_rect(self):
+        assert _squarify([7.0], 5, 5, 80, 40) == [(5, 5, 80, 40)]
+
+    def test_empty_returns_empty(self):
+        assert _squarify([], 0, 0, 100, 100) == []
+
+    def test_all_zero_or_negative_sizes_returns_zero_rects(self):
+        rects = _squarify([0.0, -1.0], 0, 0, 100, 100)
+        assert len(rects) == 2
+        assert all(w == 0.0 and h == 0.0 for _x, _y, w, h in rects)
+
+    def test_rects_stay_within_bounds(self):
+        rects = _squarify([9.0, 4.0, 1.0, 1.0, 1.0], 10, 20, 300, 150)
+        for rx, ry, rw, rh in rects:
+            assert rx >= 10 - 1e-6 and ry >= 20 - 1e-6
+            assert rx + rw <= 10 + 300 + 1e-6
+            assert ry + rh <= 20 + 150 + 1e-6
+
+
+@pytest.mark.unit
+class TestDivergingColor:
+    def test_zero_is_pale_neutral(self):
+        r, g, b = _diverging_color(0.0)
+        assert abs(r - g) < 12 and abs(g - b) < 12  # cerca de gris, no rojo ni azul
+
+    def test_positive_is_reddish_negative_is_bluish(self):
+        r_pos, _g_pos, b_pos = _diverging_color(1.0)
+        r_neg, _g_neg, b_neg = _diverging_color(-1.0)
+        assert r_pos > b_pos      # +1 -> predomina el rojo
+        assert b_neg > r_neg      # -1 -> predomina el azul
+
+    def test_clamps_outside_range(self):
+        assert _diverging_color(5.0) == _diverging_color(1.0)
+        assert _diverging_color(-5.0) == _diverging_color(-1.0)
+
+
+@pytest.mark.unit
+class TestRenderTreemap:
+    def test_renders_natively_for_treemap(self):
+        assert renders_natively("hierarchy", "treemap")
+        assert not renders_natively("hierarchy", "line")
+
+    def test_well_formed_svg_with_header_and_leaf_rects(self):
+        svg = render_plot_svg(_treemap(), chart="treemap")
+        ET.fromstring(svg)
+        # fondo (1) + 2 headers de división + 3 hojas (Alimentos/Bebidas/Arriendo)
+        assert svg.count("<rect") >= 1 + 2 + 3
+        assert "Alimentos" in svg and "Vivienda" in svg and "Arriendo" in svg
+
+    def test_leaf_tooltip_carries_size_and_color(self):
+        svg = render_plot_svg(_treemap(), chart="treemap")
+        assert 'data-s="Alimentos"' in svg
+        assert 'data-k="Bebidas"' in svg
+
+    def test_legend_shows_cap_from_max_abs_color(self):
+        svg = render_plot_svg(_treemap({"Alimentos": [3.0, 0.9], "Vivienda": [-0.4]}), chart="treemap")
+        assert "+3" in svg and "-3" in svg
+
+    def test_missing_node_color_defaults_to_neutral(self):
+        plot = PlotData("ipc_treemap", "pie", "hierarchy", "%",
+                        [PlotSeries("Alimentos", [("Alimentos", 20.0)])])
+        svg = render_plot_svg(plot, chart="treemap")
+        ET.fromstring(svg)  # no revienta sin node_color
+
+    def test_empty_plot_returns_none(self):
+        assert render_plot_svg(PlotData("ipc_treemap", "pie", "hierarchy", "%", [])) is None

@@ -12,6 +12,7 @@ from .afp_spec import AFP_SPEC
 from .cambiarioam_spec import CAMBIARIOAM_SPEC
 from .dcv_spec import DCV_SPEC
 from .ffmm_spec import FFMM_SPEC
+from .ipc_spec import IPC_SPEC
 from .fx_spec import FX_SPEC
 from .nr_spec import NR_SPEC
 from .rf_spec import RF_SPEC
@@ -23,6 +24,7 @@ _SPECS: dict[str, FamilyReportSpec] = {
     FX_SPEC.family: FX_SPEC,
     DCV_SPEC.family: DCV_SPEC,
     CAMBIARIOAM_SPEC.family: CAMBIARIOAM_SPEC,
+    IPC_SPEC.family: IPC_SPEC,
     RF_SPEC.family: RF_SPEC,
 }
 
@@ -52,7 +54,8 @@ def available_families() -> list[str]:
 
 
 __all__ = [
-    "AFP_SPEC", "CAMBIARIOAM_SPEC", "DCV_SPEC", "FFMM_SPEC", "FX_SPEC", "NR_SPEC",
+    "AFP_SPEC", "CAMBIARIOAM_SPEC", "DCV_SPEC", "FFMM_SPEC", "FX_SPEC", "IPC_SPEC",
+    "NR_SPEC",
     "RF_SPEC",
     "available_families", "get_spec",
 ]

@@ -632,8 +632,32 @@ def _fwd_clp(src: dict):
 # ── Monedas y carry ──────────────────────────────────────────────────────────
 
 def _currency_builder(mapping: dict[str, str]) -> Callable[[dict], Any]:
+    """Panel de monedas: una columna por paridad, todas contra la misma fecha.
+
+    Una paridad que la fuente no traiga se OMITE del panel en vez de tumbarlo. El
+    Excel completo del DOMA las tiene todas, así que por ese camino no cambia
+    nada; pero cuando el panel se arma desde el DW —donde ``bbg_monedas`` no trae,
+    por ejemplo, el dólar taiwanés— nueve monedas dibujadas valen bastante más que
+    un gráfico vacío. Lo que sí se registra es cuál faltó, para que la ausencia no
+    pase inadvertida.
+    """
     def build(src: dict):
-        return pick(src["datos"], {"Fecha": "Fecha", **mapping}, date_col="Fecha")
+        frame = src["datos"]
+        presentes, ausentes = {}, []
+        for etiqueta, columna in mapping.items():
+            try:
+                col(frame, columna)
+            except MissingColumnError:
+                ausentes.append(columna)
+                continue
+            presentes[etiqueta] = columna
+        if ausentes:
+            log.warning("panel de monedas: sin %s en la fuente; se dibuja con las otras %d",
+                        ", ".join(ausentes), len(presentes))
+        if not presentes:
+            raise MissingColumnError(
+                f"ninguna de las paridades del panel está en la hoja: {list(mapping.values())}")
+        return pick(frame, {"Fecha": "Fecha", **presentes}, date_col="Fecha")
     return build
 
 

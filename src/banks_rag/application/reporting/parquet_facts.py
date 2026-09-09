@@ -1015,12 +1015,16 @@ class PlotData:
     caja [mín,máx] + promedio + "hoy" por categoría (series con label EXACTO
     "Mínimo"/"Máximo"/"Promedio"/"Hoy"); ``kind='scatter'`` → dispersión x/y
     etiquetada (ver convención en ``PlotSeries``; ``overlay`` marca las
-    etiquetas del punto destacado). ``family`` es la familia renderizable del
+    etiquetas del punto destacado); ``kind='hierarchy'`` → treemap de DOS
+    niveles: una ``PlotSeries`` por rectángulo EXTERIOR (``label`` = su
+    etiqueta), cuyos ``points`` son los rectángulos INTERIORES que contiene
+    (``(etiqueta, tamaño)``, tamaño = ÁREA); ver ``node_color`` para el color de
+    cada rectángulo interior. ``family`` es la familia renderizable del
     catálogo (``chart_family``); ``table`` => el caller cae a una mini-tabla HTML."""
 
     dataset_id: str
     family: str
-    kind: str  # "timeseries" | "snapshot" | "grouped" | "range" | "scatter"
+    kind: str  # "timeseries" | "snapshot" | "grouped" | "range" | "scatter" | "hierarchy"
     unit: str
     series: list[PlotSeries]
     # Etiquetas de series que se dibujan SUPERPUESTAS (no apiladas): una línea
@@ -1053,6 +1057,17 @@ class PlotData:
     # (área gris tenue).
     emphasis: dict[str, str] = field(default_factory=dict)
     muted: tuple[str, ...] = ()
+    # Solo ``kind='hierarchy'``: el valor de COLOR de cada rectángulo interior,
+    # alineado por POSICIÓN con los ``points`` de la serie del mismo label —
+    # ``node_color["Alimentos"][2]`` es el color del tercer punto de la serie
+    # "Alimentos". Va SEPARADO del tamaño (``points``) porque el treemap del
+    # informe original colorea por variación mensual (una escala divergente
+    # centrada en 0) mientras el área es la ponderación — dos magnitudes
+    # distintas que ``PlotSeries.points`` (una sola tupla valor) no puede llevar
+    # juntas. Vacío (default) = sin dato de color: el renderer cae a la paleta
+    # cíclica por índice, igual que snapshot/grouped.
+    node_color: dict[str, list[float]] = field(default_factory=dict)
+    node_color_unit: str = ""
 
     def is_empty(self) -> bool:
         return not self.series or all(len(s.points) < 1 for s in self.series)

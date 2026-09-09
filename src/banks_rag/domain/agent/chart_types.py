@@ -86,6 +86,10 @@ CHART_FAMILY: dict[str, str] = {
     "fx_retorno_scatter_interactive": "point",
     # composición
     "pie": "pie",
+    # Treemap (informe curado ipc): jerarquía de dos niveles, área=tamaño,
+    # color=escala divergente. El agente genérico no dibuja jerarquías; se
+    # reduce a "pie" (misma familia semántica: composición de un total).
+    "treemap": "pie",
     # tablas-monitor (color de mercados): no son una serie graficable
     "market_monitor_table": "table",
 }

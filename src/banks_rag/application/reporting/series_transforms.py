@@ -4640,7 +4640,226 @@ def spc_btp_curve(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> P
                     series, date_note=note, zero_base=False)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Informe Post IPC (familia ipc)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# El informe del IPC reusa casi todo lo genérico —``wide_lines`` para los
+# analíticos y las expectativas, ``snapshot_grouped`` para las divisiones,
+# ``wide_monthly_bars`` para el esperado vs efectivo— y necesita solo estas dos
+# formas propias.
+
+
+def ipc_rango_categoria(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Banda por categoría (mín/máx/promedio) más el valor de HOY.
+
+    Cuatro piezas del informe tienen esta misma forma y el parquet se escribe con
+    el MISMO esquema para las cuatro (``scripts/ingest/sources.COLS_RANGO``):
+
+        difusión del IPC general      categoría = mes calendario, hoy = este año
+        bienes sin volátiles          idem
+        servicios sin volátiles       idem
+        incidencias por división      categoría = división, hoy = efectivo del INE
+
+    Por eso la transform es una sola y no lee roles: los nombres de columna son
+    fijos por contrato con el extractor. ``Orden`` fija el eje X (los meses van
+    en orden de calendario, no alfabético; las divisiones por magnitud), y una
+    categoría sin valor de hoy —un mes que todavía no ocurrió— conserva su banda
+    y se dibuja sin el marcador.
+
+    params: ``actual_label`` (cómo se llama la serie de "hoy" en la leyenda:
+    "Efectivo INE" en incidencias, el año en curso en las bandas).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        rows = _read_rows(con, path, date_col=None,
+                          columns=["Categoria", "Orden", "Minimo", "Maximo", "Promedio", "Actual"])
+    except duckdb.Error:
+        return None
+    finally:
+        con.close()
+    if not rows:
+        return None
+
+    def _num(v):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return None if f != f else f  # NaN
+
+    ordenadas = sorted(rows, key=lambda r: (_num(r.get("Orden")) if _num(r.get("Orden")) is not None else 0.0))
+    cats, mins, maxs, means, hoys = [], [], [], [], []
+    for r in ordenadas:
+        cat = r.get("Categoria")
+        lo, hi, avg = _num(r.get("Minimo")), _num(r.get("Maximo")), _num(r.get("Promedio"))
+        if cat is None or lo is None or hi is None or avg is None:
+            continue
+        cats.append(str(cat))
+        mins.append(lo)
+        maxs.append(hi)
+        means.append(avg)
+        hoys.append(_num(r.get("Actual")))
+    if not cats:
+        return None
+
+    actual_label = params.get("actual_label") or "Hoy"
+    series = [
+        PlotSeries("Mínimo", list(zip(cats, mins))),
+        PlotSeries("Máximo", list(zip(cats, maxs))),
+        PlotSeries("Promedio", list(zip(cats, means))),
+        # El renderer de ``kind='range'`` identifica las series por su label
+        # EXACTO, así que la de "hoy" viaja como "Hoy" aunque el bloque la
+        # presente con otro nombre en la nota.
+        PlotSeries("Hoy", [(c, v) for c, v in zip(cats, hoys) if v is not None]),
+    ]
+    note = params.get("note") or (f"Marcador: {actual_label}" if actual_label != "Hoy" else "")
+    plot = PlotData(dataset.id, "bar", "range", dataset.unit, series, date_note=note)
+    return None if plot.is_empty() else plot
+
+
+# Columnas de la tabla de detalle del IPC: (columna del parquet, encabezado,
+# decimales, sufijo). El orden es el de la tabla del informe original.
+_IPC_TABLA_COLS = (
+    ("Glosa", "Producto", None, ""),
+    ("Clasificación", "Clasif.", None, ""),
+    ("Variación Mensual (%)", "Var. mensual", 1, "%"),
+    ("Incidencia Mensual (%)", "Inc. mensual", 3, " pp"),
+    ("Variación 12 Meses (%)", "Var. 12M", 1, "%"),
+    ("Incidencia 12 Meses (%)", "Inc. 12M", 3, " pp"),
+    ("Ponderación 2023", "Ponderación", 2, "%"),
+)
+
+
+def ipc_tabla_canasta(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
+    """Detalle por producto de la canasta del último mes.
+
+    En el dashboard original esta tabla es interactiva (filtro por clasificación,
+    búsqueda y orden por columna, resueltos en JavaScript). Acá el informe es
+    estático y va a un correo, así que se recorta a lo que se lee de un vistazo:
+    los ``top`` productos por incidencia absoluta, que son los que explican el
+    mes. El resto de la canasta vive completo en el parquet
+    (``ipc_canasta_mes``) para quien quiera consultarla.
+
+    params: ``top`` (default 25), ``clasificacion`` (acota a "Volátil" o "Sin
+    volátiles").
+    """
+    from .svg_chart import render_kv_table_html
+
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        rows = _read_rows(con, path, date_col=None,
+                          columns=[c for c, _h, _d, _s in _IPC_TABLA_COLS])
+    except duckdb.Error:
+        return None
+    finally:
+        con.close()
+    if not rows:
+        return None
+
+    clasif = params.get("clasificacion")
+    if clasif:
+        rows = [r for r in rows if str(r.get("Clasificación")) == clasif]
+
+    def _inc(r) -> float:
+        try:
+            return abs(float(r.get("Incidencia Mensual (%)")))
+        except (TypeError, ValueError):
+            return 0.0
+
+    rows = sorted(rows, key=_inc, reverse=True)[: int(params.get("top") or 25)]
+
+    cuerpo: list[list[str]] = []
+    for r in rows:
+        celdas = []
+        for columna, _h, dec, sufijo in _IPC_TABLA_COLS:
+            v = r.get(columna)
+            if dec is None:
+                celdas.append("" if v is None else str(v))
+                continue
+            try:
+                celdas.append(f"{float(v):,.{dec}f}{sufijo}".replace(",", "."))
+            except (TypeError, ValueError):
+                celdas.append("—")
+        cuerpo.append(celdas)
+
+    caption = params.get("caption") or f"Los {len(cuerpo)} productos de mayor incidencia del mes"
+    return HtmlTable(
+        html=render_kv_table_html([h for _c, h, _d, _s in _IPC_TABLA_COLS], cuerpo,
+                                  caption=caption, max_width=760),
+        dataset_id=dataset.id,
+    )
+
+
+def ipc_treemap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Treemap de la canasta: división (exterior) → grupo (interior).
+
+    El parquet ya trae UNA fila por (división, grupo) del último mes, con la
+    ponderación y la variación mensual del grupo ya agregadas por el INE (no se
+    recalcula nada acá). Arma un ``PlotData(kind='hierarchy')``: una
+    ``PlotSeries`` por división cuyos ``points`` son sus grupos
+    ``(nombre, ponderación)``, y ``node_color`` con la variación de cada uno,
+    alineada por posición. El renderer (``svg_chart._render_treemap``) hace el
+    resto: layout squarified + escala divergente centrada en 0.
+
+    params: ninguno — el orden de divisiones y grupos ya viene resuelto por
+    ponderación desde el extractor (``scripts/ingest/from_excel.py``).
+    """
+    path = dataset.parquet_path(parquet_dir)
+    if not path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        rows = _read_rows(con, path, date_col=None,
+                          columns=["Division", "Grupo", "Ponderacion", "Variacion"])
+    except duckdb.Error:
+        return None
+    finally:
+        con.close()
+    if not rows:
+        return None
+
+    points_by_div: dict[str, list[tuple[str, float]]] = {}
+    colors_by_div: dict[str, list[float]] = {}
+    order: list[str] = []
+    for r in rows:
+        div, grp = r.get("Division"), r.get("Grupo")
+        try:
+            pond = float(r.get("Ponderacion"))
+        except (TypeError, ValueError):
+            continue
+        if div is None or grp is None or pond <= 0:
+            continue
+        div, grp = str(div), str(grp)
+        if div not in points_by_div:
+            points_by_div[div] = []
+            colors_by_div[div] = []
+            order.append(div)
+        points_by_div[div].append((grp, pond))
+        try:
+            colors_by_div[div].append(float(r.get("Variacion")))
+        except (TypeError, ValueError):
+            colors_by_div[div].append(0.0)
+    if not order:
+        return None
+
+    series = [PlotSeries(label=d, points=points_by_div[d]) for d in order]
+    plot = PlotData(dataset.id, "pie", "hierarchy", dataset.unit, series,
+                    node_color=colors_by_div, node_color_unit="%")
+    return None if plot.is_empty() else plot
+
+
 _REGISTRY: dict[str, Transform | None] = {
+    # Informe Post IPC (familia ipc).
+    "ipc_rango_categoria": ipc_rango_categoria,
+    "ipc_tabla_canasta": ipc_tabla_canasta,
+    "ipc_treemap": ipc_treemap,
     # Implementadas (producen una serie graficable como línea/composición).
     "straight_series": straight_series,
     "snapshot_composition": snapshot_composition,

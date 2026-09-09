@@ -3885,3 +3885,473 @@ datasets:
       - {name: Fecha, type: TIMESTAMP}
       - {name: Instrumento, type: VARCHAR, values: ["CALL", "CSS", "FWD", "FWD_obs", "FXS", "PUT"]}
       - {name: Pos_neta, type: DOUBLE}
+
+  # ── Informe Post IPC (familia ipc) ─────────────────────────────────────────
+  # Los generan scripts/ingest/{from_excel,from_sql,from_notebook}.py
+  - id: ipc_canasta_base_cerrada
+    file: ipc_canasta_base_cerrada.parquet
+    chart_type: "market_monitor_table"
+    name: "Canasta IPC de las bases cerradas (2009-2023)"
+    description: >
+      Canasta del INE a nivel de producto de las tres bases ya cerradas (2008, 2013 y 2018), empalmadas. Historia publicada: NO cambia mes a mes. Se regenera solo con --rebuild-fijo, el día que el INE empalme una base nueva.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Año, type: DOUBLE}
+      - {name: Mes, type: DOUBLE}
+      - {name: Base, type: VARCHAR}
+      - {name: División, type: DOUBLE}
+      - {name: Grupo, type: DOUBLE}
+      - {name: Clase, type: DOUBLE}
+      - {name: Subclase, type: DOUBLE}
+      - {name: Producto, type: DOUBLE}
+      - {name: Glosa, type: VARCHAR}
+      - {name: Ponderación, type: DOUBLE}
+      - {name: Índice, type: DOUBLE}
+      - {name: Variación Mensual (%), type: DOUBLE}
+      - {name: Variación Acumulada (%), type: DOUBLE}
+      - {name: Variación 12 Meses (%), type: DOUBLE}
+      - {name: Incidencia Mensual (%), type: DOUBLE}
+      - {name: Incidencia Acumulada (%), type: DOUBLE}
+      - {name: Incidencia 12 Meses (%), type: DOUBLE}
+  - id: ipc_canasta_vigente
+    file: ipc_canasta_vigente.parquet
+    chart_type: "market_monitor_table"
+    name: "Canasta IPC de la base vigente (2023=100)"
+    description: >
+      Canasta del INE a nivel de producto de la base 2023, desde 2024-01 hasta el último mes publicado. Es el único archivo del INE que hay que reemplazar cada mes.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Año, type: DOUBLE}
+      - {name: Mes, type: DOUBLE}
+      - {name: Base, type: VARCHAR}
+      - {name: División, type: DOUBLE}
+      - {name: Grupo, type: DOUBLE}
+      - {name: Clase, type: DOUBLE}
+      - {name: Subclase, type: DOUBLE}
+      - {name: Producto, type: DOUBLE}
+      - {name: Glosa, type: VARCHAR}
+      - {name: Ponderación, type: DOUBLE}
+      - {name: Índice, type: DOUBLE}
+      - {name: Variación Mensual (%), type: DOUBLE}
+      - {name: Variación Acumulada (%), type: DOUBLE}
+      - {name: Variación 12 Meses (%), type: DOUBLE}
+      - {name: Incidencia Mensual (%), type: DOUBLE}
+      - {name: Incidencia Acumulada (%), type: DOUBLE}
+      - {name: Incidencia 12 Meses (%), type: DOUBLE}
+  - id: ipc_canasta_historica
+    file: ipc_canasta_historica.parquet
+    chart_type: "market_monitor_table"
+    name: "Canasta IPC consolidada 2009-hoy"
+    description: >
+      Canasta del INE a nivel de producto, con las cuatro bases (2008/2013/2018/2023) empalmadas por Año-Mes. Es la fuente de la difusión y de la variación histórica del mes. Equivale a ipc_canasta_base_cerrada + ipc_canasta_vigente, y existe aparte porque cada transform lee UN solo parquet.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Año, type: DOUBLE}
+      - {name: Mes, type: DOUBLE}
+      - {name: Base, type: VARCHAR}
+      - {name: División, type: DOUBLE}
+      - {name: Grupo, type: DOUBLE}
+      - {name: Clase, type: DOUBLE}
+      - {name: Subclase, type: DOUBLE}
+      - {name: Producto, type: DOUBLE}
+      - {name: Glosa, type: VARCHAR}
+      - {name: Ponderación, type: DOUBLE}
+      - {name: Índice, type: DOUBLE}
+      - {name: Variación Mensual (%), type: DOUBLE}
+      - {name: Variación Acumulada (%), type: DOUBLE}
+      - {name: Variación 12 Meses (%), type: DOUBLE}
+      - {name: Incidencia Mensual (%), type: DOUBLE}
+      - {name: Incidencia Acumulada (%), type: DOUBLE}
+      - {name: Incidencia 12 Meses (%), type: DOUBLE}
+  - id: ipc_difusion
+    file: ipc_difusion.parquet
+    chart_type: "line"
+    name: "Difusión inflacionaria del IPC general"
+    description: >
+      Porcentaje de productos de la canasta con variación mensual positiva, por mes. Se mide sobre productos (filas con código de producto), no sobre agregados.
+    segment: ipc
+    unit: "%"
+    value_kind: ratio
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Año, type: DOUBLE}
+      - {name: Mes, type: DOUBLE}
+      - {name: Variación Mensual Positiva, type: DOUBLE}
+      - {name: Total Productos, type: DOUBLE}
+      - {name: Difusión (%), type: DOUBLE}
+  - id: ipc_difusion_banda
+    file: ipc_difusion_banda.parquet
+    chart_type: "hist_range"
+    name: "Difusión del mes contra su banda histórica"
+    description: >
+      Para cada mes calendario: la banda de difusión histórica (2010-2021) y el valor del año en curso. La ventana excluye 2022 en adelante a propósito: el shock post-pandemia deformaría la banda de comportamiento normal.
+    segment: ipc
+    unit: "%"
+    value_kind: ratio
+    date_range: []
+    columns:
+      - {name: Categoria, type: VARCHAR}
+      - {name: Orden, type: DOUBLE}
+      - {name: Minimo, type: DOUBLE}
+      - {name: Maximo, type: DOUBLE}
+      - {name: Promedio, type: DOUBLE}
+      - {name: Actual, type: DOUBLE}
+  - id: ipc_canasta_mes
+    file: ipc_canasta_mes.parquet
+    chart_type: "market_monitor_table"
+    name: "Canasta del último mes por producto"
+    description: >
+      Todos los productos del último mes publicado con su variación e incidencia (mensual y 12 meses), clasificados en Volátil / Sin volátiles según el diccionario IPC 2023. Es la tabla de detalle que cierra el informe.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Glosa, type: VARCHAR}
+      - {name: Variación Mensual (%), type: DOUBLE}
+      - {name: Incidencia Mensual (%), type: DOUBLE}
+      - {name: Variación 12 Meses (%), type: DOUBLE}
+      - {name: Incidencia 12 Meses (%), type: DOUBLE}
+      - {name: Clasificación, type: VARCHAR}
+      - {name: Ponderación 2023, type: DOUBLE}
+  - id: ipc_difusion_sv
+    file: ipc_difusion_sv.parquet
+    chart_type: "line"
+    name: "Difusión inflacionaria sin volátiles"
+    description: >
+      La misma difusión que ipc_difusion pero restringida a los productos que el diccionario IPC 2023 marca como no volátiles.
+    segment: ipc
+    unit: "%"
+    value_kind: ratio
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Año, type: DOUBLE}
+      - {name: Mes, type: DOUBLE}
+      - {name: Variación Mensual Positiva, type: DOUBLE}
+      - {name: Total Productos, type: DOUBLE}
+      - {name: Difusión (%), type: DOUBLE}
+  - id: ipc_divisiones_mes
+    file: ipc_divisiones_mes.parquet
+    chart_type: "grouped_bar"
+    name: "Divisiones del IPC en el último mes"
+    description: >
+      Las 13 divisiones del último mes publicado con su ponderación, variación e incidencia mensual. Es el efectivo contra el que se compara la expectativa del mercado por división.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: División, type: DOUBLE}
+      - {name: Nombre, type: VARCHAR}
+      - {name: Ponderación, type: DOUBLE}
+      - {name: Variación, type: DOUBLE}
+      - {name: Incidencia, type: DOUBLE}
+  - id: ipc_incidencia_12m_division
+    file: ipc_incidencia_12m_division.parquet
+    chart_type: "grouped_bar"
+    name: "Incidencia 12 meses por división"
+    description: >
+      Incidencia acumulada en 12 meses de cada división en el último mes publicado, con su variación 12m y su ponderación.
+    segment: ipc
+    unit: "pp"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: División, type: DOUBLE}
+      - {name: Nombre, type: VARCHAR}
+      - {name: Ponderación, type: DOUBLE}
+      - {name: Variación 12 Meses (%), type: DOUBLE}
+      - {name: Incidencia 12 Meses (%), type: DOUBLE}
+  - id: ipc_variacion_historica_mes
+    file: ipc_variacion_historica_mes.parquet
+    chart_type: "grouped_bar"
+    name: "Variación histórica del IPC en el mes publicado"
+    description: >
+      Variación del IPC general en el MISMO mes calendario recién publicado, año por año, con el promedio histórico y el promedio que excluye 2020-2022 (los años del shock). Responde si el dato del mes es alto o bajo para ese mes del año.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Año, type: VARCHAR}
+      - {name: Variación Mensual (%), type: DOUBLE}
+      - {name: Promedio Histórico, type: DOUBLE}
+      - {name: Promedio Histórico Ex, type: DOUBLE}
+  - id: ipc_canasta_treemap
+    file: ipc_canasta_treemap.parquet
+    chart_type: "treemap"
+    name: "Canasta del mes por división y grupo"
+    description: >
+      La canasta del último mes en dos niveles: división (exterior) y grupo de productos (interior). El ÁREA de cada rectángulo es su ponderación en la canasta; el COLOR es su variación mensual (rojo sube, azul baja). Réplica del treemap del informe original, sin bajar al nivel de producto individual (283 ítems no se leen legibles en un solo gráfico de correo; división+grupo son 13+46 y sí).
+    segment: ipc
+    unit: "%"
+    value_kind: ratio
+    date_range: []
+    columns:
+      - {name: Division, type: VARCHAR}
+      - {name: Grupo, type: VARCHAR}
+      - {name: Ponderacion, type: DOUBLE}
+      - {name: Variacion, type: DOUBLE}
+  - id: ipc_variaciones_mes
+    file: ipc_variaciones_mes.parquet
+    chart_type: "grouped_bar"
+    name: "Variación del mes por agregado analítico"
+    description: >
+      Variación mensual de cada agregado analítico del BCCh (general, SAE, bienes, servicios, transables, alimentos, energía…) en el mes recién publicado, con el mes anterior al lado para leer el cambio.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Agregado, type: VARCHAR}
+      - {name: Mes anterior, type: DOUBLE}
+      - {name: Mes actual, type: DOUBLE}
+  - id: ipc_diccionario
+    file: ipc_diccionario.parquet
+    chart_type: "market_monitor_table"
+    name: "Diccionario IPC 2023: clasificación de la canasta"
+    description: >
+      Clasificación oficial de cada producto de la canasta 2023 (volátil / sin volátiles) con su ponderación. Fijo mientras rija la canasta 2023.
+    segment: ipc
+    unit: ""
+    date_range: []
+    columns:
+      - {name: Glosa_norm, type: VARCHAR}
+      - {name: Clasificación, type: VARCHAR}
+      - {name: Ponderación 2023, type: DOUBLE}
+  - id: ipc_expectativas
+    file: ipc_expectativas.parquet
+    chart_type: "grouped_bar"
+    name: "IPC esperado por fuente vs efectivo"
+    description: >
+      Variación mensual del IPC que esperaba cada fuente de mercado (Seguros, EOF, EEE, Bloomberg). Lo carga el operador antes de publicar el informe.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Seguros, type: DOUBLE}
+      - {name: EOF, type: DOUBLE}
+      - {name: EEE, type: DOUBLE}
+      - {name: Bloomberg, type: DOUBLE}
+  - id: ipc_esperado_vs_efectivo
+    file: ipc_esperado_vs_efectivo.parquet
+    chart_type: "grouped_bar"
+    name: "IPC esperado por fuente vs efectivo"
+    description: >
+      Variación mensual del IPC que esperaba cada fuente de mercado (Seguros, EOF, EEE, Bloomberg) y el dato efectivo del mes, superpuesto. Donde el efectivo cae fuera de las barras, el mes sorprendió.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Seguros, type: DOUBLE}
+      - {name: EOF, type: DOUBLE}
+      - {name: EEE, type: DOUBLE}
+      - {name: Bloomberg, type: DOUBLE}
+      - {name: Efectivo, type: DOUBLE}
+  - id: ipc_incidencias_feedback
+    file: ipc_incidencias_feedback.parquet
+    chart_type: "hist_range"
+    name: "Incidencia por división: rango de mercado vs efectivo"
+    description: >
+      Por división, el rango de incidencia que esperaban las instituciones (mínimo-máximo), su promedio, y la incidencia efectiva que publicó el INE. Cuando el efectivo cae fuera del rango, esa división sorprendió.
+    segment: ipc
+    unit: "pp"
+    date_range: []
+    columns:
+      - {name: Categoria, type: VARCHAR}
+      - {name: Orden, type: DOUBLE}
+      - {name: Minimo, type: DOUBLE}
+      - {name: Maximo, type: DOUBLE}
+      - {name: Promedio, type: DOUBLE}
+      - {name: Actual, type: DOUBLE}
+  - id: ipc_expectativas_divisiones
+    file: ipc_expectativas_divisiones.parquet
+    chart_type: "hist_range"
+    name: "Incidencia esperada por división y por institución"
+    description: >
+      Incidencia que cada institución esperaba para cada división, con el rango (mínimo-máximo) y el promedio del mercado ya calculados.
+    segment: ipc
+    unit: "pp"
+    date_range: []
+    columns:
+      - {name: Nombre, type: VARCHAR}
+      - {name: Corto, type: VARCHAR}
+      - {name: Minimo, type: DOUBLE}
+      - {name: Maximo, type: DOUBLE}
+      - {name: Promedio, type: DOUBLE}
+      - {name: Institucion, type: VARCHAR}
+      - {name: Valor, type: DOUBLE}
+  - id: ipc_analiticos
+    file: ipc_analiticos.parquet
+    chart_type: "line"
+    name: "IPC analíticos del BCCh"
+    description: >
+      Variación mensual de los agregados analíticos que publica el BCCh (general, SAE, transables, bienes, servicios, alimentos, energía, vivienda). Series F074 que el notebook baja por la API del BCCh y deja en Output IPC BI.xlsx.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: IPC General, type: DOUBLE}
+      - {name: IPC SAE, type: DOUBLE}
+      - {name: IPC Transables, type: DOUBLE}
+      - {name: IPC No transables, type: DOUBLE}
+      - {name: IPC Frutas y verduras, type: DOUBLE}
+      - {name: IPC Alimentos, type: DOUBLE}
+      - {name: IPC Servicios, type: DOUBLE}
+      - {name: IPC Bienes, type: DOUBLE}
+      - {name: IPC Energía, type: DOUBLE}
+      - {name: IPC Vivienda, type: DOUBLE}
+      - {name: IPC Servicios menos vivienda, type: DOUBLE}
+  - id: ipc_volatiles
+    file: ipc_volatiles.parquet
+    chart_type: "line"
+    name: "IPC volátiles y sin volátiles (BCCh)"
+    description: >
+      Series G073 empalmadas por el BCCh. Van aparte de los analíticos porque el banco no las publica bajo los códigos F074 del resto.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: IPC Volátiles, type: DOUBLE}
+      - {name: IPC Sin Volátiles, type: DOUBLE}
+  - id: ipc_grupos
+    file: ipc_grupos.parquet
+    chart_type: "grouped_bar"
+    name: "Variación del IPC por grupo de volatilidad"
+    description: >
+      Variación mensual del IPC total, del volátil y del sin volátiles en los últimos meses.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: IPC Volátiles, type: DOUBLE}
+      - {name: IPC Sin Volátiles, type: DOUBLE}
+      - {name: IPC Total, type: DOUBLE}
+  - id: ipc_compensaciones
+    file: ipc_compensaciones.parquet
+    chart_type: "line"
+    name: "Compensaciones inflacionarias SPC"
+    description: >
+      Compensación inflacionaria implícita en swaps a 2, 5 y 10 años, último año. Es la medida de expectativas de inflación de largo plazo del informe.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: CISPC_2y, type: DOUBLE}
+      - {name: CISPC_5y, type: DOUBLE}
+      - {name: CISPC_10y, type: DOUBLE}
+  - id: ipc_seguros_inflacion
+    file: ipc_seguros_inflacion.parquet
+    chart_type: "line"
+    name: "Seguros de inflación"
+    description: >
+      Inflación esperada a 12 meses, 1 año en 1 año (13 a 24 meses) y al cierre del año, según seguros de inflación. Último año.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: SI_12M_continuo, type: DOUBLE}
+      - {name: SI_24M (13 a 24 meses), type: DOUBLE}
+      - {name: SI_dic26, type: DOUBLE}
+  - id: ipc_variacion_seguros
+    file: ipc_variacion_seguros.parquet
+    chart_type: "grouped_bar"
+    name: "Variación de los seguros de inflación por tenor"
+    description: >
+      Cambio en puntos base de la inflación implícita en seguros para cada mes de vencimiento, entre las dos últimas fechas disponibles. Positivo = el mercado corrigió al alza la inflación esperada de ese mes.
+    segment: ipc
+    unit: "pb"
+    date_range: []
+    columns:
+      - {name: Tenor, type: VARCHAR}
+      - {name: Variacion_pb, type: DOUBLE}
+  - id: ipc_fundamentales
+    file: ipc_fundamentales.parquet
+    chart_type: "multi_line_dual"
+    name: "Fundamentales de la inflación: CLP y petróleo"
+    description: >
+      Tipo de cambio y precio del petróleo, los dos fundamentales que el informe usa para leer la inflación de transables. Doble eje.
+    segment: ipc
+    unit: ""
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Chile, type: DOUBLE}
+      - {name: PETRO, type: DOUBLE}
+  - id: ipc_bienes_servicios_sv
+    file: ipc_bienes_servicios_sv.parquet
+    chart_type: "line"
+    name: "Bienes y servicios sin volátiles (BCCh, desde 2010)"
+    description: >
+      Variación mensual de bienes y de servicios sin volátiles, series G073 empalmadas por el BCCh desde 1999. Es la base de las dos bandas de percentiles del informe: la banda sale de la serie agregada del banco, NO de sumar producto a producto la canasta del INE.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Año, type: DOUBLE}
+      - {name: Mes, type: DOUBLE}
+      - {name: Bienes SV, type: DOUBLE}
+      - {name: Servicios SV, type: DOUBLE}
+  - id: ipc_banda_bienes_sv
+    file: ipc_banda_bienes_sv.parquet
+    chart_type: "hist_range"
+    name: "Bienes sin volátiles: el mes contra su banda histórica"
+    description: >
+      Para cada mes calendario, el rango p10-p90 de la variación de bienes sin volátiles en 2010-2020, su promedio, y el valor del año en curso. La banda excluye la pandemia y el shock inflacionario posterior.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Categoria, type: VARCHAR}
+      - {name: Orden, type: DOUBLE}
+      - {name: Minimo, type: DOUBLE}
+      - {name: Maximo, type: DOUBLE}
+      - {name: Promedio, type: DOUBLE}
+      - {name: Actual, type: DOUBLE}
+  - id: ipc_banda_servicios_sv
+    file: ipc_banda_servicios_sv.parquet
+    chart_type: "hist_range"
+    name: "Servicios sin volátiles: el mes contra su banda histórica"
+    description: >
+      Para cada mes calendario, el rango p10-p90 de la variación de servicios sin volátiles en 2010-2020, su promedio, y el valor del año en curso. La banda excluye la pandemia y el shock inflacionario posterior.
+    segment: ipc
+    unit: "%"
+    date_range: []
+    columns:
+      - {name: Categoria, type: VARCHAR}
+      - {name: Orden, type: DOUBLE}
+      - {name: Minimo, type: DOUBLE}
+      - {name: Maximo, type: DOUBLE}
+      - {name: Promedio, type: DOUBLE}
+      - {name: Actual, type: DOUBLE}
+  - id: ipc_difusion_comparada
+    file: ipc_difusion_comparada.parquet
+    chart_type: "line"
+    name: "Difusión: IPC general vs sin volátiles"
+    description: >
+      Las dos series de difusión en el mismo gráfico: el porcentaje de productos al alza sobre la canasta completa y sobre la canasta sin volátiles. La brecha entre ambas dice cuánto de la difusión viene de precios volátiles.
+    segment: ipc
+    unit: "%"
+    value_kind: ratio
+    date_range: []
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: General, type: DOUBLE}
+      - {name: Sin volátiles, type: DOUBLE}

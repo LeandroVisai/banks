@@ -2284,6 +2284,73 @@ class TestCambiarioTransforms:
 
 
 @pytest.mark.unit
+class TestIpcTreemapTransform:
+    """``ipc_treemap``: división (exterior) → grupo (interior), área=Ponderacion,
+    color=Variacion. Guard de regresión del bug real que produjo esta prueba: el
+    extractor (``scripts/ingest/from_excel.py``) renombraba ``Glosa``→``Grupo``
+    con ``DataFrame.rename()`` sobre un frame que YA tenía una columna "Grupo"
+    (el código numérico), y pandas no fusiona duplicados — el parquet salía con
+    dos columnas "Grupo" y DuckDB desambiguaba la segunda como "Grupo_1", que la
+    transform nunca leía."""
+
+    def _write_treemap(self, tmp_path):
+        rows = [
+            ("'Alimentos'", "'Alimentos'", 20.0, 1.5),
+            ("'Alimentos'", "'Bebidas'", 2.0, 0.9),
+            ("'Vivienda'", "'Arriendo'", 10.0, -0.4),
+        ]
+        values = ", ".join(f"({d}, {g}, {p}, {v})" for d, g, p, v in rows)
+        _write(tmp_path / "treemap.parquet",
+              f'SELECT * FROM (VALUES {values}) t(Division, Grupo, Ponderacion, Variacion)')
+        return _ds("treemap.parquet", id="ipc_canasta_treemap", unit="%")
+
+    def test_one_series_per_division_points_are_grupo_and_ponderacion(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import ipc_treemap
+
+        ds = self._write_treemap(tmp_path)
+        plot = ipc_treemap(ds, tmp_path, {})
+        assert plot.kind == "hierarchy"
+        by_label = {s.label: s.points for s in plot.series}
+        assert set(by_label) == {"Alimentos", "Vivienda"}
+        assert dict(by_label["Alimentos"]) == {"Alimentos": 20.0, "Bebidas": 2.0}
+        assert dict(by_label["Vivienda"]) == {"Arriendo": 10.0}
+
+    def test_node_color_aligned_by_position_with_points(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import ipc_treemap
+
+        ds = self._write_treemap(tmp_path)
+        plot = ipc_treemap(ds, tmp_path, {})
+        alimentos = next(s for s in plot.series if s.label == "Alimentos")
+        # mismo orden que .points: [Alimentos=1.5, Bebidas=0.9]
+        assert [leaf for leaf, _v in alimentos.points] == ["Alimentos", "Bebidas"]
+        assert plot.node_color["Alimentos"] == [1.5, 0.9]
+
+    def test_renders_to_svg_without_error(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import ipc_treemap
+        from banks_rag.application.reporting.svg_chart import render_plot_svg
+
+        ds = self._write_treemap(tmp_path)
+        svg = render_plot_svg(ipc_treemap(ds, tmp_path, {}), chart="treemap")
+        assert svg is not None and "<svg" in svg
+
+    def test_zero_or_negative_ponderacion_is_dropped(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import ipc_treemap
+
+        _write(tmp_path / "treemap.parquet",
+              "SELECT * FROM (VALUES ('Alimentos', 'Alimentos', 0.0, 1.5), "
+              "('Alimentos', 'Bebidas', 2.0, 0.9)) t(Division, Grupo, Ponderacion, Variacion)")
+        ds = _ds("treemap.parquet", id="ipc_canasta_treemap", unit="%")
+        plot = ipc_treemap(ds, tmp_path, {})
+        assert [leaf for leaf, _v in plot.series[0].points] == ["Bebidas"]
+
+    def test_missing_parquet_returns_none(self, tmp_path):
+        from banks_rag.application.reporting.series_transforms import ipc_treemap
+
+        ds = _ds("nope.parquet", id="ipc_canasta_treemap", unit="%")
+        assert ipc_treemap(ds, tmp_path, {}) is None
+
+
+@pytest.mark.unit
 class TestAxisScaling:
     """El eje Y de una serie temporal: base 0 para flujos, ajustado para niveles."""
 

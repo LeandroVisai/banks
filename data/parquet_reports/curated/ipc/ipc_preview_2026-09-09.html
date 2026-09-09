@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Informe Post IPC</title>
+<style>
+  :root { --blue:#0b3766; --banner:#4a5a72; --text:#1f1f1f; --muted:#777; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#fff; color:var(--text); font-family:Arial, Helvetica, sans-serif; line-height:1.45; }
+  .page { width:min(1200px, calc(100% - 40px)); margin:18px auto 40px; }
+  .report-title { background:var(--banner); color:#fff; text-align:center; font-size:24px; font-weight:800; padding:12px 16px; letter-spacing:.3px; }
+  .subtitle { text-align:center; color:var(--muted); font-size:12px; margin:8px 0 4px; }
+  .report-synthesis { border:1px solid #d8dee8; background:#f6f8fb; border-radius:6px; padding:12px 18px; margin:14px 0 8px; }
+  .synthesis-title { color:var(--blue); font-size:16px; font-weight:800; margin:0 0 6px; }
+  .synthesis-body { color:var(--text); font-size:13px; }
+  .synthesis-body p { margin:4px 0; }
+  .synthesis-body ul { margin:4px 0 8px; padding-left:20px; }
+  .synthesis-body li { margin:2px 0; }
+  .synthesis-body[data-synthesis-body]:empty::before { content:"—"; color:#cfcfcf; }
+  .section-banner { background:var(--banner); color:#fff; text-align:center; font-size:18px; font-weight:800; padding:8px 14px; margin:30px 0 6px; position:relative; }
+  /* Corte de datos del informe (``FamilyReportSpec.header_cutoff_note``): chico,
+     a la derecha de la PRIMERA sección (misma línea que su banner, ej. "Portafolio
+     por agente" en dcv) — no en el título. Solo ese primer ``.section-banner``
+     lo trae (ver ``render_curated_html``), que en dcv queda pegado al título
+     (``.report-title + .section-banner``, sin margen), así ambos se ven como un
+     mismo bloque azul. */
+  .report-cutoff { position:absolute; right:14px; top:50%; transform:translateY(-50%); font-size:11px; font-weight:400; color:#d7dee8; white-space:nowrap; }
+  /* Línea centrada tras los bloques de la PRIMERA sección (``FamilyReportSpec.
+     parity_note``, ej. "Paridad utilizada" en dcv, debajo de "Portafolio por
+     agente"). Editable en el HTML "_editable" (mismo selector que .section-text). */
+  .report-parity-note { text-align:center; color:var(--muted); font-size:12px; font-style:italic; margin:-2px 0 22px; }
+  .report-parity-note:empty::before { content:"—"; color:#cfcfcf; }
+  /* Sin síntesis (show_synthesis=False, caso dcv): la primera sección queda
+     pegada al título en vez de arrastrar el margen de 30px pensado para separarla
+     del bloque de síntesis que ya no está. Solo aplica cuando .section-banner es
+     HERMANO INMEDIATO de .report-title (nunca pasa si hay síntesis de por medio). */
+  .report-title + .section-banner { margin-top:0; }
+  .block { margin:14px 0 8px; page-break-inside:avoid; }
+  .block-title { color:var(--blue); font-size:16px; font-weight:700; margin:12px 0 2px; }
+  .block-unit { color:var(--muted); font-size:12px; margin:0 0 6px; }
+  .block-note { color:var(--muted); font-size:11px; font-style:italic; margin:0 0 6px; }
+  .block-dates { color:var(--blue); font-size:11px; font-weight:600; background:#eef3f9; border:1px solid #d8dee8; border-radius:4px; padding:2px 8px; margin:0 0 6px; display:inline-block; }
+  .prelim-note { color:#9a4b00; font-size:11px; margin:0 0 2px; }
+  .section-text { min-height:18px; margin:4px 0 10px; color:var(--text); font-size:14px; }
+  .section-text:empty::before { content:"—"; color:#cfcfcf; }
+  /* Texto del TÓPICO: el único slot editable de la sección, justo bajo su banner
+     (los bloques ya no llevan párrafo propio). */
+  .section-banner + .section-text { margin:8px 0 16px; }
+  .section-text p { margin:0 0 6px; }
+  .section-text p:last-child { margin-bottom:0; }
+  .report-chart { display:block; max-width:760px; margin:6px auto; }
+  /* Un bloque ancho fuera de la grilla llega al borde disponible. */
+  .chart-wide .report-chart { max-width:100%; }
+  .placeholder-card { border:1px dashed #bcbcbc; background:#fafafa; color:var(--muted); border-radius:6px; padding:18px; text-align:center; font-size:13px; max-width:760px; margin:6px auto; }
+  .placeholder-card .kind { font-weight:700; color:#9a4b00; }
+  .placeholder-card.skip .kind { color:#8a8a8a; }
+  /* Hover interactivo (estilo Plotly): el marcador aparece y el shape se resalta */
+  .report-chart .tip-pt { cursor:pointer; transition:fill-opacity .08s; }
+  .report-chart circle.tip-pt:hover { fill-opacity:1; stroke:#fff; stroke-width:1.4; }
+  .report-chart rect.tip-pt:hover, .report-chart path.tip-pt:hover { stroke:#1f1f1f; stroke-width:1.4; }
+  /* Crosshair overlay (series temporales) */
+  .report-chart .hover-overlay { cursor:crosshair; }
+  /* Leyenda clickeable para ocultar/mostrar series */
+  .report-chart .lg-item { cursor:pointer; }
+  .report-chart .lg-item:hover { opacity:0.75; }
+  /* Tooltip flotante */
+  #chart-tip { position:fixed; z-index:9999; display:none; pointer-events:none;
+    background:#fff; border:1px solid #d8dee8; border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,.16);
+    padding:7px 10px; font-size:12px; color:#1f1f1f; max-width:260px; line-height:1.35; }
+  #chart-tip .ct-k { color:#777; font-size:11px; margin-bottom:3px; }
+  #chart-tip .ct-r { display:flex; align-items:center; gap:6px; white-space:nowrap; margin-bottom:2px; }
+  #chart-tip .ct-r:last-child { margin-bottom:0; }
+  #chart-tip .ct-sw { width:10px; height:10px; border-radius:2px; flex:0 0 auto; }
+  #chart-tip .ct-s { color:#444; }
+  #chart-tip .ct-v { font-weight:700; }
+  /* Layout "grid" (opt-in vía FamilyReportSpec.layout): gráficos en tarjetas de
+     2 columnas en vez de apilados; la tabla compañera (percentiles S/R, resumen
+     de la vela) vive DENTRO de la tarjeta de su gráfico, pegada justo debajo.
+
+     Cada tarjeta ocupa DOS filas del subgrid (encabezado + cuerpo, ver
+     .card-head/.card-body): con grid-template-rows:subgrid, la fila de
+     encabezado de las DOS tarjetas de una misma fila se empareja a la altura de
+     la más alta ANTES de que arranque el cuerpo — así el gráfico queda a la
+     misma altura sin importar si una tarjeta trae nota/ventana de fechas y la
+     de al lado no (sin esto, la tarjeta con más texto arriba empuja su gráfico
+     más abajo que el de su vecina). */
+  .cards-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); grid-auto-rows:min-content; gap:10px 20px; margin:10px 0 26px; }
+  .card { grid-row:span 2; display:grid; grid-template-rows:subgrid; align-content:start; border:1px solid #e3e7ee; border-radius:8px; padding:12px 14px 10px; background:#fff; min-width:0; }
+  .card-head { align-self:start; }
+  .card-body { align-self:start; }
+  .card .report-chart, .card .placeholder-card { max-width:100%; margin:6px 0; }
+  .card .section-text { font-size:13px; }
+  .card-companion { margin-top:8px; padding-top:8px; border-top:1px dashed #e3e7ee; }
+  .card-companion .report-chart, .card-companion .placeholder-card { max-width:100%; margin:2px 0; }
+  .card.card-wide { grid-column:1 / -1; }
+  /* Tabla dentro de una tarjeta a fila completa: se libera del tope inline que
+     lleva para Outlook y aprovecha el ancho (el !important es contra ese inline). */
+  .card-wide .block-table > div { max-width:100% !important; }
+  /* Mismo problema fuera de la grilla (layout ``stack``): la tabla igual trae el
+     tope inline de 760px, y con muchas columnas (p.ej. Tabla N°1 por moneda)
+     eso deja scroll horizontal en vez de usar el ancho de la página. */
+  .block .block-table > div { max-width:100% !important; }
+  @media (max-width:860px) { .cards-grid { grid-template-columns:1fr; } }
+  @media print { .section-banner, .report-chart, .placeholder-card, .block, .card { break-inside:avoid; } #chart-tip { display:none !important; } }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="report-title">Informe Post IPC</div>
+
+<div class="report-synthesis">
+      <div class="synthesis-title">Síntesis — principales movimientos</div>
+      <div class="synthesis-body" data-synthesis-body></div>
+    </div>
+<div class="section-banner">Dato del mes</div>
+<div class="section-text" data-text-slot="ipc:sec:dato_del_mes"></div>
+<div class="block" data-block-status="mvp" data-chart="grouped_bar" data-source="ipc_esperado_vs_efectivo"><div class="block-title">IPC esperado vs efectivo</div><div class="block-unit">(%)</div><div class="block-note">El efectivo va superpuesto: donde queda fuera de las barras, el mes sorprendió.</div><div class="block-dates">📅 Suma por mes · datos hasta 01-ago-2026</div><div class="chart-wide"><svg class="report-chart" viewBox="0 0 1520 320" width="100%" role="img" aria-label="ipc_esperado_vs_efectivo — barras" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+<rect x="0" y="0" width="1520" height="320" fill="white"/>
+<line x1="64" y1="240.0" x2="1502" y2="240.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="244.0" font-size="12.3" fill="#555" text-anchor="end">-0,50</text>
+<line x1="64" y1="198.0" x2="1502" y2="198.0" stroke="#999" stroke-width="1"/>
+<text x="56" y="202.0" font-size="12.3" fill="#555" text-anchor="end">0,00</text>
+<line x1="64" y1="156.0" x2="1502" y2="156.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="160.0" font-size="12.3" fill="#555" text-anchor="end">0,50</text>
+<line x1="64" y1="114.0" x2="1502" y2="114.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="118.0" font-size="12.3" fill="#555" text-anchor="end">1,00</text>
+<line x1="64" y1="72.0" x2="1502" y2="72.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="76.0" font-size="12.3" fill="#555" text-anchor="end">1,50</text>
+<line x1="64" y1="30.0" x2="1502" y2="30.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="34.0" font-size="12.3" fill="#555" text-anchor="end">2,00</text>
+<rect x="76.0" y="164.4" width="20.6" height="33.6" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Seguros" data-k="sep25" data-v="0,40 %"/>
+<rect x="99.9" y="164.4" width="20.6" height="33.6" fill="#b08d57" data-si="1" class="tip-pt" data-c="#b08d57" data-s="EOF" data-k="sep25" data-v="0,40 %"/>
+<rect x="123.9" y="164.4" width="20.6" height="33.6" fill="#5a6b7b" data-si="2" class="tip-pt" data-c="#5a6b7b" data-s="EEE" data-k="sep25" data-v="0,40 %"/>
+<rect x="147.9" y="164.4" width="20.6" height="33.6" fill="#0a8a5f" data-si="3" class="tip-pt" data-c="#0a8a5f" data-s="Bloomberg" data-k="sep25" data-v="0,40 %"/>
+<text x="123.9" y="256" font-size="11.2" fill="#555" text-anchor="middle">sep25</text>
+<rect x="195.8" y="172.8" width="20.6" height="25.2" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Seguros" data-k="oct25" data-v="0,30 %"/>
+<rect x="219.8" y="172.8" width="20.6" height="25.2" fill="#b08d57" data-si="1" class="tip-pt" data-c="#b08d57" data-s="EOF" data-k="oct25" data-v="0,30 %"/>
+<rect x="243.7" y="172.8" width="20.6" height="25.2" fill="#5a6b7b" data-si="2" class="tip-pt" data-c="#5a6b7b" data-s="EEE" data-k="oct25" data-v="0,30 %"/>
+<rect x="267.7" y="172.8" width="20.6" height="25.2" fill="#0a8a5f" data-si="3" class="tip-pt" data-c="#0a8a5f" data-s="Bloomberg" data-k="oct25" data-v="0,30 %"/>
+<text x="243.7" y="256" font-size="11.2" fill="#555" text-anchor="middle">oct25</text>
+<rect x="315.6" y="166.9" width="20.6" height="31.1" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Seguros" data-k="nov25" data-v="0,37 %"/>
+<rect x="339.6" y="172.8" width="20.6" height="25.2" fill="#b08d57" data-si="1" class="tip-pt" data-c="#b08d57" data-s="EOF" data-k="nov25" data-v="0,30 %"/>
+<rect x="363.6" y="172.8" width="20.6" height="25.2" fill="#5a6b7b" data-si="2" class="tip-pt" data-c="#5a6b7b" data-s="EEE" data-k="nov25" data-v="0,30 %"/>
+<rect x="387.5" y="172.8" width="20.6" height="25.2" fill="#0a8a5f" data-si="3" class="tip-pt" data-c="#0a8a5f" data-s="Bloomberg" data-k="nov25" data-v="0,30 %"/>
+<text x="363.6" y="256" font-size="11.2" fill="#555" text-anchor="middle">nov25</text>
+<rect x="435.5" y="198.0" width="20.6" height="8.4" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Seguros" data-k="dic25" data-v="-0,10 %"/>
+<rect x="459.5" y="198.0" width="20.6" height="8.4" fill="#b08d57" data-si="1" class="tip-pt" data-c="#b08d57" data-s="EOF" data-k="dic25" data-v="-0,10 %"/>
+<rect x="507.4" y="198.0" width="20.6" height="8.4" fill="#0a8a5f" data-si="3" class="tip-pt" data-c="#0a8a5f" data-s="Bloomberg" data-k="dic25" data-v="-0,10 %"/>
+<text x="483.4" y="256" font-size="11.2" fill="#555" text-anchor="middle">dic25</text>
+<rect x="555.3" y="164.4" width="20.6" height="33.6" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Seguros" data-k="ene26" data-v="0,40 %"/>
+<rect x="579.3" y="164.4" width="20.6" height="33.6" fill="#b08d57" data-si="1" class="tip-pt" data-c="#b08d57" data-s="EOF" data-k="ene26" data-v="0,40 %"/>
+<rect x="603.2" y="164.4" width="20.6" height="33.6" fill="#5a6b7b" data-si="2" class="tip-pt" data-c="#5a6b7b" data-s="EEE" data-k="ene26" data-v="0,40 %"/>
+<rect x="627.2" y="164.4" width="20.6" height="33.6" fill="#0a8a5f" data-si="3" class="tip-pt" data-c="#0a8a5f" data-s="Bloomberg" data-k="ene26" data-v="0,40 %"/>
+<text x="603.2" y="256" font-size="11.2" fill="#555" text-anchor="middle">ene26</text>
+<rect x="675.1" y="191.3" width="20.6" height="6.7" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Seguros" data-k="feb26" data-v="0,08 %"/>
+<rect x="699.1" y="181.2" width="20.6" height="16.8" fill="#b08d57" data-si="1" class="tip-pt" data-c="#b08d57" data-s="EOF" data-k="feb26" data-v="0,20 %"/>
+<rect x="723.1" y="181.2" width="20.6" height="16.8" fill="#5a6b7b" data-si="2" class="tip-pt" data-c="#5a6b7b" data-s="EEE" data-k="feb26" data-v="0,20 %"/>
+<rect x="747.0" y="189.6" width="20.6" height="8.4" fill="#0a8a5f" data-si="3" class="tip-pt" data-c="#0a8a5f" data-s="Bloomberg" data-k="feb26" data-v="0,10 %"/>
+<text x="723.1" y="256" font-size="11.2" fill="#555" text-anchor="middle">feb26</text>
+<rect x="795.0" y="130.8" width="20.6" height="67.2" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Seguros" data-k="mar26" data-v="0,80 %"/>
+<rect x="819.0" y="122.4" width="20.6" height="75.6" fill="#b08d57" data-si="1" class="tip-pt" data-c="#b08d57" data-s="EOF" data-k="mar26" data-v="0,90 %"/>
+<rect x="842.9" y="156.0" width="20.6" height="42.0" fill="#5a6b7b" data-si="2" class="tip-pt" data-c="#5a6b7b" data-s="EEE" data-k="mar26" data-v="0,50 %"/>
+<rect x="866.9" y="122.4" width="20.6" height="75.6" fill="#0a8a5f" data-si="3" class="tip-pt" data-c="#0a8a5f" data-s="Bloomberg" data-k="mar26" data-v="0,90 %"/>
+<text x="842.9" y="256" font-size="11.2" fill="#555" text-anchor="middle">mar26</text>
+<rect x="914.8" y="66.1" width="20.6" height="131.9" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Seguros" data-k="abr26" data-v="1,57 %"/>
+<rect x="938.8" y="63.6" width="20.6" height="134.4" fill="#b08d57" data-si="1" class="tip-pt" data-c="#b08d57" data-s="EOF" data-k="abr26" data-v="1,60 %"/>
+<rect x="962.8" y="80.4" width="20.6" height="117.6" fill="#5a6b7b" data-si="2" class="tip-pt" data-c="#5a6b7b" data-s="EEE" data-k="abr26" data-v="1,40 %"/>
+<rect x="986.7" y="72.0" width="20.6" height="126.0" fill="#0a8a5f" data-si="3" class="tip-pt" data-c="#0a8a5f" data-s="Bloomberg" data-k="abr26" data-v="1,50 %"/>
+<text x="962.7" y="256" font-size="11.2" fill="#555" text-anchor="middle">abr26</text>
+<rect x="1034.6" y="161.9" width="20.6" height="36.1" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Seguros" data-k="may26" data-v="0,43 %"/>
+<rect x="1058.6" y="164.4" width="20.6" height="33.6" fill="#b08d57" data-si="1" class="tip-pt" data-c="#b08d57" data-s="EOF" data-k="may26" data-v="0,40 %"/>
+<rect x="1082.6" y="164.4" width="20.6" height="33.6" fill="#5a6b7b" data-si="2" class="tip-pt" data-c="#5a6b7b" data-s="EEE" data-k="may26" data-v="0,40 %"/>
+<rect x="1106.5" y="156.0" width="20.6" height="42.0" fill="#0a8a5f" data-si="3" class="tip-pt" data-c="#0a8a5f" data-s="Bloomberg" data-k="may26" data-v="0,50 %"/>
+<text x="1082.6" y="256" font-size="11.2" fill="#555" text-anchor="middle">may26</text>
+<rect x="1154.5" y="198.0" width="20.6" height="25.2" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Seguros" data-k="jun26" data-v="-0,30 %"/>
+<rect x="1178.5" y="198.0" width="20.6" height="25.2" fill="#b08d57" data-si="1" class="tip-pt" data-c="#b08d57" data-s="EOF" data-k="jun26" data-v="-0,30 %"/>
+<rect x="1226.4" y="198.0" width="20.6" height="25.2" fill="#0a8a5f" data-si="3" class="tip-pt" data-c="#0a8a5f" data-s="Bloomberg" data-k="jun26" data-v="-0,30 %"/>
+<text x="1202.4" y="256" font-size="11.2" fill="#555" text-anchor="middle">jun26</text>
+<rect x="1274.3" y="186.2" width="20.6" height="11.8" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Seguros" data-k="jul26" data-v="0,14 %"/>
+<rect x="1298.3" y="189.6" width="20.6" height="8.4" fill="#b08d57" data-si="1" class="tip-pt" data-c="#b08d57" data-s="EOF" data-k="jul26" data-v="0,10 %"/>
+<rect x="1322.2" y="181.2" width="20.6" height="16.8" fill="#5a6b7b" data-si="2" class="tip-pt" data-c="#5a6b7b" data-s="EEE" data-k="jul26" data-v="0,20 %"/>
+<rect x="1346.2" y="189.6" width="20.6" height="8.4" fill="#0a8a5f" data-si="3" class="tip-pt" data-c="#0a8a5f" data-s="Bloomberg" data-k="jul26" data-v="0,10 %"/>
+<text x="1322.2" y="256" font-size="11.2" fill="#555" text-anchor="middle">jul26</text>
+<rect x="1394.1" y="172.0" width="20.6" height="26.0" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Seguros" data-k="ago26" data-v="0,31 %"/>
+<rect x="1418.1" y="172.8" width="20.6" height="25.2" fill="#b08d57" data-si="1" class="tip-pt" data-c="#b08d57" data-s="EOF" data-k="ago26" data-v="0,30 %"/>
+<rect x="1442.1" y="172.8" width="20.6" height="25.2" fill="#5a6b7b" data-si="2" class="tip-pt" data-c="#5a6b7b" data-s="EEE" data-k="ago26" data-v="0,30 %"/>
+<rect x="1466.0" y="172.8" width="20.6" height="25.2" fill="#0a8a5f" data-si="3" class="tip-pt" data-c="#0a8a5f" data-s="Bloomberg" data-k="ago26" data-v="0,30 %"/>
+<text x="1442.1" y="256" font-size="11.2" fill="#555" text-anchor="middle">ago26</text>
+<circle cx="123.9" cy="164.4" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="4" class="tip-pt" data-c="#c8102e" data-s="Efectivo" data-k="sep25" data-v="0,40 %"/>
+<circle cx="243.7" cy="198.0" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="4" class="tip-pt" data-c="#c8102e" data-s="Efectivo" data-k="oct25" data-v="0,00 %"/>
+<circle cx="363.6" cy="172.8" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="4" class="tip-pt" data-c="#c8102e" data-s="Efectivo" data-k="nov25" data-v="0,30 %"/>
+<circle cx="483.4" cy="214.8" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="4" class="tip-pt" data-c="#c8102e" data-s="Efectivo" data-k="dic25" data-v="-0,20 %"/>
+<circle cx="603.2" cy="164.4" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="4" class="tip-pt" data-c="#c8102e" data-s="Efectivo" data-k="ene26" data-v="0,40 %"/>
+<circle cx="723.1" cy="198.0" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="4" class="tip-pt" data-c="#c8102e" data-s="Efectivo" data-k="feb26" data-v="0,00 %"/>
+<circle cx="842.9" cy="114.0" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="4" class="tip-pt" data-c="#c8102e" data-s="Efectivo" data-k="mar26" data-v="1,00 %"/>
+<circle cx="962.7" cy="88.8" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="4" class="tip-pt" data-c="#c8102e" data-s="Efectivo" data-k="abr26" data-v="1,30 %"/>
+<circle cx="1082.6" cy="181.2" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="4" class="tip-pt" data-c="#c8102e" data-s="Efectivo" data-k="may26" data-v="0,20 %"/>
+<circle cx="1202.4" cy="198.0" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="4" class="tip-pt" data-c="#c8102e" data-s="Efectivo" data-k="jun26" data-v="0,00 %"/>
+<circle cx="1322.2" cy="189.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="4" class="tip-pt" data-c="#c8102e" data-s="Efectivo" data-k="jul26" data-v="0,10 %"/>
+<circle cx="1442.1" cy="147.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="4" class="tip-pt" data-c="#c8102e" data-s="Efectivo" data-k="ago26" data-v="0,60 %"/>
+<line x1="64" y1="30" x2="64" y2="240" stroke="#999" stroke-width="1"/>
+<g class="lg-item" data-idx="0" style="cursor:pointer"><rect x="62.0" y="282.8" width="82" height="20" fill="transparent" stroke="none"/><rect x="64.0" y="285.1" width="11.2" height="11.2" fill="#1f6fb2"/><text x="79.7" y="294.0" font-size="12.3" fill="#444">Seguros</text></g><g class="lg-item" data-idx="1" style="cursor:pointer"><rect x="144.1" y="282.8" width="54" height="20" fill="transparent" stroke="none"/><rect x="146.1" y="285.1" width="11.2" height="11.2" fill="#b08d57"/><text x="161.7" y="294.0" font-size="12.3" fill="#444">EOF</text></g><g class="lg-item" data-idx="2" style="cursor:pointer"><rect x="198.4" y="282.8" width="54" height="20" fill="transparent" stroke="none"/><rect x="200.4" y="285.1" width="11.2" height="11.2" fill="#5a6b7b"/><text x="216.1" y="294.0" font-size="12.3" fill="#444">EEE</text></g><g class="lg-item" data-idx="3" style="cursor:pointer"><rect x="252.8" y="282.8" width="96" height="20" fill="transparent" stroke="none"/><rect x="254.8" y="285.1" width="11.2" height="11.2" fill="#0a8a5f"/><text x="270.4" y="294.0" font-size="12.3" fill="#444">Bloomberg</text></g><g class="lg-item" data-idx="4" style="cursor:pointer"><rect x="348.7" y="282.8" width="89" height="20" fill="transparent" stroke="none"/><rect x="350.7" y="285.1" width="11.2" height="11.2" fill="#c8102e"/><text x="366.4" y="294.0" font-size="12.3" fill="#444">Efectivo</text></g>
+<text x="64" y="18" font-size="12.3" fill="#777">%</text>
+</svg></div></div>
+<div class="block" data-block-status="mvp" data-chart="grouped_bar" data-source="ipc_variaciones_mes"><div class="block-title">Variaciones del mes por agregado</div><div class="block-unit">(%)</div><svg class="report-chart" viewBox="0 0 760 320" width="100%" role="img" aria-label="ipc_variaciones_mes — barras" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+<rect x="0" y="0" width="760" height="320" fill="white"/>
+<line x1="64" y1="230.0" x2="742" y2="230.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="234.0" font-size="11.0" fill="#555" text-anchor="end">-4,00</text>
+<line x1="64" y1="190.0" x2="742" y2="190.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="194.0" font-size="11.0" fill="#555" text-anchor="end">-2,00</text>
+<line x1="64" y1="150.0" x2="742" y2="150.0" stroke="#999" stroke-width="1"/>
+<text x="56" y="154.0" font-size="11.0" fill="#555" text-anchor="end">0,00</text>
+<line x1="64" y1="110.0" x2="742" y2="110.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="114.0" font-size="11.0" fill="#555" text-anchor="end">2,00</text>
+<line x1="64" y1="70.0" x2="742" y2="70.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="74.0" font-size="11.0" fill="#555" text-anchor="end">4,00</text>
+<line x1="64" y1="30.0" x2="742" y2="30.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="34.0" font-size="11.0" fill="#555" text-anchor="end">6,00</text>
+<rect x="70.2" y="136.0" width="21.2" height="14.0" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Mes anterior" data-k="Alimentos" data-v="0,70 %"/>
+<rect x="94.8" y="122.0" width="21.2" height="28.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Mes actual" data-k="Alimentos" data-v="1,40 %"/>
+<text transform="translate(94.8,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Alimentos</text>
+<rect x="131.8" y="150.0" width="21.2" height="4.0" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Mes anterior" data-k="Bienes" data-v="-0,20 %"/>
+<rect x="156.5" y="136.0" width="21.2" height="14.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Mes actual" data-k="Bienes" data-v="0,70 %"/>
+<text transform="translate(156.5,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Bienes</text>
+<rect x="193.4" y="150.0" width="21.2" height="60.0" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Mes anterior" data-k="Energía" data-v="-3,00 %"/>
+<rect x="218.1" y="142.0" width="21.2" height="8.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Mes actual" data-k="Energía" data-v="0,40 %"/>
+<text transform="translate(218.1,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Energía</text>
+<rect x="255.1" y="128.0" width="21.2" height="22.0" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Mes anterior" data-k="Frutas y verduras" data-v="1,10 %"/>
+<rect x="279.7" y="30.0" width="21.2" height="120.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Mes actual" data-k="Frutas y verduras" data-v="6,00 %"/>
+<text transform="translate(279.7,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Frutas y verduras</text>
+<rect x="316.7" y="148.0" width="21.2" height="2.0" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Mes anterior" data-k="General" data-v="0,10 %"/>
+<rect x="341.4" y="138.0" width="21.2" height="12.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Mes actual" data-k="General" data-v="0,60 %"/>
+<text transform="translate(341.4,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">General</text>
+<rect x="378.3" y="144.0" width="21.2" height="6.0" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Mes anterior" data-k="No transables" data-v="0,30 %"/>
+<rect x="403.0" y="138.0" width="21.2" height="12.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Mes actual" data-k="No transables" data-v="0,60 %"/>
+<text transform="translate(403.0,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">No transables</text>
+<rect x="440.0" y="142.0" width="21.2" height="8.0" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Mes anterior" data-k="SAE" data-v="0,40 %"/>
+<rect x="464.6" y="142.0" width="21.2" height="8.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Mes actual" data-k="SAE" data-v="0,40 %"/>
+<text transform="translate(464.6,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">SAE</text>
+<rect x="501.6" y="142.0" width="21.2" height="8.0" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Mes anterior" data-k="Servicios" data-v="0,40 %"/>
+<rect x="526.3" y="138.0" width="21.2" height="12.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Mes actual" data-k="Servicios" data-v="0,60 %"/>
+<text transform="translate(526.3,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Servicios</text>
+<rect x="563.3" y="142.0" width="21.2" height="8.0" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Mes anterior" data-k="Servicios menos vivienda" data-v="0,40 %"/>
+<rect x="587.9" y="138.0" width="21.2" height="12.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Mes actual" data-k="Servicios menos vivienda" data-v="0,60 %"/>
+<text transform="translate(587.9,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Servicios menos vivienda</text>
+<rect x="649.5" y="138.0" width="21.2" height="12.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Mes actual" data-k="Transables" data-v="0,60 %"/>
+<text transform="translate(649.5,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Transables</text>
+<rect x="686.5" y="140.0" width="21.2" height="10.0" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Mes anterior" data-k="Vivienda" data-v="0,50 %"/>
+<rect x="711.2" y="146.0" width="21.2" height="4.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Mes actual" data-k="Vivienda" data-v="0,20 %"/>
+<text transform="translate(711.2,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Vivienda</text>
+<line x1="64" y1="30" x2="64" y2="230" stroke="#999" stroke-width="1"/>
+<g class="lg-item" data-idx="0" style="cursor:pointer"><rect x="62.0" y="290.0" width="104" height="18" fill="transparent" stroke="none"/><rect x="64.0" y="292.0" width="10.0" height="10.0" fill="#0b3766"/><text x="78.0" y="300.0" font-size="11.0" fill="#444">Mes anterior</text></g><g class="lg-item" data-idx="1" style="cursor:pointer"><rect x="166.4" y="290.0" width="92" height="18" fill="transparent" stroke="none"/><rect x="168.4" y="292.0" width="10.0" height="10.0" fill="#c8102e"/><text x="182.4" y="300.0" font-size="11.0" fill="#444">Mes actual</text></g>
+<text x="64" y="18" font-size="11.0" fill="#777">%</text>
+</svg></div>
+<div class="section-banner">Esperado vs efectivo</div>
+<div class="section-text" data-text-slot="ipc:sec:esperado_vs_efectivo"></div>
+<div class="block" data-block-status="mvp" data-chart="hist_range" data-source="ipc_incidencias_feedback"><div class="block-title">Incidencias: feedback de mercado vs efectivo</div><div class="block-unit">(pp)</div><div class="block-note">La caja es el rango mínimo-máximo entre instituciones; el marcador, el dato del INE.</div><div class="block-dates">📅 Marcador: Efectivo INE</div><div class="chart-wide"><svg class="report-chart" viewBox="0 0 1520 320" width="100%" role="img" aria-label="ipc_incidencias_feedback — rango histórico" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+<rect x="0" y="0" width="1520" height="320" fill="white"/>
+<line x1="64" y1="230.0" x2="1502" y2="230.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="234.0" font-size="11" fill="#555" text-anchor="end">-0,10</text>
+<line x1="64" y1="192.0" x2="1502" y2="192.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="196.0" font-size="11" fill="#555" text-anchor="end">0,00</text>
+<line x1="64" y1="154.0" x2="1502" y2="154.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="158.0" font-size="11" fill="#555" text-anchor="end">0,10</text>
+<line x1="64" y1="116.0" x2="1502" y2="116.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="120.0" font-size="11" fill="#555" text-anchor="end">0,20</text>
+<line x1="64" y1="78.0" x2="1502" y2="78.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="82.0" font-size="11" fill="#555" text-anchor="end">0,30</text>
+<line x1="64" y1="40.0" x2="1502" y2="40.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="44.0" font-size="11" fill="#555" text-anchor="end">0,40</text>
+<rect x="88.9" y="123.6" width="60.8" height="22.8" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Alimentos" data-v="0,12 pp - 0,18 pp"/>
+<line x1="88.9" y1="137.0" x2="149.7" y2="137.0" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Alimentos" data-v="0,14 pp"/>
+<circle cx="119.3" cy="71.5" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Alimentos" data-v="0,32 pp"/>
+<text x="119.3" y="62.5" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">0,32</text>
+<text transform="translate(119.3,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Alimentos</text>
+<rect x="199.5" y="147.2" width="60.8" height="18.2" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Transporte" data-v="0,07 pp - 0,12 pp"/>
+<line x1="199.5" y1="158.1" x2="260.3" y2="158.1" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Transporte" data-v="0,09 pp"/>
+<circle cx="229.9" cy="115.6" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Transporte" data-v="0,20 pp"/>
+<text x="229.9" y="106.6" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">0,20</text>
+<text transform="translate(229.9,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Transporte</text>
+<rect x="310.1" y="179.1" width="60.8" height="1.5" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Rest. Y Hoteles" data-v="0,03 pp - 0,03 pp"/>
+<line x1="310.1" y1="180.1" x2="371.0" y2="180.1" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Rest. Y Hoteles" data-v="0,03 pp"/>
+<circle cx="340.5" cy="178.7" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Rest. Y Hoteles" data-v="0,04 pp"/>
+<text x="340.5" y="169.7" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">0,04</text>
+<text transform="translate(340.5,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Rest. Y Hoteles</text>
+<rect x="420.7" y="173.0" width="60.8" height="15.2" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Vivienda" data-v="0,01 pp - 0,05 pp"/>
+<line x1="420.7" y1="180.7" x2="481.6" y2="180.7" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Vivienda" data-v="0,03 pp"/>
+<circle cx="451.2" cy="181.4" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Vivienda" data-v="0,03 pp"/>
+<text x="451.2" y="172.4" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">0,03</text>
+<text transform="translate(451.2,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Vivienda</text>
+<rect x="531.4" y="199.6" width="60.8" height="4.9" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Rec. y Cultura" data-v="-0,03 pp - -0,02 pp"/>
+<line x1="531.4" y1="202.5" x2="592.2" y2="202.5" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Rec. y Cultura" data-v="-0,03 pp"/>
+<circle cx="561.8" cy="181.7" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Rec. y Cultura" data-v="0,03 pp"/>
+<text x="561.8" y="172.7" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">0,03</text>
+<text transform="translate(561.8,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Rec. y Cultura</text>
+<rect x="642.0" y="184.4" width="60.8" height="7.6" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Vestuario" data-v="0,00 pp - 0,02 pp"/>
+<line x1="642.0" y1="188.5" x2="702.8" y2="188.5" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Vestuario" data-v="0,01 pp"/>
+<circle cx="672.4" cy="184.8" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Vestuario" data-v="0,02 pp"/>
+<text x="672.4" y="175.8" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">0,02</text>
+<text transform="translate(672.4,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Vestuario</text>
+<rect x="752.6" y="192.0" width="60.8" height="7.6" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Comunicación" data-v="-0,02 pp - 0,00 pp"/>
+<line x1="752.6" y1="195.7" x2="813.4" y2="195.7" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Comunicación" data-v="-0,01 pp"/>
+<circle cx="783.0" cy="198.5" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Comunicación" data-v="-0,02 pp"/>
+<text x="783.0" y="189.5" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">-0,02</text>
+<text transform="translate(783.0,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Comunicación</text>
+<rect x="863.2" y="184.4" width="60.8" height="3.8" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Salud" data-v="0,01 pp - 0,02 pp"/>
+<line x1="863.2" y1="186.2" x2="924.0" y2="186.2" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Salud" data-v="0,02 pp"/>
+<circle cx="893.6" cy="186.7" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Salud" data-v="0,01 pp"/>
+<text x="893.6" y="177.7" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">0,01</text>
+<text transform="translate(893.6,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Salud</text>
+<rect x="973.8" y="195.8" width="60.8" height="11.4" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Eq. Del Hogar" data-v="-0,04 pp - -0,01 pp"/>
+<line x1="973.8" y1="201.0" x2="1034.7" y2="201.0" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Eq. Del Hogar" data-v="-0,02 pp"/>
+<circle cx="1004.2" cy="195.0" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Eq. Del Hogar" data-v="-0,01 pp"/>
+<text x="1004.2" y="186.0" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">-0,01</text>
+<text transform="translate(1004.2,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Eq. Del Hogar</text>
+<rect x="1084.4" y="176.8" width="60.8" height="15.2" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Alcohol y Tab" data-v="0,00 pp - 0,04 pp"/>
+<line x1="1084.4" y1="185.5" x2="1145.3" y2="185.5" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Alcohol y Tab" data-v="0,02 pp"/>
+<circle cx="1114.8" cy="189.7" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Alcohol y Tab" data-v="0,01 pp"/>
+<text x="1114.8" y="180.7" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">0,01</text>
+<text transform="translate(1114.8,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Alcohol y Tab</text>
+<rect x="1195.0" y="188.2" width="60.8" height="3.8" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Serv. Financieros" data-v="0,00 pp - 0,01 pp"/>
+<line x1="1195.0" y1="190.4" x2="1255.9" y2="190.4" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Serv. Financieros" data-v="0,00 pp"/>
+<circle cx="1225.5" cy="193.1" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Serv. Financieros" data-v="-0,00 pp"/>
+<text x="1225.5" y="184.1" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">-0,00</text>
+<text transform="translate(1225.5,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Serv. Financieros</text>
+<rect x="1305.7" y="191.6" width="60.8" height="1.0" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Bs y Ss Diversos" data-v="0,00 pp - 0,00 pp"/>
+<line x1="1305.7" y1="191.9" x2="1366.5" y2="191.9" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Bs y Ss Diversos" data-v="0,00 pp"/>
+<circle cx="1336.1" cy="191.6" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Bs y Ss Diversos" data-v="0,00 pp"/>
+<text x="1336.1" y="182.6" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">0,00</text>
+<text transform="translate(1336.1,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Bs y Ss Diversos</text>
+<rect x="1416.3" y="192.0" width="60.8" height="1.0" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Educación" data-v="0,00 pp - 0,00 pp"/>
+<line x1="1416.3" y1="192.0" x2="1477.1" y2="192.0" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Educación" data-v="0,00 pp"/>
+<circle cx="1446.7" cy="192.0" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Educación" data-v="0,00 pp"/>
+<text x="1446.7" y="183.0" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">0,00</text>
+<text transform="translate(1446.7,242.0) rotate(-45)" font-size="10" fill="#555" text-anchor="end">Educación</text>
+<line x1="64" y1="40" x2="64" y2="230" stroke="#999" stroke-width="1"/>
+<rect x="64.0" y="292.0" width="10.0" height="10.0" fill="#cfe0ef"/><text x="78.0" y="300.0" font-size="11.0" fill="#444">Rango histórico</text><rect x="187.0" y="292.0" width="10.0" height="10.0" fill="#8a2b2b"/><text x="201.0" y="300.0" font-size="11.0" fill="#444">Promedio</text><rect x="266.6" y="292.0" width="10.0" height="10.0" fill="#0b3766"/><text x="280.6" y="300.0" font-size="11.0" fill="#444">Hoy</text>
+<text x="64" y="28" font-size="11" fill="#777">pp</text>
+</svg></div></div>
+<div class="section-banner">Difusión inflacionaria</div>
+<div class="section-text" data-text-slot="ipc:sec:difusion_inflacionaria"></div>
+<div class="block" data-block-status="mvp" data-chart="hist_range" data-source="ipc_difusion_banda"><div class="block-title">Difusión IPC general · banda histórica</div><div class="block-unit">(%)</div><div class="block-note">Porcentaje de productos con variación mensual positiva. Banda 2010-2021.</div><div class="block-dates">📅 Marcador: Año en curso</div><div class="chart-wide"><svg class="report-chart" viewBox="0 0 1520 320" width="100%" role="img" aria-label="ipc_difusion_banda — rango histórico" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+<rect x="0" y="0" width="1520" height="320" fill="white"/>
+<line x1="64" y1="240.0" x2="1502" y2="240.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="244.0" font-size="11" fill="#555" text-anchor="end">30,0</text>
+<line x1="64" y1="190.0" x2="1502" y2="190.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="194.0" font-size="11" fill="#555" text-anchor="end">40,0</text>
+<line x1="64" y1="140.0" x2="1502" y2="140.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="144.0" font-size="11" fill="#555" text-anchor="end">50,0</text>
+<line x1="64" y1="90.0" x2="1502" y2="90.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="94.0" font-size="11" fill="#555" text-anchor="end">60,0</text>
+<line x1="64" y1="40.0" x2="1502" y2="40.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="44.0" font-size="11" fill="#555" text-anchor="end">70,0</text>
+<rect x="91.0" y="90.9" width="65.9" height="72.2" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Ene" data-v="45,4 % - 59,8 %"/>
+<line x1="91.0" y1="122.2" x2="156.9" y2="122.2" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Ene" data-v="53,6 %"/>
+<circle cx="123.9" cy="98.5" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Ene" data-v="58,3 %"/>
+<text x="123.9" y="89.5" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">58,3</text>
+<text x="123.9" y="256" font-size="10" fill="#555" text-anchor="middle">Ene</text>
+<rect x="210.8" y="72.3" width="65.9" height="81.8" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Feb" data-v="47,2 % - 63,5 %"/>
+<line x1="210.8" y1="117.5" x2="276.7" y2="117.5" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Feb" data-v="54,5 %"/>
+<circle cx="243.7" cy="130.3" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Feb" data-v="51,9 %"/>
+<text x="243.7" y="121.3" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">51,9</text>
+<text x="243.7" y="256" font-size="10" fill="#555" text-anchor="middle">Feb</text>
+<rect x="330.6" y="67.6" width="65.9" height="76.4" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Mar" data-v="49,2 % - 64,5 %"/>
+<line x1="330.6" y1="105.2" x2="396.5" y2="105.2" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Mar" data-v="57,0 %"/>
+<circle cx="363.6" cy="123.2" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Mar" data-v="53,4 %"/>
+<text x="363.6" y="114.2" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">53,4</text>
+<text x="363.6" y="256" font-size="10" fill="#555" text-anchor="middle">Mar</text>
+<rect x="450.5" y="75.3" width="65.9" height="88.6" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Abr" data-v="45,2 % - 62,9 %"/>
+<line x1="450.5" y1="127.2" x2="516.4" y2="127.2" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Abr" data-v="52,6 %"/>
+<circle cx="483.4" cy="162.1" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Abr" data-v="45,6 %"/>
+<text x="483.4" y="153.1" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">45,6</text>
+<text x="483.4" y="256" font-size="10" fill="#555" text-anchor="middle">Abr</text>
+<rect x="570.3" y="83.2" width="65.9" height="99.7" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="May" data-v="41,4 % - 61,4 %"/>
+<line x1="570.3" y1="146.8" x2="636.2" y2="146.8" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="May" data-v="48,6 %"/>
+<circle cx="603.2" cy="144.4" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="May" data-v="49,1 %"/>
+<text x="603.2" y="135.4" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">49,1</text>
+<text x="603.2" y="256" font-size="10" fill="#555" text-anchor="middle">May</text>
+<rect x="690.1" y="131.8" width="65.9" height="71.2" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Jun" data-v="37,4 % - 51,6 %"/>
+<line x1="690.1" y1="160.6" x2="756.0" y2="160.6" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Jun" data-v="45,9 %"/>
+<circle cx="723.1" cy="181.5" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Jun" data-v="41,7 %"/>
+<text x="723.1" y="172.5" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">41,7</text>
+<text x="723.1" y="256" font-size="10" fill="#555" text-anchor="middle">Jun</text>
+<rect x="810.0" y="104.5" width="65.9" height="53.2" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Jul" data-v="46,5 % - 57,1 %"/>
+<line x1="810.0" y1="137.4" x2="875.9" y2="137.4" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Jul" data-v="50,5 %"/>
+<circle cx="842.9" cy="103.8" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Jul" data-v="57,2 %"/>
+<text x="842.9" y="94.8" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">57,2</text>
+<text x="842.9" y="256" font-size="10" fill="#555" text-anchor="middle">Jul</text>
+<rect x="929.8" y="76.9" width="65.9" height="80.4" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Ago" data-v="46,5 % - 62,6 %"/>
+<line x1="929.8" y1="120.8" x2="995.7" y2="120.8" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Ago" data-v="53,8 %"/>
+<circle cx="962.7" cy="139.1" r="4.5" fill="#0b3766" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#0b3766" data-s="Hoy" data-k="Ago" data-v="50,2 %"/>
+<text x="962.7" y="130.1" font-size="11" fill="#0b3766" font-weight="700" text-anchor="middle">50,2</text>
+<text x="962.7" y="256" font-size="10" fill="#555" text-anchor="middle">Ago</text>
+<rect x="1049.6" y="86.4" width="65.9" height="98.0" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Sep" data-v="41,1 % - 60,7 %"/>
+<line x1="1049.6" y1="133.3" x2="1115.5" y2="133.3" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Sep" data-v="51,3 %"/>
+<text x="1082.6" y="256" font-size="10" fill="#555" text-anchor="middle">Sep</text>
+<rect x="1169.5" y="76.9" width="65.9" height="78.0" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Oct" data-v="47,0 % - 62,6 %"/>
+<line x1="1169.5" y1="115.1" x2="1235.4" y2="115.1" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Oct" data-v="55,0 %"/>
+<text x="1202.4" y="256" font-size="10" fill="#555" text-anchor="middle">Oct</text>
+<rect x="1289.3" y="97.9" width="65.9" height="102.3" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Nov" data-v="38,0 % - 58,4 %"/>
+<line x1="1289.3" y1="156.0" x2="1355.2" y2="156.0" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Nov" data-v="46,8 %"/>
+<text x="1322.2" y="256" font-size="10" fill="#555" text-anchor="middle">Nov</text>
+<rect x="1409.1" y="89.6" width="65.9" height="121.2" fill="#cfe0ef" stroke="#7ea3c9" stroke-width="1" data-si="0" class="tip-pt" data-c="#7ea3c9" data-s="Rango histórico" data-k="Dic" data-v="35,8 % - 60,1 %"/>
+<line x1="1409.1" y1="155.6" x2="1475.0" y2="155.6" stroke="#8a2b2b" stroke-width="2.4" data-si="1" class="tip-pt" data-c="#8a2b2b" data-s="Promedio" data-k="Dic" data-v="46,9 %"/>
+<text x="1442.1" y="256" font-size="10" fill="#555" text-anchor="middle">Dic</text>
+<line x1="64" y1="40" x2="64" y2="240" stroke="#999" stroke-width="1"/>
+<rect x="64.0" y="286.0" width="10.0" height="10.0" fill="#cfe0ef"/><text x="78.0" y="294.0" font-size="11.0" fill="#444">Rango histórico</text><rect x="187.0" y="286.0" width="10.0" height="10.0" fill="#8a2b2b"/><text x="201.0" y="294.0" font-size="11.0" fill="#444">Promedio</text><rect x="266.6" y="286.0" width="10.0" height="10.0" fill="#0b3766"/><text x="280.6" y="294.0" font-size="11.0" fill="#444">Hoy</text>
+<text x="64" y="28" font-size="11" fill="#777">%</text>
+</svg></div></div>
+<div class="block" data-block-status="mvp" data-chart="hist_range" data-source="ipc_banda_bienes_sv"><div class="block-title">Bienes sin volátiles · banda</div><div class="block-unit">(%)</div><div class="block-note">Rango p10-p90 de 2010-2020, serie empalmada del BCCh (G073).</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>hist_range</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="hist_range" data-source="ipc_banda_servicios_sv"><div class="block-title">Servicios sin volátiles · banda</div><div class="block-unit">(%)</div><div class="block-note">Rango p10-p90 de 2010-2020, serie empalmada del BCCh (G073).</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>hist_range</code> — se completa en la próxima iteración</div></div>
+<div class="section-banner">Canasta e incidencias</div>
+<div class="section-text" data-text-slot="ipc:sec:canasta_e_incidencias"></div>
+<div class="block" data-block-status="mvp" data-chart="treemap" data-source="ipc_canasta_treemap"><div class="block-title">Canasta por división, grupo y producto</div><div class="block-unit">(%)</div><div class="block-note">El área es la ponderación en la canasta; el color, la variación mensual (rojo sube, azul baja).</div><div class="chart-wide"><svg class="report-chart" viewBox="0 0 1520 420" width="100%" role="img" aria-label="ipc_canasta_treemap — treemap" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+<rect x="0" y="0" width="1520" height="420" fill="white"/>
+<rect x="1.5" y="29.5" width="332.2" height="317.6" fill="rgb(227,186,184)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(227,186,184)" data-s="Alimentos" data-k="ALIMENTOS" data-v="19,9 % · 1,50 %"/>
+<text x="168.4" y="192.5" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">ALIMENTOS</text>
+<rect x="1.5" y="348.6" width="332.2" height="34.4" fill="rgb(232,208,205)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(232,208,205)" data-s="Alimentos" data-k="BEBIDAS NO ALCOHÓLICAS" data-v="2,24 % · 0,90 %"/>
+<text x="168.4" y="370.0" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">BEBIDAS NO ALCOHÓLICAS</text>
+<rect x="0.0" y="10.0" width="335.2" height="18.0" fill="#1f2c3d"/>
+<text x="5.0" y="23.0" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Alimentos</text>
+<rect x="338.2" y="29.5" width="250.3" height="151.1" fill="rgb(238,233,231)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(238,233,231)" data-s="Vivienda" data-k="ARRIENDO" data-v="7,20 % · 0,20 %"/>
+<text x="464.1" y="109.3" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">ARRIENDO</text>
+<rect x="338.2" y="182.1" width="122.6" height="200.9" fill="rgb(240,240,238)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(240,240,238)" data-s="Vivienda" data-k="SUMINISTRO DE ELECTRICIDAD, GAS Y OTROS COMBUSTIBLES" data-v="4,71 % · 0,00 %"/>
+<text x="400.3" y="286.8" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">SUMINISTRO DE ELEC…</text>
+<rect x="462.3" y="182.1" width="126.2" height="122.1" fill="rgb(237,229,227)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(237,229,227)" data-s="Vivienda" data-k="SUMINISTRO DE AGUA Y SERVICIOS RELACIONADOS CON LA VIVIENDA" data-v="2,96 % · 0,30 %"/>
+<text x="526.2" y="247.3" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">SUMINISTRO DE AGUA …</text>
+<rect x="462.3" y="305.6" width="126.2" height="77.4" fill="rgb(236,226,224)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(236,226,224)" data-s="Vivienda" data-k="CONSERVACIÓN Y REPARACIÓN DE LA VIVIENDA" data-v="1,89 % · 0,40 %"/>
+<text x="526.2" y="348.6" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">CONSERVACIÓN Y REPA…</text>
+<rect x="336.7" y="10.0" width="253.3" height="18.0" fill="#1f2c3d"/>
+<text x="341.7" y="23.0" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Vivienda</text>
+<rect x="593.0" y="29.5" width="200.0" height="168.7" fill="rgb(231,204,202)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(231,204,202)" data-s="Transporte" data-k="FUNCIONAMIENTO DE EQUIPOS DE TRANSPORTE PERSONAL" data-v="6,45 % · 1,00 %"/>
+<text x="693.8" y="118.1" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">FUNCIONAMIENTO DE EQUIPOS DE TR…</text>
+<rect x="593.0" y="199.7" width="112.9" height="183.3" fill="rgb(211,219,228)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(211,219,228)" data-s="Transporte" data-k="ADQUISICIÓN DE VEHÍCULOS" data-v="3,98 % · -0,80 %"/>
+<text x="650.3" y="295.6" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">ADQUISICIÓN DE VE…</text>
+<rect x="707.5" y="199.7" width="85.5" height="181.6" fill="rgb(190,40,35)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(190,40,35)" data-s="Transporte" data-k="TRANSPORTE DE PASAJEROS" data-v="3,00 % · 5,60 %"/>
+<text x="751.0" y="294.8" font-size="10.5" fill="#fff" text-anchor="middle" pointer-events="none">TRANSPORTE D…</text>
+<rect x="707.5" y="382.8" width="85.5" height="0.2" fill="rgb(227,186,184)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(227,186,184)" data-s="Transporte" data-k="ENVÍO DE BIENES Y PAQUETERÍA" data-v="0,03 % · 1,50 %"/>
+<rect x="591.5" y="10.0" width="203.0" height="18.0" fill="#1f2c3d"/>
+<text x="596.5" y="23.0" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Transporte</text>
+<rect x="797.5" y="29.5" width="94.3" height="185.3" fill="rgb(239,236,234)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(239,236,234)" data-s="Salud" data-k="SERVICIOS DE ATENCIÓN AMBULATORIA" data-v="3,53 % · 0,10 %"/>
+<text x="845.4" y="126.4" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">SERVICIOS DE …</text>
+<rect x="893.3" y="29.5" width="125.5" height="125.2" fill="rgb(237,229,227)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(237,229,227)" data-s="Salud" data-k="MEDICAMENTOS Y PRODUCTOS PARA LA SALUD" data-v="3,17 % · 0,30 %"/>
+<text x="956.8" y="96.3" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">MEDICAMENTOS Y PROD…</text>
+<rect x="893.3" y="156.2" width="69.4" height="58.6" fill="rgb(239,236,234)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(239,236,234)" data-s="Salud" data-k="SERVICIOS DE HOSPITALIZACIÓN" data-v="0,84 % · 0,10 %"/>
+<text x="928.8" y="189.7" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">SERVICIOS…</text>
+<rect x="964.2" y="156.2" width="54.6" height="58.6" fill="rgb(240,240,238)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(240,240,238)" data-s="Salud" data-k="SERVICIOS DE LABORATORIO Y DIAGNÓSTICO POR IMAGEN" data-v="0,67 % · 0,00 %"/>
+<text x="992.3" y="189.7" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">SERVICI…</text>
+<rect x="796.0" y="10.0" width="224.3" height="18.0" fill="#1f2c3d"/>
+<text x="801.0" y="23.0" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Salud</text>
+<rect x="797.5" y="237.3" width="149.9" height="145.7" fill="rgb(225,229,233)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(225,229,233)" data-s="Comunicaciones" data-k="SERVICIOS DE INFORMACIÓN Y COMUNICACIÓN" data-v="4,52 % · -0,40 %"/>
+<text x="873.2" y="314.4" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">SERVICIOS DE INFORMACIÓ…</text>
+<rect x="948.9" y="237.3" width="69.9" height="145.7" fill="rgb(240,240,238)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(240,240,238)" data-s="Comunicaciones" data-k="EQUIPOS Y ACCESORIOS DE INFORMACIÓN Y COMUNICACIÓN" data-v="2,13 % · 0,00 %"/>
+<text x="984.6" y="314.4" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">EQUIPOS Y…</text>
+<rect x="796.0" y="217.8" width="224.3" height="18.0" fill="#1f2c3d"/>
+<text x="801.0" y="230.8" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Comunicaciones</text>
+<rect x="1023.3" y="29.5" width="164.8" height="166.0" fill="rgb(236,226,224)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(236,226,224)" data-s="Rest. y hoteles" data-k="RESTAURANTES, CAFÉS Y SIMILARES" data-v="5,57 % · 0,40 %"/>
+<text x="1106.5" y="116.8" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">RESTAURANTES, CAFÉS Y SIM…</text>
+<rect x="1189.6" y="29.5" width="17.8" height="166.0" fill="rgb(228,190,187)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(228,190,187)" data-s="Rest. y hoteles" data-k="SERVICIOS DE ALOJAMIENTO" data-v="0,65 % · 1,40 %"/>
+<rect x="1021.8" y="10.0" width="187.1" height="18.0" fill="#1f2c3d"/>
+<text x="1026.8" y="23.0" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Rest. y hoteles</text>
+<rect x="1023.3" y="218.0" width="91.4" height="165.0" fill="rgb(236,222,220)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(236,222,220)" data-s="Eq. del hogar" data-k="BIENES Y SERVICIOS PARA LA MANTENCIÓN DEL HOGAR" data-v="3,10 % · 0,50 %"/>
+<text x="1069.8" y="304.8" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">BIENES Y SERV…</text>
+<rect x="1116.3" y="218.0" width="91.2" height="65.9" fill="rgb(200,211,224)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(200,211,224)" data-s="Eq. del hogar" data-k="ARTEFACTOS PARA EL HOGAR" data-v="1,25 % · -1,10 %"/>
+<text x="1162.6" y="255.2" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">ARTEFACTOS PA…</text>
+<rect x="1116.3" y="285.4" width="91.2" height="57.4" fill="rgb(233,235,236)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(233,235,236)" data-s="Eq. del hogar" data-k="MUEBLES Y ARTÍCULOS PARA EL HOGAR" data-v="1,09 % · -0,20 %"/>
+<text x="1162.6" y="318.4" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">MUEBLES Y ART…</text>
+<rect x="1116.3" y="344.3" width="33.6" height="38.7" fill="rgb(192,205,222)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(192,205,222)" data-s="Eq. del hogar" data-k="CRISTALERÍA, VAJILLA Y UTENSILIOS PARA EL HOGAR" data-v="0,28 % · -1,30 %"/>
+<rect x="1151.3" y="344.3" width="33.3" height="38.7" fill="rgb(192,205,222)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(192,205,222)" data-s="Eq. del hogar" data-k="TEXTILES PARA EL HOGAR" data-v="0,28 % · -1,30 %"/>
+<rect x="1186.1" y="344.3" width="21.3" height="38.7" fill="rgb(200,211,224)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(200,211,224)" data-s="Eq. del hogar" data-k="HERRAMIENTAS Y EQUIPOS PARA EL HOGAR Y EL JARDÍN" data-v="0,18 % · -1,10 %"/>
+<rect x="1021.8" y="198.5" width="187.1" height="18.0" fill="#1f2c3d"/>
+<text x="1026.8" y="211.5" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Eq. del hogar</text>
+<rect x="1211.9" y="29.5" width="83.5" height="82.4" fill="rgb(233,211,209)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(233,211,209)" data-s="Rec. y cultura" data-k="PRODUCTOS DE JARDINERÍA Y PARA MASCOTAS" data-v="1,46 % · 0,80 %"/>
+<text x="1254.4" y="74.9" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">PRODUCTOS DE…</text>
+<rect x="1211.9" y="113.4" width="83.5" height="58.9" fill="rgb(236,222,220)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(236,222,220)" data-s="Rec. y cultura" data-k="SERVICIOS RECREATIVOS" data-v="1,05 % · 0,50 %"/>
+<text x="1254.4" y="147.1" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">SERVICIOS RE…</text>
+<rect x="1296.9" y="29.5" width="74.9" height="44.5" fill="rgb(232,208,205)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(232,208,205)" data-s="Rec. y cultura" data-k="DIARIOS, LIBROS Y PAPELERÍA" data-v="0,72 % · 0,90 %"/>
+<text x="1335.1" y="56.0" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">DIARIOS, L…</text>
+<rect x="1296.9" y="75.5" width="74.9" height="43.2" fill="rgb(214,221,229)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(214,221,229)" data-s="Rec. y cultura" data-k="BIENES PARA RECREACIÓN" data-v="0,70 % · -0,70 %"/>
+<text x="1335.1" y="101.3" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">BIENES PAR…</text>
+<rect x="1296.9" y="120.2" width="29.5" height="52.1" fill="rgb(236,237,237)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(236,237,237)" data-s="Rec. y cultura" data-k="ENTRADAS A ESPECTÁCULOS CULTURALES" data-v="0,34 % · -0,10 %"/>
+<rect x="1327.9" y="120.2" width="43.9" height="32.2" fill="rgb(228,194,191)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(228,194,191)" data-s="Rec. y cultura" data-k="PAQUETES TURÍSTICOS" data-v="0,31 % · 1,30 %"/>
+<rect x="1327.9" y="153.9" width="28.5" height="18.3" fill="rgb(233,235,236)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(233,235,236)" data-s="Rec. y cultura" data-k="INSTRUMENTOS MUSICALES" data-v="0,12 % · -0,20 %"/>
+<rect x="1357.9" y="153.9" width="13.9" height="18.3" fill="rgb(220,161,158)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(220,161,158)" data-s="Rec. y cultura" data-k="EQUIPOS DE JUEGOS PARA RECREACIÓN" data-v="0,06 % · 2,20 %"/>
+<rect x="1210.4" y="10.0" width="162.9" height="18.0" fill="#1f2c3d"/>
+<text x="1215.4" y="23.0" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Rec. y cultura</text>
+<rect x="1376.3" y="29.5" width="79.5" height="114.2" fill="rgb(240,240,238)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(240,240,238)" data-s="Educación" data-k="ENSEÑANZA SUPERIOR" data-v="1,92 % · 0,00 %"/>
+<text x="1416.8" y="90.8" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">ENSEÑANZA S…</text>
+<rect x="1457.3" y="29.5" width="59.7" height="114.2" fill="rgb(240,240,238)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(240,240,238)" data-s="Educación" data-k="ENSEÑANZA PRE-ESCOLAR Y ENSEÑANZA BÁSICA" data-v="1,45 % · 0,00 %"/>
+<text x="1487.9" y="90.8" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">ENSEÑANZ…</text>
+<rect x="1376.3" y="145.2" width="99.0" height="27.1" fill="rgb(240,240,238)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(240,240,238)" data-s="Educación" data-k="ENSEÑANZA MEDIA" data-v="0,59 % · 0,00 %"/>
+<text x="1426.5" y="163.0" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">ENSEÑANZA MEDIA</text>
+<rect x="1476.8" y="145.2" width="40.2" height="27.1" fill="rgb(240,240,238)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(240,240,238)" data-s="Educación" data-k="ENSEÑANZA NO ATRIBUIBLE A NINGÚN NIVEL" data-v="0,24 % · 0,00 %"/>
+<rect x="1374.8" y="10.0" width="143.7" height="18.0" fill="#1f2c3d"/>
+<text x="1379.8" y="23.0" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Educación</text>
+<rect x="1211.9" y="194.8" width="138.3" height="83.6" fill="rgb(240,240,238)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(240,240,238)" data-s="Seguros y ss. financieros" data-k="CUIDADO PERSONAL" data-v="2,63 % · 0,00 %"/>
+<text x="1281.8" y="240.8" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">CUIDADO PERSONAL</text>
+<rect x="1351.7" y="194.8" width="56.7" height="38.6" fill="rgb(237,229,227)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(237,229,227)" data-s="Seguros y ss. financieros" data-k="OTROS SERVICIOS" data-v="0,52 % · 0,30 %"/>
+<text x="1380.8" y="218.3" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">OTROS S…</text>
+<rect x="1351.7" y="234.9" width="41.0" height="43.4" fill="rgb(240,240,238)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(240,240,238)" data-s="Seguros y ss. financieros" data-k="ARTÍCULOS PERSONALES" data-v="0,42 % · 0,00 %"/>
+<rect x="1394.1" y="234.9" width="14.2" height="43.4" fill="rgb(240,240,238)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(240,240,238)" data-s="Seguros y ss. financieros" data-k="RESIDENCIAS PARA ADULTOS MAYORES" data-v="0,16 % · 0,00 %"/>
+<rect x="1210.4" y="175.3" width="199.5" height="18.0" fill="#1f2c3d"/>
+<text x="1215.4" y="188.3" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Seguros y ss. financieros</text>
+<rect x="1211.9" y="300.8" width="137.6" height="82.2" fill="rgb(207,216,227)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(207,216,227)" data-s="Alcohol y tabaco" data-k="BEBIDAS ALCOHÓLICAS" data-v="2,59 % · -0,90 %"/>
+<text x="1281.5" y="346.2" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">BEBIDAS ALCOHÓLICAS</text>
+<rect x="1351.0" y="300.8" width="57.3" height="82.2" fill="rgb(216,144,140)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(216,144,140)" data-s="Alcohol y tabaco" data-k="CIGARRILLOS" data-v="1,09 % · 2,70 %"/>
+<text x="1380.5" y="346.2" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">CIGARRI…</text>
+<rect x="1210.4" y="281.3" width="199.5" height="18.0" fill="#1f2c3d"/>
+<text x="1215.4" y="294.3" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Alcohol y tabaco</text>
+<rect x="1412.9" y="194.8" width="104.1" height="84.2" fill="rgb(228,190,187)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(228,190,187)" data-s="Vestuario" data-k="VESTUARIO" data-v="1,89 % · 1,40 %"/>
+<text x="1465.7" y="241.1" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">VESTUARIO</text>
+<rect x="1412.9" y="280.5" width="104.1" height="44.4" fill="rgb(236,237,237)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(236,237,237)" data-s="Vestuario" data-k="CALZADO" data-v="1,01 % · -0,10 %"/>
+<text x="1465.7" y="306.9" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">CALZADO</text>
+<rect x="1411.4" y="175.3" width="107.1" height="18.0" fill="#1f2c3d"/>
+<text x="1416.4" y="188.3" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Vestuario</text>
+<rect x="1412.9" y="347.4" width="80.0" height="35.6" fill="rgb(222,227,232)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(222,227,232)" data-s="Bs. y ss. diversos" data-k="SEGUROS" data-v="0,85 % · -0,50 %"/>
+<text x="1453.6" y="369.4" font-size="10.5" fill="#1c1c1c" text-anchor="middle" pointer-events="none">SEGUROS</text>
+<rect x="1494.4" y="347.4" width="22.6" height="35.6" fill="rgb(238,233,231)" stroke="#fff" stroke-width="0.5" class="tip-pt" data-c="rgb(238,233,231)" data-s="Bs. y ss. diversos" data-k="GASTOS FINANCIEROS" data-v="0,25 % · 0,20 %"/>
+<rect x="1411.4" y="327.9" width="107.1" height="18.0" fill="#1f2c3d"/>
+<text x="1416.4" y="340.9" font-size="11" font-weight="700" fill="#fff" pointer-events="none">Bs. y ss. diver…</text>
+<rect x="12.0" y="400.0" width="9.7" height="10.0" fill="rgb(35,90,168)"/>
+<rect x="21.2" y="400.0" width="9.7" height="10.0" fill="rgb(53,103,174)"/>
+<rect x="30.3" y="400.0" width="9.7" height="10.0" fill="rgb(71,116,180)"/>
+<rect x="39.5" y="400.0" width="9.7" height="10.0" fill="rgb(88,129,186)"/>
+<rect x="48.7" y="400.0" width="9.7" height="10.0" fill="rgb(106,142,192)"/>
+<rect x="57.8" y="400.0" width="9.7" height="10.0" fill="rgb(124,155,198)"/>
+<rect x="67.0" y="400.0" width="9.7" height="10.0" fill="rgb(142,168,205)"/>
+<rect x="76.2" y="400.0" width="9.7" height="10.0" fill="rgb(160,181,211)"/>
+<rect x="85.3" y="400.0" width="9.7" height="10.0" fill="rgb(178,194,217)"/>
+<rect x="94.5" y="400.0" width="9.7" height="10.0" fill="rgb(195,207,223)"/>
+<rect x="103.7" y="400.0" width="9.7" height="10.0" fill="rgb(213,220,229)"/>
+<rect x="112.8" y="400.0" width="9.7" height="10.0" fill="rgb(231,233,235)"/>
+<rect x="122.0" y="400.0" width="9.7" height="10.0" fill="rgb(238,231,229)"/>
+<rect x="131.2" y="400.0" width="9.7" height="10.0" fill="rgb(233,214,212)"/>
+<rect x="140.3" y="400.0" width="9.7" height="10.0" fill="rgb(229,197,194)"/>
+<rect x="149.5" y="400.0" width="9.7" height="10.0" fill="rgb(225,179,176)"/>
+<rect x="158.7" y="400.0" width="9.7" height="10.0" fill="rgb(220,162,159)"/>
+<rect x="167.8" y="400.0" width="9.7" height="10.0" fill="rgb(216,144,141)"/>
+<rect x="177.0" y="400.0" width="9.7" height="10.0" fill="rgb(212,127,123)"/>
+<rect x="186.2" y="400.0" width="9.7" height="10.0" fill="rgb(207,110,106)"/>
+<rect x="195.3" y="400.0" width="9.7" height="10.0" fill="rgb(203,92,88)"/>
+<rect x="204.5" y="400.0" width="9.7" height="10.0" fill="rgb(199,75,70)"/>
+<rect x="213.7" y="400.0" width="9.7" height="10.0" fill="rgb(194,57,53)"/>
+<rect x="222.8" y="400.0" width="9.7" height="10.0" fill="rgb(190,40,35)"/>
+<text x="12.0" y="422.0" font-size="9.5" fill="#666" text-anchor="start">-5,60%</text>
+<text x="122.0" y="422.0" font-size="9.5" fill="#666" text-anchor="middle">0</text>
+<text x="232.0" y="422.0" font-size="9.5" fill="#666" text-anchor="end">+5,60%</text>
+<text x="244.0" y="409.0" font-size="9.5" fill="#999">área = %</text>
+</svg></div></div>
+<div class="block" data-block-status="mvp" data-chart="grouped_bar" data-source="ipc_grupos"><div class="block-title">Variación IPC por grupo</div><div class="block-unit">(%)</div><div class="block-dates">📅 Suma por mes · datos hasta 01-ago-2026</div><svg class="report-chart" viewBox="0 0 760 320" width="100%" role="img" aria-label="ipc_grupos — barras" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+<rect x="0" y="0" width="760" height="320" fill="white"/>
+<line x1="64" y1="240.0" x2="742" y2="240.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="244.0" font-size="11.0" fill="#555" text-anchor="end">-1,00</text>
+<line x1="64" y1="187.5" x2="742" y2="187.5" stroke="#999" stroke-width="1"/>
+<text x="56" y="191.5" font-size="11.0" fill="#555" text-anchor="end">0,00</text>
+<line x1="64" y1="135.0" x2="742" y2="135.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="139.0" font-size="11.0" fill="#555" text-anchor="end">1,00</text>
+<line x1="64" y1="82.5" x2="742" y2="82.5" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="86.5" font-size="11.0" fill="#555" text-anchor="end">2,00</text>
+<line x1="64" y1="30.0" x2="742" y2="30.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="34.0" font-size="11.0" fill="#555" text-anchor="end">3,00</text>
+<rect x="69.7" y="160.3" width="13.0" height="27.2" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="IPC Volátiles" data-k="sep25" data-v="0,52 %"/>
+<rect x="84.7" y="166.7" width="13.0" height="20.8" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="IPC Sin Volátiles" data-k="sep25" data-v="0,40 %"/>
+<rect x="99.8" y="166.5" width="13.0" height="21.0" fill="#0a8a5f" data-si="2" class="tip-pt" data-c="#0a8a5f" data-s="IPC Total" data-k="sep25" data-v="0,40 %"/>
+<text x="92.2" y="256" font-size="10.0" fill="#555" text-anchor="middle">sep25</text>
+<rect x="126.2" y="175.6" width="13.0" height="11.9" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="IPC Volátiles" data-k="oct25" data-v="0,23 %"/>
+<rect x="141.2" y="187.5" width="13.0" height="3.8" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="IPC Sin Volátiles" data-k="oct25" data-v="-0,07 %"/>
+<text x="148.8" y="256" font-size="10.0" fill="#555" text-anchor="middle">oct25</text>
+<rect x="182.7" y="171.9" width="13.0" height="15.6" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="IPC Volátiles" data-k="nov25" data-v="0,30 %"/>
+<rect x="197.7" y="175.0" width="13.0" height="12.5" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="IPC Sin Volátiles" data-k="nov25" data-v="0,24 %"/>
+<rect x="212.8" y="171.8" width="13.0" height="15.8" fill="#0a8a5f" data-si="2" class="tip-pt" data-c="#0a8a5f" data-s="IPC Total" data-k="nov25" data-v="0,30 %"/>
+<text x="205.2" y="256" font-size="10.0" fill="#555" text-anchor="middle">nov25</text>
+<rect x="239.2" y="187.5" width="13.0" height="20.9" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="IPC Volátiles" data-k="dic25" data-v="-0,40 %"/>
+<rect x="254.2" y="187.5" width="13.0" height="3.4" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="IPC Sin Volátiles" data-k="dic25" data-v="-0,07 %"/>
+<rect x="269.3" y="187.5" width="13.0" height="10.5" fill="#0a8a5f" data-si="2" class="tip-pt" data-c="#0a8a5f" data-s="IPC Total" data-k="dic25" data-v="-0,20 %"/>
+<text x="261.8" y="256" font-size="10.0" fill="#555" text-anchor="middle">dic25</text>
+<rect x="295.6" y="187.5" width="13.0" height="5.9" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="IPC Volátiles" data-k="ene26" data-v="-0,11 %"/>
+<rect x="310.7" y="148.9" width="13.0" height="38.6" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="IPC Sin Volátiles" data-k="ene26" data-v="0,74 %"/>
+<rect x="325.8" y="166.5" width="13.0" height="21.0" fill="#0a8a5f" data-si="2" class="tip-pt" data-c="#0a8a5f" data-s="IPC Total" data-k="ene26" data-v="0,40 %"/>
+<text x="318.2" y="256" font-size="10.0" fill="#555" text-anchor="middle">ene26</text>
+<rect x="352.1" y="187.5" width="13.0" height="15.9" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="IPC Volátiles" data-k="feb26" data-v="-0,30 %"/>
+<rect x="367.2" y="178.5" width="13.0" height="9.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="IPC Sin Volátiles" data-k="feb26" data-v="0,17 %"/>
+<text x="374.8" y="256" font-size="10.0" fill="#555" text-anchor="middle">feb26</text>
+<rect x="408.6" y="96.9" width="13.0" height="90.6" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="IPC Volátiles" data-k="mar26" data-v="1,73 %"/>
+<rect x="423.7" y="161.8" width="13.0" height="25.7" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="IPC Sin Volátiles" data-k="mar26" data-v="0,49 %"/>
+<rect x="438.8" y="135.0" width="13.0" height="52.5" fill="#0a8a5f" data-si="2" class="tip-pt" data-c="#0a8a5f" data-s="IPC Total" data-k="mar26" data-v="1,00 %"/>
+<text x="431.2" y="256" font-size="10.0" fill="#555" text-anchor="middle">mar26</text>
+<rect x="465.1" y="49.8" width="13.0" height="137.7" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="IPC Volátiles" data-k="abr26" data-v="2,62 %"/>
+<rect x="480.2" y="163.5" width="13.0" height="24.0" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="IPC Sin Volátiles" data-k="abr26" data-v="0,46 %"/>
+<rect x="495.3" y="119.3" width="13.0" height="68.2" fill="#0a8a5f" data-si="2" class="tip-pt" data-c="#0a8a5f" data-s="IPC Total" data-k="abr26" data-v="1,30 %"/>
+<text x="487.8" y="256" font-size="10.0" fill="#555" text-anchor="middle">abr26</text>
+<rect x="521.6" y="180.2" width="13.0" height="7.3" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="IPC Volátiles" data-k="may26" data-v="0,14 %"/>
+<rect x="536.7" y="177.4" width="13.0" height="10.1" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="IPC Sin Volátiles" data-k="may26" data-v="0,19 %"/>
+<rect x="551.8" y="177.0" width="13.0" height="10.5" fill="#0a8a5f" data-si="2" class="tip-pt" data-c="#0a8a5f" data-s="IPC Total" data-k="may26" data-v="0,20 %"/>
+<text x="544.2" y="256" font-size="10.0" fill="#555" text-anchor="middle">may26</text>
+<rect x="578.1" y="187.5" width="13.0" height="15.6" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="IPC Volátiles" data-k="jun26" data-v="-0,30 %"/>
+<rect x="593.2" y="179.4" width="13.0" height="8.1" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="IPC Sin Volátiles" data-k="jun26" data-v="0,15 %"/>
+<text x="600.8" y="256" font-size="10.0" fill="#555" text-anchor="middle">jun26</text>
+<rect x="634.6" y="187.5" width="13.0" height="26.6" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="IPC Volátiles" data-k="jul26" data-v="-0,51 %"/>
+<rect x="649.7" y="163.0" width="13.0" height="24.5" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="IPC Sin Volátiles" data-k="jul26" data-v="0,47 %"/>
+<rect x="664.8" y="182.2" width="13.0" height="5.2" fill="#0a8a5f" data-si="2" class="tip-pt" data-c="#0a8a5f" data-s="IPC Total" data-k="jul26" data-v="0,10 %"/>
+<text x="657.2" y="256" font-size="10.0" fill="#555" text-anchor="middle">jul26</text>
+<rect x="691.1" y="109.7" width="13.0" height="77.8" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="IPC Volátiles" data-k="ago26" data-v="1,48 %"/>
+<rect x="706.2" y="183.0" width="13.0" height="4.5" fill="#c8102e" data-si="1" class="tip-pt" data-c="#c8102e" data-s="IPC Sin Volátiles" data-k="ago26" data-v="0,09 %"/>
+<rect x="721.3" y="156.0" width="13.0" height="31.5" fill="#0a8a5f" data-si="2" class="tip-pt" data-c="#0a8a5f" data-s="IPC Total" data-k="ago26" data-v="0,60 %"/>
+<text x="713.8" y="256" font-size="10.0" fill="#555" text-anchor="middle">ago26</text>
+<line x1="64" y1="30" x2="64" y2="240" stroke="#999" stroke-width="1"/>
+<g class="lg-item" data-idx="0" style="cursor:pointer"><rect x="62.0" y="284.0" width="111" height="18" fill="transparent" stroke="none"/><rect x="64.0" y="286.0" width="10.0" height="10.0" fill="#0b3766"/><text x="78.0" y="294.0" font-size="11.0" fill="#444">IPC Volátiles</text></g><g class="lg-item" data-idx="1" style="cursor:pointer"><rect x="172.6" y="284.0" width="135" height="18" fill="transparent" stroke="none"/><rect x="174.6" y="286.0" width="10.0" height="10.0" fill="#c8102e"/><text x="188.6" y="294.0" font-size="11.0" fill="#444">IPC Sin Volátiles</text></g><g class="lg-item" data-idx="2" style="cursor:pointer"><rect x="308.0" y="284.0" width="86" height="18" fill="transparent" stroke="none"/><rect x="310.0" y="286.0" width="10.0" height="10.0" fill="#0a8a5f"/><text x="324.0" y="294.0" font-size="11.0" fill="#444">IPC Total</text></g>
+<text x="64" y="18" font-size="11.0" fill="#777">%</text>
+</svg></div>
+<div class="block" data-block-status="mvp" data-chart="grouped_bar" data-source="ipc_incidencia_12m_division"><div class="block-title">Incidencia 12 meses por división</div><div class="block-unit">(pp)</div><svg class="report-chart" viewBox="0 0 760 320" width="100%" role="img" aria-label="ipc_incidencia_12m_division — barras" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+<rect x="0" y="0" width="760" height="320" fill="white"/>
+<line x1="64" y1="230.0" x2="742" y2="230.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="234.0" font-size="11.0" fill="#555" text-anchor="end">-0,20</text>
+<line x1="64" y1="201.4" x2="742" y2="201.4" stroke="#999" stroke-width="1"/>
+<text x="56" y="205.4" font-size="11.0" fill="#555" text-anchor="end">0,00</text>
+<line x1="64" y1="172.9" x2="742" y2="172.9" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="176.9" font-size="11.0" fill="#555" text-anchor="end">0,20</text>
+<line x1="64" y1="144.3" x2="742" y2="144.3" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="148.3" font-size="11.0" fill="#555" text-anchor="end">0,40</text>
+<line x1="64" y1="115.7" x2="742" y2="115.7" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="119.7" font-size="11.0" fill="#555" text-anchor="end">0,60</text>
+<line x1="64" y1="87.1" x2="742" y2="87.1" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="91.1" font-size="11.0" fill="#555" text-anchor="end">0,80</text>
+<line x1="64" y1="58.6" x2="742" y2="58.6" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="62.6" font-size="11.0" fill="#555" text-anchor="end">1,00</text>
+<line x1="64" y1="30.0" x2="742" y2="30.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="34.0" font-size="11.0" fill="#555" text-anchor="end">1,20</text>
+<rect x="69.2" y="179.9" width="35.9" height="21.6" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Alcohol y tabaco" data-v="0,15 pp"/>
+<text transform="translate(90.1,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Alcohol y tabaco</text>
+<rect x="121.4" y="56.7" width="35.9" height="144.7" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Alimentos" data-v="1,01 pp"/>
+<text transform="translate(142.2,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Alimentos</text>
+<rect x="173.5" y="201.4" width="35.9" height="5.3" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Bs. y ss. diversos" data-v="-0,04 pp"/>
+<text transform="translate(194.4,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Bs. y ss. diversos</text>
+<rect x="225.7" y="191.7" width="35.9" height="9.7" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Comunicaciones" data-v="0,07 pp"/>
+<text transform="translate(246.5,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Comunicaciones</text>
+<rect x="277.8" y="164.9" width="35.9" height="36.6" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Educación" data-v="0,26 pp"/>
+<text transform="translate(298.7,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Educación</text>
+<rect x="330.0" y="186.4" width="35.9" height="15.0" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Eq. del hogar" data-v="0,10 pp"/>
+<text transform="translate(350.8,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Eq. del hogar</text>
+<rect x="382.1" y="159.7" width="35.9" height="41.7" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Rec. y cultura" data-v="0,29 pp"/>
+<text transform="translate(403.0,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Rec. y cultura</text>
+<rect x="434.3" y="139.4" width="35.9" height="62.0" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Rest. y hoteles" data-v="0,43 pp"/>
+<text transform="translate(455.2,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Rest. y hoteles</text>
+<rect x="486.4" y="143.9" width="35.9" height="57.6" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Salud" data-v="0,40 pp"/>
+<text transform="translate(507.3,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Salud</text>
+<rect x="538.6" y="194.6" width="35.9" height="6.9" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Seguros y ss. financieros" data-v="0,05 pp"/>
+<text transform="translate(559.5,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Seguros y ss. financieros</text>
+<rect x="590.8" y="77.9" width="35.9" height="123.6" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Transporte" data-v="0,86 pp"/>
+<text transform="translate(611.6,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Transporte</text>
+<rect x="642.9" y="201.4" width="35.9" height="14.4" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Vestuario" data-v="-0,10 pp"/>
+<text transform="translate(663.8,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Vestuario</text>
+<rect x="695.1" y="111.6" width="35.9" height="89.9" fill="#0b3766" data-si="0" class="tip-pt" data-c="#0b3766" data-s="Incidencia 12 Meses (%)" data-k="Vivienda" data-v="0,63 pp"/>
+<text transform="translate(715.9,242.0) rotate(-45)" font-size="10.0" fill="#555" text-anchor="end">Vivienda</text>
+<line x1="64" y1="30" x2="64" y2="230" stroke="#999" stroke-width="1"/>
+<g class="lg-item" data-idx="0" style="cursor:pointer"><rect x="62.0" y="290.0" width="166" height="18" fill="transparent" stroke="none"/><rect x="64.0" y="292.0" width="10.0" height="10.0" fill="#0b3766"/><text x="78.0" y="300.0" font-size="11.0" fill="#444">Incidencia 12 Meses (…</text></g>
+<text x="64" y="18" font-size="11.0" fill="#777">pp</text>
+</svg></div>
+<div class="block" data-block-status="mvp" data-chart="grouped_bar" data-source="ipc_variacion_historica_mes"><div class="block-title">Variación histórica del mes</div><div class="block-unit">(%)</div><div class="block-note">Los dos puntos son el promedio histórico del mes y el que excluye 2020-2022.</div><svg class="report-chart" viewBox="0 0 760 320" width="100%" role="img" aria-label="ipc_variacion_historica_mes — barras" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+<rect x="0" y="0" width="760" height="320" fill="white"/>
+<line x1="64" y1="240.0" x2="742" y2="240.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="244.0" font-size="11.0" fill="#555" text-anchor="end">-0,50</text>
+<line x1="64" y1="187.5" x2="742" y2="187.5" stroke="#999" stroke-width="1"/>
+<text x="56" y="191.5" font-size="11.0" fill="#555" text-anchor="end">0,00</text>
+<line x1="64" y1="135.0" x2="742" y2="135.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="139.0" font-size="11.0" fill="#555" text-anchor="end">0,50</text>
+<line x1="64" y1="82.5" x2="742" y2="82.5" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="86.5" font-size="11.0" fill="#555" text-anchor="end">1,00</text>
+<line x1="64" y1="30.0" x2="742" y2="30.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="56" y="34.0" font-size="11.0" fill="#555" text-anchor="end">1,50</text>
+<rect x="67.8" y="187.5" width="25.9" height="48.3" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2009" data-v="-0,46 %"/>
+<text x="82.8" y="256" font-size="10.0" fill="#555" text-anchor="middle">2009</text>
+<rect x="105.4" y="187.5" width="25.9" height="10.3" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2010" data-v="-0,10 %"/>
+<text x="120.5" y="256" font-size="10.0" fill="#555" text-anchor="middle">2010</text>
+<rect x="143.1" y="170.5" width="25.9" height="17.0" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2011" data-v="0,16 %"/>
+<text x="158.2" y="256" font-size="10.0" fill="#555" text-anchor="middle">2011</text>
+<rect x="180.8" y="164.3" width="25.9" height="23.2" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2012" data-v="0,22 %"/>
+<text x="195.8" y="256" font-size="10.0" fill="#555" text-anchor="middle">2012</text>
+<rect x="218.4" y="162.2" width="25.9" height="25.3" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2013" data-v="0,24 %"/>
+<text x="233.5" y="256" font-size="10.0" fill="#555" text-anchor="middle">2013</text>
+<rect x="256.1" y="156.0" width="25.9" height="31.5" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2014" data-v="0,30 %"/>
+<text x="271.2" y="256" font-size="10.0" fill="#555" text-anchor="middle">2014</text>
+<rect x="293.8" y="114.0" width="25.9" height="73.5" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2015" data-v="0,70 %"/>
+<text x="308.8" y="256" font-size="10.0" fill="#555" text-anchor="middle">2015</text>
+<text x="346.5" y="256" font-size="10.0" fill="#555" text-anchor="middle">2016</text>
+<rect x="369.1" y="166.5" width="25.9" height="21.0" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2017" data-v="0,20 %"/>
+<text x="384.2" y="256" font-size="10.0" fill="#555" text-anchor="middle">2017</text>
+<rect x="406.8" y="166.5" width="25.9" height="21.0" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2018" data-v="0,20 %"/>
+<text x="421.8" y="256" font-size="10.0" fill="#555" text-anchor="middle">2018</text>
+<rect x="444.4" y="166.5" width="25.9" height="21.0" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2019" data-v="0,20 %"/>
+<text x="459.5" y="256" font-size="10.0" fill="#555" text-anchor="middle">2019</text>
+<rect x="482.1" y="177.0" width="25.9" height="10.5" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2020" data-v="0,10 %"/>
+<text x="497.2" y="256" font-size="10.0" fill="#555" text-anchor="middle">2020</text>
+<rect x="519.8" y="145.5" width="25.9" height="42.0" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2021" data-v="0,40 %"/>
+<text x="534.8" y="256" font-size="10.0" fill="#555" text-anchor="middle">2021</text>
+<rect x="557.4" y="61.5" width="25.9" height="126.0" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2022" data-v="1,20 %"/>
+<text x="572.5" y="256" font-size="10.0" fill="#555" text-anchor="middle">2022</text>
+<rect x="595.1" y="177.0" width="25.9" height="10.5" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2023" data-v="0,10 %"/>
+<text x="610.2" y="256" font-size="10.0" fill="#555" text-anchor="middle">2023</text>
+<rect x="632.8" y="156.0" width="25.9" height="31.5" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2024" data-v="0,30 %"/>
+<text x="647.8" y="256" font-size="10.0" fill="#555" text-anchor="middle">2024</text>
+<text x="685.5" y="256" font-size="10.0" fill="#555" text-anchor="middle">2025</text>
+<rect x="708.1" y="124.5" width="25.9" height="63.0" fill="#1f6fb2" data-si="0" class="tip-pt" data-c="#1f6fb2" data-s="Variación Mensual (%)" data-k="2026" data-v="0,60 %"/>
+<text x="723.2" y="256" font-size="10.0" fill="#555" text-anchor="middle">2026</text>
+<circle cx="82.8" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2009" data-v="0,24 %"/>
+<circle cx="120.5" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2010" data-v="0,24 %"/>
+<circle cx="158.2" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2011" data-v="0,24 %"/>
+<circle cx="195.8" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2012" data-v="0,24 %"/>
+<circle cx="233.5" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2013" data-v="0,24 %"/>
+<circle cx="271.2" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2014" data-v="0,24 %"/>
+<circle cx="308.8" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2015" data-v="0,24 %"/>
+<circle cx="346.5" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2016" data-v="0,24 %"/>
+<circle cx="384.2" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2017" data-v="0,24 %"/>
+<circle cx="421.8" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2018" data-v="0,24 %"/>
+<circle cx="459.5" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2019" data-v="0,24 %"/>
+<circle cx="497.2" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2020" data-v="0,24 %"/>
+<circle cx="534.8" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2021" data-v="0,24 %"/>
+<circle cx="572.5" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2022" data-v="0,24 %"/>
+<circle cx="610.2" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2023" data-v="0,24 %"/>
+<circle cx="647.8" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2024" data-v="0,24 %"/>
+<circle cx="685.5" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2025" data-v="0,24 %"/>
+<circle cx="723.2" cy="162.3" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="1" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico" data-k="2026" data-v="0,24 %"/>
+<circle cx="82.8" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2009" data-v="0,18 %"/>
+<circle cx="120.5" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2010" data-v="0,18 %"/>
+<circle cx="158.2" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2011" data-v="0,18 %"/>
+<circle cx="195.8" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2012" data-v="0,18 %"/>
+<circle cx="233.5" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2013" data-v="0,18 %"/>
+<circle cx="271.2" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2014" data-v="0,18 %"/>
+<circle cx="308.8" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2015" data-v="0,18 %"/>
+<circle cx="346.5" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2016" data-v="0,18 %"/>
+<circle cx="384.2" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2017" data-v="0,18 %"/>
+<circle cx="421.8" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2018" data-v="0,18 %"/>
+<circle cx="459.5" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2019" data-v="0,18 %"/>
+<circle cx="497.2" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2020" data-v="0,18 %"/>
+<circle cx="534.8" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2021" data-v="0,18 %"/>
+<circle cx="572.5" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2022" data-v="0,18 %"/>
+<circle cx="610.2" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2023" data-v="0,18 %"/>
+<circle cx="647.8" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2024" data-v="0,18 %"/>
+<circle cx="685.5" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2025" data-v="0,18 %"/>
+<circle cx="723.2" cy="168.6" r="4" fill="#c8102e" stroke="#fff" stroke-width="1" data-si="2" class="tip-pt" data-c="#c8102e" data-s="Promedio Histórico Ex" data-k="2026" data-v="0,18 %"/>
+<line x1="64" y1="30" x2="64" y2="240" stroke="#999" stroke-width="1"/>
+<g class="lg-item" data-idx="0" style="cursor:pointer"><rect x="62.0" y="284.0" width="160" height="18" fill="transparent" stroke="none"/><rect x="64.0" y="286.0" width="10.0" height="10.0" fill="#1f6fb2"/><text x="78.0" y="294.0" font-size="11.0" fill="#444">Variación Mensual (%)</text></g><g class="lg-item" data-idx="1" style="cursor:pointer"><rect x="222.2" y="284.0" width="142" height="18" fill="transparent" stroke="none"/><rect x="224.2" y="286.0" width="10.0" height="10.0" fill="#c8102e"/><text x="238.2" y="294.0" font-size="11.0" fill="#444">Promedio Histórico</text></g><g class="lg-item" data-idx="2" style="cursor:pointer"><rect x="363.8" y="284.0" width="160" height="18" fill="transparent" stroke="none"/><rect x="365.8" y="286.0" width="10.0" height="10.0" fill="#c8102e"/><text x="379.8" y="294.0" font-size="11.0" fill="#444">Promedio Histórico Ex</text></g>
+<text x="64" y="18" font-size="11.0" fill="#777">%</text>
+</svg></div>
+<div class="section-banner">Expectativas y Fundamentales</div>
+<div class="section-text" data-text-slot="ipc:sec:expectativas_y_fundamentales"></div>
+<div class="block" data-block-status="mvp" data-chart="dual_axis" data-source="ipc_fundamentales"><div class="block-title">Fundamentales: Petróleo y Tipo de Cambio</div><div class="block-unit">(CLP/USD)</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>dual_axis</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="grouped_bar" data-source="ipc_variacion_seguros"><div class="block-title">Variación: Seguros de Inflación</div><div class="block-unit">(pb)</div><div class="block-note">Cambio entre las dos últimas fechas: hacia dónde movió el mercado cada vencimiento.</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>grouped_bar</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="line" data-source="ipc_seguros_inflacion"><div class="block-title">Expectativas de Inflación</div><div class="block-unit">(%)</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>line</code> — se completa en la próxima iteración</div></div>
+<div class="block" data-block-status="mvp" data-chart="line" data-source="ipc_compensaciones"><div class="block-title">Expectativas de Inflación a largo plazo</div><div class="block-unit">(%)</div><div class="block-note">Compensación inflacionaria implícita en swaps a 2, 5 y 10 años.</div><div class="placeholder-card"><span class="kind">sin serie en el parquet</span><br>gráfico de tipo <code>line</code> — se completa en la próxima iteración</div></div>
+<div class="section-banner">Detalle por producto</div>
+<div class="section-text" data-text-slot="ipc:sec:detalle_por_producto"></div>
+<div class="block" data-block-status="mvp" data-chart="heatmap_table" data-source="ipc_canasta_mes"><div class="block-title">Canasta del último mes · variación e incidencia por producto</div><div class="block-unit">(%)</div><div class="block-table"><div style="overflow-x:auto;max-width:760px;margin:6px auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap">Producto</th><th style="text-align:right;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap">Clasif.</th><th style="text-align:right;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap">Var. mensual</th><th style="text-align:right;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap">Inc. mensual</th><th style="text-align:right;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap">Var. 12M</th><th style="text-align:right;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap">Inc. 12M</th><th style="text-align:right;padding:5px 7px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap">Ponderación</th></tr></thead><tbody><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">TRANSPORTE AÉREO INTERNACIONAL</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">32.6%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.167 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">34.9%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.182 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.65%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">CARNE DE VACUNO</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">3.9%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.089 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">10.8%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.241 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">2.13%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">PAPAS</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">17.8%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.047 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">53.1%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.111 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.39%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">GASOLINA</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.9%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.031 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">15.2%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.467 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">3.39%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">CIGARRILLOS</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">2.7%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.029 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">6.0%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.065 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">1.09%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">AUTOMÓVILES NUEVOS</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Sin volátiles</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.8%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.026 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-3.1%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.104 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">3.64%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">PALTAS</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">6.7%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.025 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">3.0%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.012 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.44%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">CARNE DE POLLO</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">2.4%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.025 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-3.1%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.035 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">1.03%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">MANTENCIÓN Y REPARACIÓN DE VEHÍCULOS PERSONALES</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Sin volátiles</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">2.3%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.024 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">3.5%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.037 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">1.04%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">MEDICAMENTOS PARA EL APARATO DIGESTIVO Y METABÓLICO</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Sin volátiles</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-3.8%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.024 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">7.1%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.042 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.58%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">ALIMENTOS ADQUIRIDOS EN RESTAURANTES, CAFÉS Y SIMILARES</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Sin volátiles</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.4%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.023 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">6.9%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.374 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">5.05%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">PAN</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Sin volátiles</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-1.0%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.022 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">2.7%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.058 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">2.22%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">LECHUGAS</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">10.9%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.021 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">21.7%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.040 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.19%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">VINOS</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-2.1%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.020 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">6.5%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.058 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.88%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">TRANSPORTE EN BUS INTERURBANO</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-6.3%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.020 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">19.8%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.050 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.27%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">FRUTAS DE ESTACIÓN</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">4.6%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.018 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">3.1%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.013 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.39%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">TRANSPORTE AÉREO NACIONAL</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">7.6%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.018 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">15.6%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.036 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.20%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">COMPUTADORES</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Sin volátiles</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">2.6%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.017 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">16.5%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.098 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.62%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">ZANAHORIAS</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">19.6%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.017 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">32.6%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.026 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.08%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">ZAPALLOS</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">17.0%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.017 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">37.4%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.033 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.09%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">CECINAS</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">1.5%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.016 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">2.3%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.025 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">1.08%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">PANTALONES, FALDAS Y VESTIDOS PARA MUJER</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">8.3%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.015 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-4.4%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.009 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.26%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">CHOCOLATES</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Sin volátiles</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-3.6%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.015 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">1.3%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.005 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.35%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">SUSCRIPCIÓN A CONTENIDOS AUDIOVISUALES</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Sin volátiles</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-1.8%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.014 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-3.8%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.031 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">0.73%</td></tr><tr><td style="text-align:left;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;font-weight:700">EQUIPOS DE TELEFONÍA MÓVIL</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">Volátil</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-1.9%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.014 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-2.6%</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">-0.021 pp</td><td style="text-align:right;padding:4px 7px;border-bottom:1px solid #eee;font-size:11px;white-space:nowrap">1.01%</td></tr></tbody></table><div style="font-size:11px;color:#777;margin:4px 0 0">Los 25 productos de mayor incidencia del mes</div></div></div></div>
+  </div>
+  <div id="chart-tip" role="tooltip"></div>
+  <script>
+(function(){
+  var tip=document.getElementById('chart-tip');
+  if(!tip) return;
+  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+  function move(e){
+    var pad=14,w=tip.offsetWidth,h=tip.offsetHeight,
+        x=e.clientX+pad,y=e.clientY+pad;
+    if(x+w>window.innerWidth)x=e.clientX-w-pad;
+    if(y+h>window.innerHeight)y=e.clientY-h-pad;
+    tip.style.left=x+'px';tip.style.top=y+'px';
+  }
+  function hide(){tip.style.display='none';}
+  // Coordenadas pantalla → viewBox SVG.
+  function svgCoords(svg,e){
+    var pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  }
+  // Re-apila las series VISIBLES de un gráfico apilado (área/barra) recomputando
+  // su geometría con el eje fijo embebido en data-stack: al ocultar una serie las
+  // demás se completan hacia la base en vez de dejar un hueco. Replica exactamente
+  // el apilado divergente de svg_chart.py (positivos sobre 0, negativos bajo 0).
+  function restack(svg){
+    var raw=svg.getAttribute('data-stack');
+    if(!raw) return;
+    var st; try{st=JSON.parse(raw);}catch(err){return;}
+    var span=(st.ymax-st.ymin)||1;
+    function py(v){return st.top+st.ph*(1-(v-st.ymin)/span);}
+    function visible(i){
+      var lg=svg.querySelector('.lg-item[data-idx="'+i+'"]');
+      return !lg||lg.getAttribute('data-hidden')!=='1';
+    }
+    if(st.k==='area'){
+      var X=st.x,n=X.length,pos=[],neg=[];
+      for(var k=0;k<n;k++){pos.push(0);neg.push(0);}
+      st.s.forEach(function(ser){
+        if(!visible(ser.i)) return;  // oculta: no acumula ni se redibuja
+        var poly=svg.querySelector('polygon[data-si="'+ser.i+'"]');
+        if(!poly) return;
+        var upper=[],lower=[];
+        for(var j=0;j<n;j++){
+          var v=ser.v[j],lo,hi;
+          if(v>=0){lo=pos[j];hi=pos[j]+v;pos[j]=hi;}
+          else{hi=neg[j];lo=neg[j]+v;neg[j]=lo;}
+          upper.push(X[j].toFixed(1)+','+py(hi).toFixed(1));
+          lower.push(X[j].toFixed(1)+','+py(lo).toFixed(1));
+        }
+        lower.reverse();
+        poly.setAttribute('points',upper.join(' ')+' '+lower.join(' '));
+      });
+    } else if(st.k==='bar'){
+      var ncat=st.s.length?st.s[0].v.length:0;
+      for(var ci=0;ci<ncat;ci++){
+        var posAcc=0,negAcc=0;
+        st.s.forEach(function(ser){
+          if(!visible(ser.i)) return;  // oculta: no acumula
+          var v=ser.v[ci],yTop,yBot;
+          if(v>=0){yTop=py(posAcc+v);yBot=py(posAcc);posAcc+=v;}
+          else{yTop=py(negAcc);yBot=py(negAcc+v);negAcc+=v;}
+          var rect=svg.querySelector('rect[data-si="'+ser.i+'"][data-ci="'+ci+'"]');
+          if(rect){
+            rect.setAttribute('y',Math.min(yTop,yBot).toFixed(1));
+            rect.setAttribute('height',Math.abs(yBot-yTop).toFixed(1));
+          }
+        });
+      }
+    }
+  }
+  document.querySelectorAll('svg.report-chart').forEach(function(svg){
+    // ── Leyenda clickeable ────────────────────────────────────────────────────
+    svg.querySelectorAll('.lg-item').forEach(function(lg){
+      lg.addEventListener('click',function(){
+        var idx=lg.getAttribute('data-idx');
+        var off=lg.getAttribute('data-hidden')==='1';
+        if(off){
+          lg.removeAttribute('data-hidden');lg.style.opacity='';
+          svg.querySelectorAll('[data-si="'+idx+'"]').forEach(function(el){el.style.display='';});
+        } else {
+          lg.setAttribute('data-hidden','1');lg.style.opacity='0.25';
+          svg.querySelectorAll('[data-si="'+idx+'"]').forEach(function(el){el.style.display='none';});
+        }
+        restack(svg);  // re-apila las visibles (área/barra apilada); no-op si no hay data-stack
+      });
+    });
+    // ── Crosshair unificado + highlight de serie más cercana ─────────────────
+    var ptsRaw=svg.getAttribute('data-pts');
+    var pts=null;
+    if(ptsRaw){try{pts=JSON.parse(ptsRaw);}catch(err){}}
+    var guide=svg.querySelector('.x-guide');
+    var overlay=svg.querySelector('.hover-overlay');
+    if(pts&&overlay&&guide){
+      var lastSI=-1;
+      // Aplica highlight a la serie activa y atenúa las demás (solo cuando cambia).
+      function setActive(si){
+        if(si===lastSI) return;
+        lastSI=si;
+        svg.querySelectorAll('[data-si]').forEach(function(el){
+          if(el.style.display==='none') return;
+          var esi=parseInt(el.getAttribute('data-si'));
+          if(si<0){
+            el.style.opacity='';
+            if(el.tagName==='polyline')el.style.strokeWidth='';
+          } else if(esi===si){
+            el.style.opacity='1';
+            if(el.tagName==='polyline')el.style.strokeWidth='2.8';
+          } else {
+            el.style.opacity='0.2';
+            if(el.tagName==='polyline')el.style.strokeWidth='1.2';
+          }
+        });
+      }
+      overlay.addEventListener('mousemove',function(e){
+        var sc=svgCoords(svg,e),mx=sc.x,my=sc.y;
+        // Fecha más cercana (eje X).
+        var best=pts[0],bd=Infinity;
+        for(var i=0;i<pts.length;i++){var d=Math.abs(pts[i].x-mx);if(d<bd){bd=d;best=pts[i];}}
+        guide.setAttribute('x1',best.x);guide.setAttribute('x2',best.x);
+        guide.removeAttribute('display');
+        // Series visibles (no ocultas por leyenda).
+        var vis=best.vals.filter(function(r){
+          var lg=svg.querySelector('.lg-item[data-idx="'+r.i+'"]');
+          return !lg||lg.getAttribute('data-hidden')!=='1';
+        });
+        if(!vis.length){setActive(-1);hide();return;}
+        // Serie más cercana en Y (si los datos tienen coordenada y).
+        var closestSI=-1;
+        if(vis[0].y!==undefined){
+          var minDY=Infinity;
+          vis.forEach(function(r){var d=Math.abs(r.y-my);if(d<minDY){minDY=d;closestSI=r.i;}});
+        }
+        setActive(closestSI);
+        // Tooltip: todas las series; la más cercana en negrita.
+        var rows=vis.map(function(r){
+          var hi=(r.i===closestSI);
+          return '<div class="ct-r'+(hi?' ct-r-hi':'')+'">'+
+            '<span class="ct-sw" style="background:'+esc(r.c)+'"></span>'+
+            '<span class="ct-s"'+(hi?' style="color:#000;font-weight:700"':'')+'>'+esc(r.s)+'</span>'+
+            '<span class="ct-v">'+esc(r.v)+'</span></div>';
+        }).join('');
+        tip.innerHTML='<div class="ct-k">'+esc(best.k)+'</div>'+rows;
+        tip.style.display='block';move(e);
+      });
+      overlay.addEventListener('mouseleave',function(){
+        guide.setAttribute('display','none');
+        setActive(-1);
+        hide();
+      });
+      return;
+    }
+    // ── Tooltip individual (barras, torta, composición) ──────────────────────
+    svg.addEventListener('mouseover',function(e){
+      var el=e.target.closest('.tip-pt');
+      if(!el) return;
+      var c=el.getAttribute('data-c')||'#0b3766',s=el.getAttribute('data-s')||'',
+          k=el.getAttribute('data-k')||'',v=el.getAttribute('data-v')||'';
+      tip.innerHTML=(k?'<div class="ct-k">'+esc(k)+'</div>':'')+
+        '<div class="ct-r"><span class="ct-sw" style="background:'+esc(c)+'"></span>'+
+        (s?'<span class="ct-s">'+esc(s)+'</span>':'')+(v?'<span class="ct-v">'+esc(v)+'</span>':'')+'</div>';
+      tip.style.display='block';move(e);
+    });
+    svg.addEventListener('mousemove',function(e){if(tip.style.display==='block')move(e);});
+    svg.addEventListener('mouseout',function(e){if(e.target.closest('.tip-pt'))hide();});
+  });
+})();
+</script>
+</body>
+</html>

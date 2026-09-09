@@ -62,7 +62,7 @@ python scripts/parquet_report.py --datasets flujos_ffmm,duracion_ffmm --windows 
 # Informe CURADO por familia (réplica de un correo real del BCCh; Python puro, sin
 # LLM). Cada familia escribe en SU carpeta: data/parquet_reports/curated/<familia>/
 python scripts/build_family_report.py                           # lista familias
-python scripts/build_family_report.py --family fx               # ffmm | afp | nr | fx | dcv | cambiarioam
+python scripts/build_family_report.py --family fx               # ffmm | afp | nr | fx | dcv | cambiarioam | ipc
 python scripts/build_family_report.py --all
 # Para acotar el período de UN gráfico: date_from/date_to (ISO) en su ReportBlock
 # del spec. Recorta el PARQUET antes de la transform, así la "última fecha" del
@@ -82,6 +82,22 @@ python scripts/build_cambiario_parquets.py --emit-catalog   # entradas YAML, sin
 # original a .xlsx (df1.xlsx + clp_intra1..4.xlsx + Excel_cache2.xlsx, una hoja por
 # dataset), --from-cache los lee en vez del origen y produce los MISMOS 41 parquets:
 python scripts/build_cambiario_parquets.py --from-cache "<carpeta con los xlsx>" --out data_pipeline/parquet
+
+# Ingesta de los informes IPC y Cambiario AM (scripts/ingest/). UN script por
+# ORIGEN, los dos informes comparten los tres. sources.py es el andamiaje común e
+# importa Dataset/col/pick de build_cambiario_parquets.py (una sola implementación).
+#   from_excel.py  planillas: las 4 bases del INE + diccionario + Excel del operador
+#                  (IPC), y datos_lea.xlsx, el recorte de Bloomberg (cambiario)
+#   from_sql.py    las 15 consultas al DW, marcadas por informe (--dump-sql las lista)
+#   from_notebook.py  corre 01.Analisis IPC.py y toma sus DataFrames: es el ÚNICO
+#                  camino a las series que solo existen en la API del BCCh
+python scripts/ingest/from_excel.py --informe ipc --out data_pipeline/parquet -v
+python scripts/ingest/from_sql.py   --informe ambos --out data_pipeline/parquet   # en el servidor
+python scripts/ingest/from_notebook.py --out data_pipeline/parquet                # en el servidor
+python scripts/ingest/from_excel.py --informe ipc --emit-catalog   # entradas YAML, sin datos
+# --rebuild-fijo: relee las 3 bases CERRADAS del INE (2008/2013/2018). Sin él, la
+# corrida mensual usa ipc_canasta_base_cerrada.parquet y solo abre ipc2023.xlsx.
+python scripts/ingest/from_excel.py --informe ipc --rebuild-fijo
 
 # Informe curado → correo .eml. El .eml ADJUNTA tu HTML final tal cual (SVG +
 # tooltips) y pone en el CUERPO una versión plana (SVG→PNG cid:, sin JS, CSS inline)

@@ -303,6 +303,7 @@ _CHART_NATIVE_KIND: dict[str, str | tuple[str, ...]] = {
     "curve": "grouped",
     "spc_curve": "grouped",
     "heatmap_table": "heatmap",
+    "treemap": "hierarchy",
 }
 
 
@@ -351,6 +352,8 @@ def render_plot_svg(
         return _render_scatter_labeled(plot, width, height, x_label=x_label, y_label=y_label)
     if plot.kind == "heatmap":
         return _render_heatmap(plot, width, height)
+    if plot.kind == "hierarchy":
+        return _render_treemap(plot, width, height)
     # timeseries
     if target == "candlestick":
         return _render_candlestick(plot, width, height)
@@ -1336,6 +1339,122 @@ def _render_pie(plot: PlotData, width: int, height: int) -> str:
     return "\n".join(out)
 
 
+_TREEMAP_HEADER_H = 18.0
+_TREEMAP_HEADER_FILL = "#1f2c3d"
+_TREEMAP_GAP = 1.5  # separación entre rectángulos hermanos (blanco de fondo)
+
+
+def _fit_label(text: str, box_w: float, font_px: float) -> str | None:
+    """``text`` si entra en ``box_w`` a ``font_px``, truncado con "…", o ``None``
+    si ni una letra entra. Estimación (no medición real: SVG no la da sin
+    layout del navegador) — 0.56×``font_px`` por carácter, Arial/Helvetica
+    minúscula-mayúscula mixta, harto probada en las demás tarjetas del informe."""
+    max_chars = int(box_w / (font_px * 0.56))
+    if max_chars < 2:
+        return None
+    if len(text) <= max_chars:
+        return text
+    return text[: max(1, max_chars - 1)] + "…"
+
+
+def _render_treemap(plot: PlotData, width: int, height: int) -> str:
+    """Treemap de dos niveles: exterior = ``series[i].label`` (p.ej. división),
+    interior = sus ``points`` (p.ej. grupo de productos). Área ∝ tamaño
+    (``points`` value, p.ej. ponderación); color = ``plot.node_color`` en escala
+    DIVERGENTE centrada en 0 (p.ej. variación mensual) — réplica en SVG puro del
+    ``px.treemap(..., color_continuous_scale='RdBu_r')`` del informe IPC
+    original, sin llegar al nivel de producto individual (ver nota del spec).
+
+    Layout: ``_squarify`` reparte el lienzo entre los grupos EXTERIORES; cada
+    uno lleva una franja de título (fondo oscuro) y, debajo, sus rectángulos
+    INTERIORES —a su vez squarified— coloreados por ``node_color``. Un exterior
+    cuya franja no entra (rectángulo muy chico) se dibuja sin título: el dato
+    sigue en el tooltip.
+    """
+    height = max(height, 420)  # 320 (default _H) deja los grupos ilegibles
+    outer = [(s.label, sum(v for _c, v in s.points)) for s in plot.series if s.points]
+    if not outer:
+        return _no_axis_message(plot, width, height)
+
+    # Cap simétrico de la escala de color: el máximo |valor| observado, con un
+    # piso de 0.5 para que un mes sin ninguna variación relevante no infle el
+    # rango a algo minúsculo y sature todo el mapa en rojo/azul intensos.
+    all_colors = [c for cs in plot.node_color.values() for c in cs]
+    cap = max([abs(c) for c in all_colors] + [0.5]) if all_colors else 0.5
+
+    top, bottom = 10, 34  # `bottom`: leyenda de la escala divergente
+    canvas_h = height - top - bottom
+    outer_rects = _squarify([v for _l, v in outer], 0.0, float(top), float(width), float(canvas_h))
+
+    out = _svg_open(width, height, f"{plot.dataset_id} — treemap")
+    for (label, _total), (ox, oy, ow, oh) in zip(outer, outer_rects):
+        series = next(s for s in plot.series if s.label == label)
+        colors = plot.node_color.get(label, [])
+        has_header = oh > _TREEMAP_HEADER_H + 24 and ow > 30
+        header_h = _TREEMAP_HEADER_H if has_header else 0.0
+        ix, iy = ox + _TREEMAP_GAP, oy + header_h + (_TREEMAP_GAP if has_header else 0.0)
+        iw = max(0.0, ow - 2 * _TREEMAP_GAP)
+        ih = max(0.0, oh - header_h - (2 * _TREEMAP_GAP if has_header else _TREEMAP_GAP))
+
+        inner_rects = _squarify([v for _c, v in series.points], ix, iy, iw, ih)
+        for idx, ((leaf, size), (lx, ly, lw, lh)) in enumerate(zip(series.points, inner_rects)):
+            if lw <= 0 or lh <= 0:
+                continue
+            cval = colors[idx] if idx < len(colors) else 0.0
+            r, g, b = _diverging_color(cval / cap if cap else 0.0)
+            fill = f"rgb({r},{g},{b})"
+            ink = "#fff" if (r * 0.299 + g * 0.587 + b * 0.114) < 140 else "#1c1c1c"
+            tip_v = f"{_val_unit(size, plot.unit)}"
+            if plot.node_color_unit:
+                tip_v += f" · {_val_unit(cval, plot.node_color_unit)}"
+            attrs = _tip_attrs(fill, s=label, k=leaf, v=tip_v)
+            out.append(
+                f'<rect x="{lx:.1f}" y="{ly:.1f}" width="{max(0.0, lw - _TREEMAP_GAP):.1f}" '
+                f'height="{max(0.0, lh - _TREEMAP_GAP):.1f}" fill="{fill}" stroke="#fff" '
+                f'stroke-width="0.5"{attrs}/>'
+            )
+            fs = 10.5
+            if lw > 46 and lh > 16:
+                lbl = _fit_label(leaf, lw - 8, fs)
+                if lbl:
+                    out.append(
+                        f'<text x="{lx + lw / 2:.1f}" y="{ly + lh / 2 + 3.5:.1f}" font-size="{fs}" '
+                        f'fill="{ink}" text-anchor="middle" pointer-events="none">{_esc(lbl)}</text>'
+                    )
+
+        if has_header:
+            out.append(
+                f'<rect x="{ox:.1f}" y="{oy:.1f}" width="{max(0.0, ow - _TREEMAP_GAP):.1f}" '
+                f'height="{_TREEMAP_HEADER_H:.1f}" fill="{_TREEMAP_HEADER_FILL}"/>'
+            )
+            hdr = _fit_label(label, ow - 10, 11)
+            if hdr:
+                out.append(
+                    f'<text x="{ox + 5:.1f}" y="{oy + _TREEMAP_HEADER_H - 5:.1f}" font-size="11" '
+                    f'font-weight="700" fill="#fff" pointer-events="none">{_esc(hdr)}</text>'
+                )
+
+    # Leyenda: escala divergente horizontal, -cap .. 0 .. +cap.
+    leg_x, leg_y, leg_w, leg_h = 12.0, height - bottom + 14, min(220.0, width * 0.3), 10.0
+    steps = 24
+    for i in range(steps):
+        frac = -1.0 + 2.0 * i / (steps - 1)
+        r, g, b = _diverging_color(frac)
+        seg_w = leg_w / steps
+        out.append(f'<rect x="{leg_x + i * seg_w:.1f}" y="{leg_y:.1f}" width="{seg_w + 0.5:.1f}" '
+                  f'height="{leg_h:.1f}" fill="rgb({r},{g},{b})"/>')
+    unidad = plot.node_color_unit or plot.unit
+    for frac, texto in ((-1.0, f"-{_fmt_num(cap)}{unidad}"), (0.0, "0"), (1.0, f"+{_fmt_num(cap)}{unidad}")):
+        tx = leg_x + (frac + 1.0) / 2.0 * leg_w
+        anchor = "start" if frac < -0.5 else ("end" if frac > 0.5 else "middle")
+        out.append(f'<text x="{tx:.1f}" y="{leg_y + leg_h + 12:.1f}" font-size="9.5" fill="#666" '
+                  f'text-anchor="{anchor}">{_esc(texto)}</text>')
+    out.append(f'<text x="{leg_x + leg_w + 12:.1f}" y="{leg_y + leg_h - 1:.1f}" font-size="9.5" fill="#999">'
+              f'área = {_esc(plot.unit or "tamaño")}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
 _RANGE_BOX_FILL = "#cfe0ef"
 _RANGE_BOX_STROKE = "#7ea3c9"
 _RANGE_MEAN_COLOR = "#8a2b2b"
@@ -2230,6 +2349,111 @@ def _heat_color(frac: float) -> tuple[int, int, int]:
             t = 0.0 if f1 == f0 else (frac - f0) / (f1 - f0)
             return tuple(round(a + (b - a) * t) for a, b in zip(c0, c1, strict=True))  # type: ignore[return-value]
     return _HEAT_STOPS[-1][1]
+
+
+# Escala DIVERGENTE centrada en 0, para el color del treemap: azul (cae) → gris
+# pálido (sin cambio) → rojo (sube). Réplica en 3 paradas de
+# ``color_continuous_scale='RdBu_r'`` del treemap Plotly original (RdBu_r: rojo
+# = valor alto = positivo, azul = valor bajo = negativo).
+_DIVERGING_STOPS = ((-1.0, (35, 90, 168)), (0.0, (240, 240, 238)), (1.0, (190, 40, 35)))
+
+
+def _diverging_color(frac: float) -> tuple[int, int, int]:
+    """``frac`` en [-1, 1] (ya normalizado contra el cap del caller) → RGB."""
+    frac = min(1.0, max(-1.0, frac))
+    for (f0, c0), (f1, c1) in itertools.pairwise(_DIVERGING_STOPS):
+        if frac <= f1:
+            t = 0.0 if f1 == f0 else (frac - f0) / (f1 - f0)
+            return tuple(round(a + (b - a) * t) for a, b in zip(c0, c1, strict=True))  # type: ignore[return-value]
+    return _DIVERGING_STOPS[-1][1]
+
+
+# ── Treemap: layout squarified (Bruls, Huizing, van Wijk, 1999) ──────────────
+#
+# Reparte un rectángulo (x, y, w, h) entre ``sizes`` (pesos positivos, no hace
+# falta que sumen w*h) tratando de mantener cada pieza lo más cuadrada posible
+# —a diferencia de un "slice-and-dice" ingenuo (una fila o columna única), que
+# con pesos muy dispares deja piezas larguísimas e ilegibles—. Es el mismo
+# algoritmo que usa ``squarify`` (PyPI) y el treemap de Plotly/D3.
+
+def _worst_aspect(row: list[float], side: float) -> float:
+    """Peor relación de aspecto (>= 1, mejor cuanto más cerca de 1) si ``row``
+    se dispone como una franja de largo ``side``."""
+    if not row or side <= 0:
+        return float("inf")
+    row_area = sum(row)
+    if row_area <= 0:
+        return float("inf")
+    thickness = row_area / side
+    if thickness <= 0:
+        return float("inf")
+    t2 = thickness * thickness
+    return max(max(t2 / v if v > 0 else float("inf") for v in row),
+              max(v / t2 for v in row))
+
+
+def _squarify(sizes: list[float], x: float, y: float, w: float, h: float) -> list[tuple[float, float, float, float]]:
+    """``(x, y, w, h)`` de cada rectángulo, EN EL MISMO ORDEN que ``sizes``.
+
+    El área total del rectángulo (``w*h``) se reparte a prorrata de ``sizes``
+    (no hace falta normalizar antes). Internamente ordena de mayor a menor —así
+    da mejores proporciones— y reordena el resultado al final.
+    """
+    n = len(sizes)
+    if n == 0:
+        return []
+    if n == 1:
+        return [(x, y, w, h)]
+    total = sum(sizes)
+    if total <= 0:
+        return [(x, y, 0.0, 0.0)] * n
+
+    area_total = w * h
+    scaled = [max(s, 0.0) / total * area_total for s in sizes]
+    order = sorted(range(n), key=lambda i: -scaled[i])
+    remaining = [scaled[i] for i in order]
+    remaining_idx = list(order)
+    out: dict[int, tuple[float, float, float, float]] = {}
+    cx, cy, cw, ch = float(x), float(y), float(w), float(h)
+
+    while remaining:
+        side = min(cw, ch)
+        row, row_idx = [remaining[0]], [remaining_idx[0]]
+        i = 1
+        while i < len(remaining):
+            trial = row + [remaining[i]]
+            if _worst_aspect(trial, side) <= _worst_aspect(row, side):
+                row.append(remaining[i])
+                row_idx.append(remaining_idx[i])
+                i += 1
+            else:
+                break
+        row_area = sum(row)
+        thickness = row_area / side if side > 0 else 0.0
+        if cw >= ch:
+            # lado corto = altura: la fila es una franja VERTICAL de ancho
+            # `thickness`, sus piezas se apilan de arriba hacia abajo.
+            ry = cy
+            for v, idx in zip(row, row_idx):
+                piece_h = (v / row_area * ch) if row_area > 0 else 0.0
+                out[idx] = (cx, ry, thickness, piece_h)
+                ry += piece_h
+            cx += thickness
+            cw -= thickness
+        else:
+            # lado corto = ancho: la fila es una franja HORIZONTAL de alto
+            # `thickness`, sus piezas van de izquierda a derecha.
+            rx = cx
+            for v, idx in zip(row, row_idx):
+                piece_w = (v / row_area * cw) if row_area > 0 else 0.0
+                out[idx] = (rx, cy, piece_w, thickness)
+                rx += piece_w
+            cy += thickness
+            ch -= thickness
+        remaining = remaining[len(row):]
+        remaining_idx = remaining_idx[len(row):]
+
+    return [out[i] for i in range(n)]
 
 
 # Meses abreviados en español (mismo orden/formato que
