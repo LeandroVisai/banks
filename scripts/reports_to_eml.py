@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convierte un informe HTML a un correo ``.eml`` autocontenido.
+"""Convierte un informe HTML a un correo pixel-perfect y genera un plano fiel al HTML fuente.
 <br><br>
 Dos modos:
 <br><br>
@@ -68,6 +68,7 @@ if _SRC.is_dir() and str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from banks_rag.application.reporting import (  # noqa: E402
+    headless,
     build_curated_report,
     rasterize_inline_svgs,
     section_slot_ids,
@@ -75,6 +76,57 @@ from banks_rag.application.reporting import (  # noqa: E402
 )
 from banks_rag.application.reporting.parquet_facts import HtmlTable  # noqa: E402
 from banks_rag.application.reporting.specs import available_families, get_spec  # noqa: E402
+
+
+# ── Cuerpo pixel para Outlook ───────────────────────────────────────────────
+
+def _strip_img(cid: str) -> str:
+    """Una tira de la captura, a ancho completo del cuerpo.
+
+    ``line-height``/``font-size`` en 0 y ``display:block`` matan el hueco que Word deja
+    debajo de una imagen (espacio para el descendente de la línea de texto): sin eso
+    aparece una franja blanca entre tira y tira.
+
+    SIN ``max-width``: el cuerpo tiene que acomodarse al ancho que cada destinatario
+    tenga abierto el panel de lectura. Todas las tiras escalan por el mismo factor, así
+    que las costuras siguen calzando, y como el PNG viene a 2x aguanta el estirón.
+    """
+    return (
+        f'<tr><td style="padding:0;margin:0;line-height:0;font-size:0" bgcolor="#ffffff">'
+        f'<img src="cid:{cid}" width="100%" alt="" border="0" '
+        f'style="display:block;width:100%;height:auto;border:0"></td></tr>'
+    )
+
+
+def body_pixel(html: str, images: dict, *, width: int, scale: float, strip_height: int,
+               browser: pathlib.Path | None) -> tuple[str, int]:
+    """Cuerpo del correo = el informe rasterizado en tiras. Devuelve ``(html, n_tiras)``.
+
+    Las tiras se muestran con ``width="100%"`` (atributo, que es lo que mira Word) en
+    vez de un ancho fijo: así el correo se adapta al panel de lectura en vez de forzar
+    scroll horizontal, y como el PNG viene a ``scale`` (2x), al achicarse sigue nítido.
+    Todas las tiras escalan por el mismo factor, así que las costuras siguen calzando.
+    """
+    shot = headless.capture_html(html, width=width, scale=scale, browser=browser)
+    strips = headless.split_strips(shot, strip_css_height=strip_height, scale=scale)
+
+    rows = []
+    for strip in strips:
+        cid = headless.new_cid("page")
+        images[cid] = ("png", headless.to_png(strip))
+        rows.append(_strip_img(cid))
+
+    return (
+        '<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
+        '</head><body style="margin:0;padding:0;background:#ffffff">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;background:#ffffff"><tr>'
+        '<td align="center" style="padding:0">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;width:100%">'
+        + "".join(rows) +
+        "</table></td></tr></table></body></html>"
+    ), len(strips)
 
 # ── Paleta (misma que el SVG del informe, para consistencia visual) ──────────
 _PALETTE = ["#0b3766", "#c8102e", "#0a8a5f", "#e08a00", "#6a3d9a", "#1f9bcf",
@@ -880,52 +932,67 @@ def _extract_title(html: str) -> str:
 
 def process_file_passthrough(path: pathlib.Path, out_dir: str | pathlib.Path, *, sender: str, to: str,
                              subject_prefix: str, plain_dir: str | pathlib.Path) -> str:
-    """Correo con TU HTML editado tal cual + copia PLANA del informe.
-<br><br>
-    Tres artefactos, cada uno con su rol:
-<br><br>
-    - **adjunto del correo**: tu HTML final SIN tocar (SVG vectorial + tooltips), con
-      su nombre de archivo — se abre en el navegador con fidelidad total.
-    - **cuerpo del correo**: el mismo informe pasado a plano (SVG → PNG ``cid:``, sin
-      JS, CSS inline), que es lo único que el motor de Word de Outlook renderiza.
-    - **copia en ``--plain-dir``**: ese MISMO cuerpo pero autocontenido (``cid:`` →
-      ``data:``), así se abre solo y muestra exactamente lo que llega al correo.
+    """Correo pixel-perfect + HTML plano basado en el HTML enlazado.
+
+    El correo mantiene el modo pixel responsive de reports_to_eml2.py. La copia plana
+    conserva el CSS y la estructura del HTML fuente: solo quita el chrome de edición,
+    elimina Plotly interactivo, convierte SVG/data URI a imágenes autocontenidas y
+    retira scripts que ya no sirven. No aplica el mapa CSS histórico de v1, por lo que
+    no agrega márgenes ni cambia el layout del informe dirigido.
     """
     fam = _family_from_name(path)
     raw = path.read_text(encoding="utf-8")
-    clean = strip_editable_chrome(raw)          # fuera panel 💾/📄 + contenteditable
-    plain, n_inter = strip_interactive_plotly(clean)  # fuera Plotly interactivo (queda PNG)
+    clean = strip_editable_chrome(raw)
 
-    images: dict[str, tuple[str, bytes]] = {}
-    body = _cidify_images(plain, images)        # data: (PNG + fotos pegadas) → cid:
-    body, n_svg = _cidify_charts(body, images)  # <svg> del informe curado → PNG cid:
-    body = strip_body_scripts(body)             # JS del tooltip: inútil en un correo
-    body = strip_paste_ghost_lines(body)        # renglones fantasma del pegado a mano (solo CUERPO,
-                                                 # el adjunto -attach_html=plain- no se toca)
-    body = _group_grid_cards(body)              # .cards-grid → tabla de 2 columnas (Outlook)
-    body = inline_report_css(body)              # CSS del <head> → inline (Outlook)
+    # PLANO: deriva del HTML enlazado y conserva su <style> y estructura originales.
+    plain, n_inter = strip_interactive_plotly(clean)
+    plain_images: dict[str, tuple[str, bytes]] = {}
+    plain_body = _cidify_images(plain, plain_images)
+    plain_body, n_svg = _cidify_charts(plain_body, plain_images)
+    plain_body = strip_body_scripts(plain_body)
+    plain_body = strip_paste_ghost_lines(plain_body)
+    # Importante: NO llamar _group_grid_cards() ni inline_report_css().
+    # Esas transformaciones para Outlook eran las que alteraban márgenes/layout.
+    plain_html = _uncidify_images(plain_body, plain_images)
 
-    # Copia PLANA (sin interacción) agrupada por familia, igual que build_family_report.py.
     plano_out = _resolve_family_dir(plain_dir, fam)
     plano_out.mkdir(parents=True, exist_ok=True)
     plano_path = plano_out / f"{path.stem}.html"
-    plano_path.write_text(_uncidify_images(body, images), encoding="utf-8")
+    plano_path.write_text(plain_html, encoding="utf-8")
 
-    title = _extract_title(plain) or path.stem
+    # EML: se conserva el renderer pixel y su ajuste fluido width=100%.
+    pixel_images: dict[str, tuple[str, bytes]] = {}
+    pixel_body, n_strips = body_pixel(
+        clean,
+        pixel_images,
+        width=1240,
+        scale=2.0,
+        strip_height=900,
+        browser=None,
+    )
+
+    title = _extract_title(clean) or path.stem
     subject = f"{subject_prefix}{title}".strip()
     eml = build_eml(
-        subject=subject, sender=sender, to=to, html_body=body, images=images,
-        # El adjunto conserva TU nombre de archivo y TU contenido (interactivo): quien
-        # recibe el correo espera abrir el informe que editaste, no la copia plana.
-        attach_name=path.name, attach_html=plain,
+        subject=subject,
+        sender=sender,
+        to=to,
+        html_body=pixel_body,
+        images=pixel_images,
+        attach_name=path.name,
+        attach_html=raw,
     )
+
     eml_out = Path(out_dir)
     eml_out.mkdir(parents=True, exist_ok=True)
     out = eml_out / f"{path.stem}.eml"
     out.write_bytes(eml)
-    warn = f" · OJO {n_inter} gráfico(s) interactivo(s) omitido(s): reinsértalos en modo PNG" if n_inter else ""
-    return (f"OK   {path.name} -> {out}  ({len(images)} imágenes inline, "
-            f"{n_svg} desde SVG · plano -> {plano_path}){warn}")
+
+    warn = (f" · OJO {n_inter} Plotly interactivo(s) retirado(s) del plano"
+            if n_inter else "")
+    return (f"OK   {path.name} -> {out} [pixel: {n_strips} tiras; "
+            f"plano desde HTML fuente: {len(plain_images)} imágenes, "
+            f"{n_svg} SVG -> {plano_path}]{warn}")
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Informe HTML → correo .eml (pass-through de tu HTML editado).")
@@ -933,7 +1000,7 @@ def main() -> None:
                     help="Archivo HTML o carpeta con los HTML a convertir (default: la salida de parquet_report.py).")
     ap.add_argument(
         "--out",
-        default="T:/GMN/DACE/Practicantes/Leandro/Informes Generados Con IA/{familia}/Correo",
+        default="T:/GMN/DACE/Leandro/En Proceso/Informes Generados Con IA/Informes/{familia}/Correo",
         help="Carpeta de salida de los .eml. Admite '{familia}' como placeholder; sin él, "
              "se asume RAÍZ y se le agrega <familia>/.",
     )

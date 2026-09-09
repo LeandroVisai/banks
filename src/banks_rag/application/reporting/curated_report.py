@@ -79,8 +79,7 @@ class CuratedBlock:
     plot: object | None = None
     # El gráfico se dibujó en el viewBox ancho (``ReportBlock.full_width`` o última
     # tarjeta impar de una grilla). Se guarda acá para que el HTML no vuelva a
-    # deducirlo: quien decide el viewBox y quien decide la CSS tienen que coincidir,
-    # o el SVG ancho termina encajado en un contenedor de 760px.
+    # deducirlo: quien decide el viewBox y quien decide la CSS tienen que coincidir.
     wide: bool = False
 
 
@@ -293,11 +292,11 @@ def _wide_block_ids(spec: FamilyReportSpec) -> set[str]:
                 wide.update(bb.title for bb in c)
         if len(rest) % 2 == 1:
             wide.update(bb.title for bb in rest[-1])
-    # Secciones APILADAS: no hay grilla que repartir, pero un bloque marcado
-    # ``full_width`` igual se dibuja ancho y llega al borde de la página (ver
-    # ``ReportBlock.full_width``).
-    wide.update(b.title for b in spec.blocks
-                if b.full_width and not _is_grid_section(spec, b.section))
+    # En secciones apiladas, ``full_width`` también debe usar el viewBox ancho.
+    wide.update(
+        b.title for b in spec.blocks
+        if b.full_width and not _is_grid_section(spec, b.section)
+    )
     return wide
 
 
@@ -539,7 +538,24 @@ _SHELL = """<!DOCTYPE html>
   .synthesis-body ul { margin:4px 0 8px; padding-left:20px; }
   .synthesis-body li { margin:2px 0; }
   .synthesis-body[data-synthesis-body]:empty::before { content:"—"; color:#cfcfcf; }
-  .section-banner { background:var(--banner); color:#fff; text-align:center; font-size:18px; font-weight:800; padding:8px 14px; margin:30px 0 6px; }
+  .section-banner { background:var(--banner); color:#fff; text-align:center; font-size:18px; font-weight:800; padding:8px 14px; margin:30px 0 6px; position:relative; }
+  /* Corte de datos del informe (``FamilyReportSpec.header_cutoff_note``): chico,
+     a la derecha de la PRIMERA sección (misma línea que su banner, ej. "Portafolio
+     por agente" en dcv) — no en el título. Solo ese primer ``.section-banner``
+     lo trae (ver ``render_curated_html``), que en dcv queda pegado al título
+     (``.report-title + .section-banner``, sin margen), así ambos se ven como un
+     mismo bloque azul. */
+  .report-cutoff { position:absolute; right:14px; top:50%; transform:translateY(-50%); font-size:11px; font-weight:400; color:#d7dee8; white-space:nowrap; }
+  /* Línea centrada tras los bloques de la PRIMERA sección (``FamilyReportSpec.
+     parity_note``, ej. "Paridad utilizada" en dcv, debajo de "Portafolio por
+     agente"). Editable en el HTML "_editable" (mismo selector que .section-text). */
+  .report-parity-note { text-align:center; color:var(--muted); font-size:12px; font-style:italic; margin:-2px 0 22px; }
+  .report-parity-note:empty::before { content:"—"; color:#cfcfcf; }
+  /* Sin síntesis (show_synthesis=False, caso dcv): la primera sección queda
+     pegada al título en vez de arrastrar el margen de 30px pensado para separarla
+     del bloque de síntesis que ya no está. Solo aplica cuando .section-banner es
+     HERMANO INMEDIATO de .report-title (nunca pasa si hay síntesis de por medio). */
+  .report-title + .section-banner { margin-top:0; }
   .block { margin:14px 0 8px; page-break-inside:avoid; }
   .block-title { color:var(--blue); font-size:16px; font-weight:700; margin:12px 0 2px; }
   .block-unit { color:var(--muted); font-size:12px; margin:0 0 6px; }
@@ -554,8 +570,7 @@ _SHELL = """<!DOCTYPE html>
   .section-text p { margin:0 0 6px; }
   .section-text p:last-child { margin-bottom:0; }
   .report-chart { display:block; max-width:760px; margin:6px auto; }
-  /* Bloque a ancho completo (ReportBlock.full_width) fuera de la grilla: el gráfico
-     llega al mismo borde que las tablas grandes en vez de topar en 760px. */
+  /* Un bloque ancho fuera de la grilla llega al borde disponible. */
   .chart-wide .report-chart { max-width:100%; }
   .placeholder-card { border:1px dashed #bcbcbc; background:#fafafa; color:var(--muted); border-radius:6px; padding:18px; text-align:center; font-size:13px; max-width:760px; margin:6px auto; }
   .placeholder-card .kind { font-weight:700; color:#9a4b00; }
@@ -602,6 +617,10 @@ _SHELL = """<!DOCTYPE html>
   /* Tabla dentro de una tarjeta a fila completa: se libera del tope inline que
      lleva para Outlook y aprovecha el ancho (el !important es contra ese inline). */
   .card-wide .block-table > div { max-width:100% !important; }
+  /* Mismo problema fuera de la grilla (layout ``stack``): la tabla igual trae el
+     tope inline de 760px, y con muchas columnas (p.ej. Tabla N°1 por moneda)
+     eso deja scroll horizontal en vez de usar el ancho de la página. */
+  .block .block-table > div { max-width:100% !important; }
   @media (max-width:860px) { .cards-grid { grid-template-columns:1fr; } }
   @media print { .section-banner, .report-chart, .placeholder-card, .block, .card { break-inside:avoid; } #chart-tip { display:none !important; } }
 </style>
@@ -609,11 +628,8 @@ _SHELL = """<!DOCTYPE html>
 <body>
   <div class="page">
     <div class="report-title">__TITLE__</div>
-    <div class="subtitle">__SUBTITLE__</div>
-    <div class="report-synthesis">
-      <div class="synthesis-title">Síntesis — principales movimientos</div>
-      <div class="synthesis-body" data-synthesis-body></div>
-    </div>
+__SUBTITLE_BLOCK__
+__SYNTHESIS__
 __BODY__
   </div>
   <div id="chart-tip" role="tooltip"></div>
@@ -621,6 +637,14 @@ __BODY__
 </body>
 </html>
 """
+
+# Bloque de síntesis ejecutiva (opt-out vía ``FamilyReportSpec.show_synthesis``).
+# Se inyecta en ``__SYNTHESIS__``; ``fill_synthesis_slot`` rellena el
+# ``data-synthesis-body`` vacío más tarde.
+_SYNTHESIS_BLOCK = """<div class="report-synthesis">
+      <div class="synthesis-title">Síntesis — principales movimientos</div>
+      <div class="synthesis-body" data-synthesis-body></div>
+    </div>"""
 
 # JS interactivo (vanilla, sin dependencias, self-contained, abre offline):
 # 1. Leyenda clickeable: click en .lg-item oculta/muestra la serie [data-si="idx"].
@@ -847,10 +871,8 @@ def _card_head_body_html(cb: CuratedBlock, *, show_title: bool = True) -> tuple[
         if isinstance(cb.plot, HtmlTable):
             body.append(f'<div class="block-table">{cb.body_html}</div>')
         elif cb.wide:
-            # ``.report-chart`` topa en 760px; un bloque ancho ya trae el viewBox
-            # doblado, así que sin liberarlo se vería igual de chico pero con la
-            # letra más finita. Dentro de una tarjeta la CSS de la grilla ya hacía
-            # esto; la clase lo extiende a las secciones apiladas.
+            # Fuera de la grilla, libera el límite normal de 760px para que el
+            # viewBox ancho use realmente todo el espacio disponible.
             body.append(f'<div class="chart-wide">{cb.body_html}</div>')
         else:
             body.append(cb.body_html)
@@ -960,6 +982,10 @@ def render_curated_html(report: CuratedReport, *, subtitle: str | None = None) -
     del tópico); los bloques llevan solo título, unidad y gráfico."""
     wide_titles = _wide_block_ids(report.spec)
     slot_ids = section_slot_ids(report.spec)
+    show_section_text = report.spec.show_section_text
+    cutoff_text = _header_cutoff_text(report)
+    first_block = report.blocks[0] if report.blocks else None
+    parity_note = report.spec.parity_note
     body: list[str] = []
     current_section: str | None = None
     section_blocks: list[CuratedBlock] = []
@@ -979,19 +1005,47 @@ def render_curated_html(report: CuratedReport, *, subtitle: str | None = None) -
             flush_section()
             section_blocks = []
             current_section = cb.block.section
-            body.append(f'<div class="section-banner">{_esc(current_section)}</div>')
+            # El corte (``header_cutoff_note``) va SOLO en el primer banner —
+            # misma línea que su texto, a la derecha — nunca en el título.
+            cutoff_span = f'<span class="report-cutoff">{_esc(cutoff_text)}</span>' if not body and cutoff_text else ""
+            body.append(f'<div class="section-banner">{_esc(current_section)}{cutoff_span}</div>')
             slot = slot_ids.get(current_section or "")
-            if slot:
+            if slot and show_section_text:
                 body.append(f'<div class="section-text" data-text-slot="{_attr(slot)}"></div>')
+            # Paridad utilizada (``parity_note``): línea centrada justo debajo
+            # del banner/slot de texto del PRIMER tópico del informe (p.ej.
+            # "Portafolio por agente" en dcv) — ANTES de su primera tabla.
+            if cb is first_block and parity_note:
+                body.append(f'<div class="report-parity-note" data-text-slot="parity_note">{_esc(parity_note)}</div>')
         section_blocks.append(cb)
     flush_section()
 
     return (
         _SHELL.replace("__TITLE__", _esc(report.spec.title))
-        .replace("__SUBTITLE__", _esc(subtitle or _DISCLAIMER))
+        .replace(
+            "__SUBTITLE_BLOCK__",
+            f'<div class="subtitle">{_esc(subtitle)}</div>' if subtitle else "",
+        )
         .replace("__TIP_JS__", _TIP_JS)
+        .replace("__SYNTHESIS__", _SYNTHESIS_BLOCK if report.spec.show_synthesis else "")
         .replace("__BODY__", "\n".join(body))
     )
+
+
+def _header_cutoff_text(report: CuratedReport) -> str:
+    """``"14-ago-2026, Montos valorizados en MM USD"`` — corte del informe, a la
+    derecha del PRIMER banner de sección (``FamilyReportSpec.header_cutoff_note``,
+    opt-in — vacío = no se dibuja nada, y hoy SOLO lo declara dcv). La fecha sale
+    del ``date_note`` del PRIMER bloque que traiga uno (``"Corte: DD-mmm-YYYY"``):
+    en un informe de corte único (p.ej. dcv) todos los bloques de la fuente
+    principal comparten esa misma fecha."""
+    note = report.spec.header_cutoff_note
+    if not note:
+        return ""
+    raw = next((b.date_note for b in report.blocks if b.date_note), "")
+    fecha = raw.split(":", 1)[1].strip() if ":" in raw else raw
+    return f"Datos al {fecha} {note}" if fecha else ""
+    #return  f"al {fecha}, {note}" if fecha else ""
 
 
 def _paragraphs_to_html(text: str) -> str:

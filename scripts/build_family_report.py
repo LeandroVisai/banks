@@ -94,12 +94,12 @@ def main() -> None:
     ap.add_argument("--all", action="store_true", help="Construye TODAS las familias disponibles.")
     ap.add_argument(
         "--out",
-        default="T:/GMN/DACE/Practicantes/Leandro/Informes Generados Con IA/{familia}/no_editable",
+        default="T:/GMN/DACE/Leandro/En Proceso/Informes Generados Con IA/Informes/{familia}/no_editable",
         help="Carpeta de salida del HTML final (no editable). Admite '{familia}' como placeholder.",
     )
     ap.add_argument(
         "--out-editable",
-        default="T:/GMN/DACE/Practicantes/Leandro/Informes Generados Con IA/{familia}/Editable",
+        default="T:/GMN/DACE/Leandro/En Proceso/Informes Generados Con IA/Informes/{familia}/Editable",
         help="Carpeta de salida del HTML editable. Admite '{familia}' como placeholder (--no-editable la omite).",
     )
     ap.add_argument("--verbose", action="store_true", help="Log a nivel INFO.")

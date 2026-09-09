@@ -94,17 +94,20 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         section=_S_PORTAFOLIO, title="Fechas de corte DCV (T, T-7, T-30)",
         chart="heatmap_table", status=STATUS_EXP,
         source_id="stock_nivel_ffmm", transform="dcv_cut_dates",
+        full_width=True,
     ),
     ReportBlock(
         section=_S_PORTAFOLIO, title="Variación DCV (Δ T-7 / Δ T-30 por instrumento y plazo)",
         unit="US$ Mill.", chart="heatmap_table", status=STATUS_EXP,
         source_id="variacion_stock_ffmm", transform="dcv_heatmap",
+        full_width=True,
     ),
     ReportBlock(
         section=_S_PORTAFOLIO, title="Variación semanal DCV por plazo",
         unit="US$ Mill.", chart="stacked_bar", status=STATUS_EXP,
         source_id="variacion_stock_ffmm", transform="stacked_by_bucket",
         params={"window": "7d"},
+        full_width=True,
     ),
     ReportBlock(
         section=_S_PORTAFOLIO, title="Variación Acumulada YtD — DAP y PDBC",
@@ -112,10 +115,10 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         source_id="dap_pdbc_ffmm", transform="accumulated", params={"window": "ytd", "accumulate": "rebase"},
     ),
     ReportBlock(
-        section=_S_PORTAFOLIO, title="Variación Acumulada YtD — BTP, BTU, BB y Otros",
+        section=_S_PORTAFOLIO, title="Variación Acumulada YtD — BTP, BTU, BB y BE",
         unit="US$ Mill.", chart="line", status=STATUS_MVP,
         source_id="stock_nivel_ffmm", transform="accumulated",
-        params={"types": ["BTP", "BTU", "BB", "Otros"], "window": "ytd", "accumulate": "rebase"},
+        params={"types": ["BTP", "BTU", "BB",'BE'], "window": "ytd", "accumulate": "rebase"},
     ),
     ReportBlock(
         section=_S_PORTAFOLIO, title="Composición Portafolio DCV por plazo",
@@ -142,7 +145,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
     ReportBlock(
         section=_S_ALLOC, title="Cartera mensual por instrumento (variante tipo_f)",
         unit="Mill US$.", chart="stacked_area", status=STATUS_EXP,
-        source_id="var_cartera_mensual_ffmm_tipo_f", transform="straight_series",
+        source_id="var_cartera_mensual_ffmm_tipo_fondo", transform="straight_series",
     ),
     # ── Duración Carteras mensuales (imagen 8) ───────────────────────────────
     ReportBlock(  # ── MVP ──
@@ -184,4 +187,5 @@ FFMM_SPEC = FamilyReportSpec(
     # corte = mín de las fechas máximas de ambos (si flujos llega al 21-jun y DCV al
     # 22-jun, ambos usan el 21). El resto de secciones usa el máximo de su parquet.
     weekly_anchor_sections=(_S_FLUJOS, _S_PORTAFOLIO),
+    grid_sections=frozenset({_S_PORTAFOLIO,_S_ALLOC,_S_VARALLOC}),
 )

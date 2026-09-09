@@ -170,18 +170,17 @@ def _month_label(month_key: str) -> str:
 def _grouped(
     dataset_id: str, unit: str,
     series_dict: dict[str, dict[str, float]], cat_order: list[str], series_order: list[str],
-    *, overlay: tuple[str, ...] = (), date_note: str = "",
+    *, overlay: tuple[str, ...] = (), date_note: str = "", zero_base: bool = True,
 ) -> PlotData | None:
-    """``{serie: {categoria: valor}}`` → PlotData ``kind='grouped'`` (eje X =
-    categorías, una serie por color). ``overlay`` marca series que se dibujan
-    superpuestas (punto "Neto"/"Total" por categoría) en vez de barra. ``date_note``
-    hace explícitas las fechas/ventanas que cubre el gráfico (eje X no temporal)."""
+    """...
+    ``zero_base=False`` ancla el eje Y al mínimo/máximo real de los datos en vez de
+    forzar el 0 (niveles como precios, donde el 0 aplastaría la serie)."""
     series = [
         PlotSeries(label=sl, points=[(c, series_dict[sl].get(c, 0.0)) for c in cat_order])
         for sl in series_order
     ]
     plot = PlotData(dataset_id, "grouped_bar", "grouped", unit, series, overlay=overlay,
-                    date_note=date_note)
+                    date_note=date_note, zero_base=zero_base)
     return None if not cat_order or plot.is_empty() else plot
 
 
@@ -386,10 +385,22 @@ def _order_buckets(keys) -> list[str]:
 
 
 def _bucket_tipo_series(
-    dataset: ParquetDataset, parquet_dir: Path,
+    dataset: ParquetDataset, parquet_dir: Path, params: dict | None = None,
 ) -> tuple[dict[str, dict[str, list[tuple[str, float]]]], str] | tuple[None, None]:
-    """``{bucket: {instrumento: [(iso, valor)]}}`` + última fecha, de un parquet
-    con plazo (Bucket) x instrumento (Tipo) x valor (suma sobre Moneda u otras)."""
+    """``{bucket: {serie: [(iso, valor)]}}`` + última fecha, de un parquet con
+    plazo (Bucket) x categoría x valor (suma sobre el resto de las categóricas).
+
+    Dos params, para los parquets DCV que traen más de dos categóricas
+    (``variacion_instrumento_todos_plazo``: Bucket x Tipo x Sector x Moneda):
+
+    - ``filters``: ``{columna: valor}`` (o una lista de valores) que ACOTA las filas
+      antes de agregar. Es lo que separa "Flujos BTP" de "Flujos BTU" o "DAP $" de
+      "DAP UF": mismo parquet, distinto corte.
+    - ``series_col``: qué columna apila. Sin esto se toma la primera categórica que
+      no sea el plazo ni la moneda (``Tipo``), pero el informe de renta fija apila
+      por AGENTE (``Sector``) dentro de un instrumento ya filtrado.
+    """
+    params = params or {}
     parquet_path = dataset.parquet_path(parquet_dir)
     if not parquet_path.exists():
         return None, None
@@ -399,16 +410,39 @@ def _bucket_tipo_series(
         if roles.date_col is None or len(roles.category_cols) < 2 or not roles.value_cols:
             return None, None
         cats = roles.category_cols
-        bucket_col = next((c for c in cats if c.lower() in ("bucket", "plazo")), cats[0])
-        tipo_col = next((c for c in cats if c != bucket_col and "moneda" not in c.lower()), cats[1])
+        x_col = str(params.get("x_col") or "")
+
+        bucket_col = (
+                    next(
+                        (c for c in cats if c.lower() == x_col.lower()),
+                        None,
+                    )
+                    if x_col
+                    else None
+        ) or next(
+            (c for c in cats if c.lower() in ("bucket","plazo")), 
+            cats[0],
+        )
+
+        wanted = str(params.get("series_col") or "")
+        tipo_col = (
+            next((c for c in cats if c.lower() == wanted.lower()), None) if wanted else None
+        ) or next((c for c in cats if c != bucket_col and "moneda" not in c.lower()), cats[1])
         val_col = roles.value_cols[0]
-        rows = _read_series_rows(con, parquet_path, date_col=roles.date_col, columns=[roles.date_col, bucket_col, tipo_col, val_col])
+        filters = {c: v for c, v in (params.get("filters") or {}).items() if c in cats}
+        columns = [roles.date_col, bucket_col, tipo_col, val_col, *filters]
+        rows = _read_series_rows(con, parquet_path, date_col=roles.date_col,
+                                 columns=list(dict.fromkeys(columns)))
     finally:
         con.close()
 
+    keep = {c: ({str(x) for x in v} if isinstance(v, (list, tuple, set)) else {str(v)})
+            for c, v in filters.items()}
     nested: dict[str, dict[str, dict[str, float]]] = {}
     last = ""
     for r in rows:
+        if any(str(r.get(c)) not in vals for c, vals in keep.items()):
+            continue
         b, t, f, raw = r.get(bucket_col), r.get(tipo_col), r.get(roles.date_col), r.get(val_col)
         if b is None or t is None or f is None or raw is None:
             continue
@@ -431,7 +465,7 @@ def _top_tipos(sd: dict[str, dict[str, float]]) -> list[str]:
 def composition_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Composición DCV por plazo a la fecha de corte → barras apiladas
     (X = plazo, una serie por instrumento)."""
-    bt, last = _bucket_tipo_series(dataset, parquet_dir)
+    bt, last = _bucket_tipo_series(dataset, parquet_dir, params)
     if not bt:
         return None
     buckets = _order_buckets(bt)
@@ -462,11 +496,16 @@ def stacked_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) 
     - ``order`` (opcional): lista de series (segunda categoría, ej. ``Sector``)
       a incluir/ordenar. Si no se pasa, se usan las top series por magnitud
       (``_top_tipos``), igual que antes.
+    - ``filters`` / ``series_col`` (ver ``_bucket_tipo_series``): acotan las filas y
+      eligen qué columna apila. El informe de renta fija los usa para sacar del
+      MISMO parquet un gráfico por instrumento ("Flujos BTP", "Flujos BTU", "DAP $",
+      "DAP UF"), apilado por agente.
+    - ``window``: ``"5d"``, ``"7d"``, ``"30d"``… días de la variación (default 7).
     """
-    bt, last = _bucket_tipo_series(dataset, parquet_dir)
+    bt, last = _bucket_tipo_series(dataset, parquet_dir, params)
     if not bt:
         return None
-    days = {"7d": 7, "30d": 30}.get(str(params.get("window", "7d")), 7)
+    days = _window_days(params.get("window"), default=7)
     # Corte semanal común del informe (si lo hay) en vez del máximo de este parquet:
     # así la variación de la barra coincide con la del texto. weekly_delta replica
     # exactamente la base at-or-before de antes cuando asof == last.
@@ -499,6 +538,8 @@ def stacked_by_bucket(dataset: ParquetDataset, parquet_dir: Path, params: dict) 
                     date_note=note)
 
 
+
+
 def monthly_diff(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
     """Flujo mensual neto (suma por mes) de una serie simple → barras (X = mes)."""
     parquet_path = dataset.parquet_path(parquet_dir)
@@ -523,6 +564,16 @@ def monthly_diff(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Pl
     note = f"Suma por mes · datos hasta {_fmt_date(last)}" if last else ""
     return _grouped(dataset.id, dataset.unit, sd, [_month_label(k) for k in keys], ["Flujo mensual"],
                     date_note=note)
+
+
+def _window_days(window: str | None, *, default: int) -> int:
+    """``"5d"`` → 5. Ventana de variación en DÍAS.
+
+    Antes esto era un mapa fijo ``{"7d": 7, "30d": 30}``: el informe de renta fija
+    compara contra T-1 y T-5, que no estaban ahí y caían silenciosamente al default
+    de 7 días — la barra habría mostrado otra variación que la del título."""
+    m = re.fullmatch(r"(\d+)\s*d", str(window or "").strip().lower())
+    return int(m.group(1)) if m else default
 
 
 def _window_start(last_iso: str, window: str | None) -> str | None:
@@ -651,7 +702,11 @@ def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
     categorías por fecha, para apilados divergentes), ``mean_overlay`` (línea
     horizontal en el promedio del total diario), ``anchor_zero`` (con
     ``accumulate="cumsum"``: todas las series arrancan en 0 el primer día de la
-    ventana, como los acumulados del informe).
+    ventana, como los acumulados del informe), ``accumulate_from_start`` (con
+    ``accumulate="cumsum"``: acumula sobre TODA la historia del parquet primero
+    y ``window`` solo recorta la VISUALIZACIÓN despues — el stock no reinicia en
+    0 al entrar a la ventana, se ve cómo se mueve el acumulado real durante ese
+    tramo; incompatible con ``anchor_zero``, que gana si ambos vienen puestos).
     """
     path = dataset.parquet_path(parquet_dir)
     if not path.exists():
@@ -692,6 +747,7 @@ def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
             if all_pts:
                 start = _window_start(max(p[0] for p in all_pts), window)
         acc_start = start
+        full_history = bool(params.get("accumulate_from_start")) and mode == "cumsum"
         # ``anchor_zero``: el primer día de la ventana vale 0 y la acumulación corre
         # desde el siguiente, que es como el informe dibuja los acumulados (todas las
         # series nacen del mismo origen y son comparables entre sí).
@@ -700,22 +756,30 @@ def category_series(dataset: ParquetDataset, parquet_dir: Path, params: dict) ->
         # una: una categoría que no operó el primer día empieza más tarde, y anclarla
         # en SU primer punto le descontaría un día que a las demás no — las series
         # dejarían de ser comparables, que es justo lo que el anclaje busca.
-        anchor = bool(params.get("anchor_zero")) and mode == "cumsum"
-        windowed = {
-            c: ([p for p in pts if p[0] >= start] if start else pts)
-            for c, pts in by_cat.items()
-        }
-        anchor_iso = min(
-            (pts[0][0] for pts in windowed.values() if pts), default=None,
-        ) if anchor else None
-        for c, pts in windowed.items():
-            if mode:
-                pts = _accumulate(pts, mode)
-                if anchor_iso is not None:
-                    # valor acumulado EN la fecha ancla (0 si la serie aún no operaba)
-                    base = next((v for d, v in pts if d == anchor_iso), 0.0)
-                    pts = [(d, v - base) for d, v in pts]
-            by_cat[c] = pts
+        anchor = bool(params.get("anchor_zero")) and mode == "cumsum" and not full_history
+        if full_history:
+            # Acumula sobre TODA la historia primero; la ventana recorta la
+            # visualización DESPUÉS — el stock no arranca en 0 al entrar al mes,
+            # se lee cómo se movió el acumulado real durante ese tramo.
+            for c, pts in by_cat.items():
+                acc = _accumulate(pts, mode) if mode else pts
+                by_cat[c] = [p for p in acc if not start or p[0] >= start]
+        else:
+            windowed = {
+                c: ([p for p in pts if p[0] >= start] if start else pts)
+                for c, pts in by_cat.items()
+            }
+            anchor_iso = min(
+                (pts[0][0] for pts in windowed.values() if pts), default=None,
+            ) if anchor else None
+            for c, pts in windowed.items():
+                if mode:
+                    pts = _accumulate(pts, mode)
+                    if anchor_iso is not None:
+                        # valor acumulado EN la fecha ancla (0 si la serie aún no operaba)
+                        base = next((v for d, v in pts if d == anchor_iso), 0.0)
+                        pts = [(d, v - base) for d, v in pts]
+                by_cat[c] = pts
     order = params.get("order")
     if order:
         cats = [c for c in order if c in by_cat]
@@ -1810,17 +1874,30 @@ def snapshot_grouped(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
         if raw:
             txt = str(raw)
             date_note = txt.split("·", 1)[1].strip() if "·" in txt else txt.strip()
-    return _grouped(dataset.id, dataset.unit, sd, cats, values, overlay=overlay, date_note=date_note)
+    return _grouped(dataset.id, dataset.unit, sd, cats, values, overlay=overlay, date_note=date_note,
+                zero_base=bool(params.get("zero_base", True)))
 
 
 def snapshot_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
-    """Barras (apilables) de un parquet SIN fecha: eje X = una categórica y una
-    serie por cada valor de OTRA categórica.
+    """Barras (apilables) de un parquet SIN fecha (o con fecha filtrada a un solo
+    corte): eje X = una categórica y una serie por cada valor de OTRA categórica.
 
     Para "Atribución por clase de activos" (X = fondo, una serie por Clase).
     params: ``x`` (categórica del eje X), ``series`` (categórica del color),
     ``value`` (col de valor), ``x_order``/``series_order``, ``total_overlay``
-    (bool: agrega un punto "Total" = suma de las clases por X, como el informe).
+    (bool: agrega un punto "Total" = suma de las clases por X, como el informe),
+    ``labels`` (renombra los valores de ``series`` al nombre del informe),
+    ``exclude_x`` (valores de ``x`` a descartar, p.ej. una fila "Total" que ya
+    viene pre-agregada en el parquet), ``exclude_series`` (valores de ``series``
+    a descartar ANTES de agregar, p.ej. Contraparte=="Bancos" para sacar el
+    interbancario y dejar solo contrapartes no-banco).
+
+    ``date_col`` (opcional): si el parquet SÍ trae fecha (varios cortes en la
+    misma tabla, p.ej. un calendario de fixings futuros), filtra a UN solo corte
+    antes de agregar, en vez de sumar todas las fechas en una sola barra.
+    ``date_mode="nearest"`` toma la fecha futura más próxima a hoy (o la mínima
+    disponible si ya no quedan futuras); por defecto toma la fecha máxima (el
+    corte más reciente).
     """
     path = dataset.parquet_path(parquet_dir)
     if not path.exists():
@@ -1828,27 +1905,48 @@ def snapshot_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
     x, scol, val = params.get("x"), params.get("series"), params.get("value")
     if not x or not scol or not val:
         return None
+    date_col = params.get("date_col")
     con = duckdb.connect()
     try:
-        rows = _read_rows(con, path, date_col=None, columns=[x, scol, val])
+        cols = [x, scol, val, *([date_col] if date_col else [])]
+        rows = _read_rows(con, path, date_col=date_col, columns=cols)
     finally:
         con.close()
+    date_note = ""
+    if date_col:
+        isos = sorted({str(r[date_col])[:10] for r in rows if r.get(date_col)})
+        if not isos:
+            return None
+        if params.get("date_mode") == "nearest":
+            today = str(date.today())
+            future = [d for d in isos if d >= today]
+            target = future[0] if future else isos[-1]
+        else:
+            target = isos[-1]
+        rows = [r for r in rows if str(r.get(date_col))[:10] == target]
+        date_note = f"Corte: {_fmt_date(target)}"
+    labels = dict(params.get("labels") or {})
+    excluded_x = {str(v) for v in (params.get("exclude_x") or [])}
+    excluded_series = {str(v) for v in (params.get("exclude_series") or [])}
     agg: dict[str, dict[str, float]] = {}
     xs: list[str] = []
     ss: list[str] = []
     for r in rows:
         xv, sv = r.get(x), r.get(scol)
-        if xv is None or sv is None:
+        if xv is None or sv is None or str(xv) in excluded_x or str(sv) in excluded_series:
             continue
         try:
             v = float(r.get(val))
         except (TypeError, ValueError):
             continue
-        agg.setdefault(str(sv), {})[str(xv)] = agg.setdefault(str(sv), {}).get(str(xv), 0.0) + v
-        if str(xv) not in xs:
-            xs.append(str(xv))
-        if str(sv) not in ss:
-            ss.append(str(sv))
+        # una fecha/timestamp como eje X pierde la hora ("00:00:00") en la etiqueta.
+        xv = xv.isoformat()[:10] if isinstance(xv, date) else str(xv)
+        sv = labels.get(str(sv), str(sv))
+        agg.setdefault(sv, {})[xv] = agg.setdefault(sv, {}).get(xv, 0.0) + v
+        if xv not in xs:
+            xs.append(xv)
+        if sv not in ss:
+            ss.append(sv)
     if not agg:
         return None
     xcats = [c for c in (params.get("x_order") or sorted(xs)) if c in xs]
@@ -1858,7 +1956,7 @@ def snapshot_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict) -
         agg["Total"] = {c: sum(agg[s].get(c, 0.0) for s in series_order) for c in xcats}
         series_order = [*series_order, "Total"]
         overlay = ("Total",)
-    return _grouped(dataset.id, dataset.unit, agg, xcats, series_order, overlay=overlay)
+    return _grouped(dataset.id, dataset.unit, agg, xcats, series_order, overlay=overlay, date_note=date_note)
 
 
 def latest_snapshot(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
@@ -1923,34 +2021,61 @@ def _distinct_dates_sorted(con: duckdb.DuckDBPyConnection, parquet_path: Path, d
     return [str(r[0]) for r in rows]
 
 
+def _apply_order(seen: list[str], wanted, fallback) -> list[str]:
+    """Ordena ``seen`` según ``wanted`` (lista del spec). Lo que ``wanted`` no nombra
+    queda al final, en el orden por defecto: pedir un orden parcial no debe hacer
+    desaparecer filas del parquet."""
+    if not wanted:
+        return fallback(seen)
+    listed = [v for v in wanted if v in seen]
+    resto = fallback([v for v in seen if v not in set(listed)])
+    return [*listed, *resto]
+
+
+def _cut_days(params: dict) -> tuple[int, int]:
+    """Las dos ventanas (en días) de una tabla de variaciones. Default ``(7, 30)``:
+    el informe DCV. ``params["days"] = [1, 5]`` en el de renta fija."""
+    raw = params.get("days") or (7, 30)
+    try:
+        near, far = (int(raw[0]), int(raw[1]))
+    except (TypeError, ValueError, IndexError):
+        return 7, 30
+    return near, far
+
+
 def _cut_indices(
-    dates: list[str], asof: str | None = None,
+    dates: list[str], asof: str | None = None, days: tuple[int, int] = (7, 30),
 ) -> tuple[tuple[str, str, str], tuple[str, str, str]]:
-    """Devuelve ``(display, value)``, cada uno ``(T, T-7, T-30)``.
+    """Devuelve ``(display, value)``, cada uno ``(T, T-a, T-b)`` con ``days=(a, b)``.
 
     - ``display``: las fechas que se MUESTRAN en la tabla (encabezados).
     - ``value``: las fechas CON dato para buscar el stock (ultima fecha <= cada display).
 
-    Sin ``asof``: ``T`` = maximo del parquet y ``T-7``/``T-30`` la ultima fecha con
-    dato <= (T - 7 / - 30 dias naturales) -> ``display == value`` (comportamiento previo;
-    variacion a 1 semana / 1 mes de calendario, no por posicion de dia habil).
+    Sin ``asof``: ``T`` = maximo del parquet y ``T-a``/``T-b`` la ultima fecha con
+    dato <= (T - a / - b dias naturales) -> ``display == value`` (comportamiento previo;
+    variacion de calendario, no por posicion de dia habil).
 
-    Con ``asof`` (corte COMUN del informe): ``T`` = ``asof`` y ``T-7``/``T-30`` =
-    ``asof`` - 7 / - 30 dias. Asi TODAS las tablas muestran los MISMOS T, T-7, T-30 que
+    Con ``asof`` (corte COMUN del informe): ``T`` = ``asof`` y ``T-a``/``T-b`` =
+    ``asof`` - a / - b dias. Asi TODAS las tablas muestran los MISMOS cortes que
     el texto y que flujos, aunque el parquet DCV no tenga dato justo en el corte (p.ej.
     el corte cae en fin de semana): el VALOR se resuelve at-or-before, pero la fecha que
-    se cita es la del corte. ``dates`` viene ordenado ASC."""
+    se cita es la del corte. ``dates`` viene ordenado ASC.
+
+    ``days`` es parametrico porque no todos los informes comparan contra la misma
+    ventana: el DCV usa T-7 / T-30 (default) y el de renta fija T-1 / T-5.
+    """
     def _aob(ref: str) -> str:
         return next((d for d in reversed(dates) if d <= ref), dates[0])
 
+    near, far = days
     if asof:
         t_d = date.fromisoformat(asof[:10])
-        disp = (asof, (t_d - timedelta(days=7)).isoformat(), (t_d - timedelta(days=30)).isoformat())
+        disp = (asof, (t_d - timedelta(days=near)).isoformat(), (t_d - timedelta(days=far)).isoformat())
         return disp, (_aob(disp[0]), _aob(disp[1]), _aob(disp[2]))
 
     t = dates[-1]
     t_d = date.fromisoformat(t[:10])
-    data = (t, _aob((t_d - timedelta(days=7)).isoformat()), _aob((t_d - timedelta(days=30)).isoformat()))
+    data = (t, _aob((t_d - timedelta(days=near)).isoformat()), _aob((t_d - timedelta(days=far)).isoformat()))
     return data, data
 
 
@@ -2010,9 +2135,21 @@ def dcv_cut_dates(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> H
 
 
 def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
-    """Variacion del stock DCV (Delta T-7 / Delta T-30) por instrumento y plazo
-    (variación a 1 semana y 1 mes).
-    Lee ``variacion_stock_ffmm`` (Fecha, Bucket, Tipo, Moneda, Stock_USD)."""
+    """Dos matrices de variación del stock DCV, coloreadas: filas = una categoría,
+    columnas = otra, celda = Δ contra dos cortes anteriores.
+
+    Lee un parquet tipo ``variacion_stock_ffmm`` (Fecha, Bucket, Tipo, Moneda,
+    Stock_USD). El eje de columnas es la columna de plazo (``Bucket``/``Plazo``) o,
+    si no hay, la primera categórica; las filas, la siguiente que no sea moneda —
+    con ``variacion_sector_todos`` (Fecha, Tipo, Sector, Moneda) eso da filas =
+    agente y columnas = instrumento, que es la "Tabla N°1: Inversiones globales"
+    del informe de renta fija.
+
+    params:
+    - ``days``: las dos ventanas. Default ``(7, 30)`` (Δ 1 semana / 1 mes, informe
+      DCV); el de renta fija pide ``[1, 5]``.
+    - ``order_rows`` / ``order_cols``: orden de filas y columnas (lo no listado va
+      detrás). Sin ellos, alfabético / orden de plazo."""
     from .svg_chart import render_dcv_heatmap_tables
 
     parquet_path = dataset.parquet_path(parquet_dir)
@@ -2031,9 +2168,11 @@ def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Htm
         dates = _distinct_dates_sorted(con, parquet_path, roles.date_col)
         if len(dates) < 3:
             return None
-        # display = (T, T-7, T-30) para rotular el span de cada matriz; value = fechas
-        # CON dato (at-or-before del corte) para calcular los deltas Δ T-7 / Δ T-30.
-        (t_disp, t7_disp, t30_disp), (t_iso, t7_iso, t30_iso) = _cut_indices(dates, params.get("weekly_asof"))
+        # display = (T, T-a, T-b) para rotular el span de cada matriz; value = fechas
+        # CON dato (at-or-before del corte) para calcular los deltas.
+        near, far = _cut_days(params)
+        (t_disp, t7_disp, t30_disp), (t_iso, t7_iso, t30_iso) = _cut_indices(
+            dates, params.get("weekly_asof"), (near, far))
 
         in_clause = ", ".join(f"DATE '{d}'" for d in {t_iso, t7_iso, t30_iso})
         src = f"read_parquet('{parquet_path.as_posix()}')"
@@ -2066,8 +2205,11 @@ def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Htm
     if not cell:
         return None
 
-    tipos = sorted(tipos_seen)
-    buckets = _order_buckets(buckets_seen)
+    # Orden de filas y columnas: el del spec si lo trae (el correo de renta fija pone
+    # los instrumentos en orden de liquidez —PDBC, DAP, BTP…— y los agentes en el orden
+    # del área, no alfabético), y lo que no esté listado va detrás para no perderlo.
+    tipos = _apply_order(tipos_seen, params.get("order_rows"), fallback=sorted)
+    buckets = _apply_order(buckets_seen, params.get("order_cols"), fallback=_order_buckets)
     delta7: dict[str, dict[str, float | None]] = {t: {} for t in tipos}
     delta30: dict[str, dict[str, float | None]] = {t: {} for t in tipos}
     for (tipo, bucket), by_date in cell.items():
@@ -2079,10 +2221,151 @@ def dcv_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> Htm
         if vt is not None and vt30 is not None:
             delta30[tipo][bucket] = vt - vt30
 
-    label7 = f"Δ T-7 · {_fmt_date(t7_disp)} → {_fmt_date(t_disp)}"
-    label30 = f"Δ T-30 · {_fmt_date(t30_disp)} → {_fmt_date(t_disp)}"
+    near, far = _cut_days(params)
+    label7 = f"Δ T-{near} · {_fmt_date(t7_disp)} → {_fmt_date(t_disp)}"
+    label30 = f"Δ T-{far} · {_fmt_date(t30_disp)} → {_fmt_date(t_disp)}"
     return HtmlTable(
         html=render_dcv_heatmap_tables(tipos, buckets, delta7, delta30, unit=dataset.unit,
+                                       label7=label7, label30=label30),
+        dataset_id=dataset.id,
+    )
+
+
+def dcv_heatmap_moneda(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
+    """Como ``dcv_heatmap``, pero abre las columnas por instrumento Y moneda
+    (``PDBC CLP`` / ``PDBC UF``) en vez de solo instrumento — es la Tabla N°1 real
+    del correo, que no mezcla CLP con UF en la misma celda.
+
+    Lee ``variacion_instrumento_todos_plazo`` (Fecha, Bucket, Tipo, Sector, Moneda,
+    Stock_USD): suma sobre ``Bucket`` (plazo, no interesa acá), descarta las monedas
+    de ``exclude_moneda`` (default USD/EURO — el correo solo abre CLP/UF) y arma
+    filas = Sector (agente), columnas = instrumento.
+
+    Un ``Tipo`` que solo trae UNA moneda en el dato queda con el nombre pelado
+    (``PDBC``, no ``PDBC CLP``): el sufijo de moneda solo aporta cuando hay que
+    distinguir dos columnas del mismo instrumento. El que sí tenga más de una
+    (``DAP``, ``BB``, ``Otros``) se abre ``"{Tipo} {Moneda}"``, salvo que
+    ``label_overrides`` pida otra cosa puntual.
+
+    params:
+    - ``days``: igual que ``dcv_heatmap`` — ``[1, 5]`` en renta fija.
+    - ``exclude_moneda``: monedas a excluir (default ``["USD", "EURO"]``).
+    - ``exclude_tipo``: instrumentos a excluir COMPLETOS de la tabla (todas sus
+      monedas), ej. renta fija saca ``BCCh``.
+    - ``exclude_tipo_moneda``: pares puntuales ``[(tipo, moneda), …]`` a excluir
+      (ej. renta fija saca ``BE`` en CLP pero deja ``BE`` en UF, que el correo
+      llama "BC").
+    - ``moneda_order``: orden de moneda dentro de cada instrumento (default
+      ``["CLP", "UF"]``).
+    - ``order_rows``: orden de agentes (filas).
+    - ``order_cols``: orden de instrumentos (``Tipo``, SIN moneda); la columna final
+      se ordena por (posición del Tipo, posición de la Moneda).
+    - ``label_overrides``: ``{tipo: {moneda: etiqueta}}`` para una combinación
+      puntual (ej. renta fija: ``BE`` en UF se rotula "BC")."""
+    from .svg_chart import render_dcv_heatmap_tables
+
+    parquet_path = dataset.parquet_path(parquet_dir)
+    if not parquet_path.exists():
+        return None
+    exclude = {str(m).upper() for m in (params.get("exclude_moneda") or ["USD", "EURO"])}
+    exclude_tipo = {str(t) for t in (params.get("exclude_tipo") or ())}
+    exclude_pairs = [(str(t), str(m)) for t, m in (params.get("exclude_tipo_moneda") or ())]
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(parquet_path, con)
+        if roles.date_col is None or not roles.value_cols:
+            return None
+        val_col = roles.value_cols[0]
+        src = f"read_parquet('{parquet_path.as_posix()}')"
+
+        dates = _distinct_dates_sorted(con, parquet_path, roles.date_col)
+        if len(dates) < 3:
+            return None
+        near, far = _cut_days(params)
+        (t_disp, t7_disp, t30_disp), (t_iso, t7_iso, t30_iso) = _cut_indices(
+            dates, params.get("weekly_asof"), (near, far))
+
+        in_clause = ", ".join(f"DATE '{d}'" for d in {t_iso, t7_iso, t30_iso})
+        exclude_clause = ", ".join(f"'{m}'" for m in exclude)
+        moneda_filter = f"AND UPPER(Moneda) NOT IN ({exclude_clause}) " if exclude else ""
+        tipo_clause = ", ".join(f"'{t}'" for t in exclude_tipo)
+        tipo_filter = f"AND Tipo NOT IN ({tipo_clause}) " if exclude_tipo else ""
+        pair_clause = " OR ".join(f"(Tipo = '{t}' AND Moneda = '{m}')" for t, m in exclude_pairs)
+        pair_filter = f"AND NOT ({pair_clause}) " if exclude_pairs else ""
+        rows = con.execute(
+            f"SELECT TRY_CAST({roles.date_col} AS DATE) AS d, Tipo, Sector, Moneda, SUM({val_col}) "
+            f"FROM {src} WHERE TRY_CAST({roles.date_col} AS DATE) IN ({in_clause}) "
+            f"{moneda_filter}"
+            f"{tipo_filter}"
+            f"{pair_filter}"
+            f"GROUP BY d, Tipo, Sector, Moneda"
+        ).fetchall()
+    finally:
+        con.close()
+
+    if not rows:
+        return None
+
+    overrides: dict[str, dict[str, str]] = params.get("label_overrides") or {}
+    ccy_by_tipo: dict[str, set[str]] = {}
+    raw: list[tuple[str, str, str, str, float]] = []
+    for d, tipo, sector, moneda, val in rows:
+        if val is None:
+            continue
+        tipo, sector, moneda = str(tipo), str(sector), str(moneda)
+        ccy_by_tipo.setdefault(tipo, set()).add(moneda)
+        raw.append((str(d), tipo, sector, moneda, float(val)))
+
+    def _label(tipo: str, moneda: str) -> str:
+        override = overrides.get(tipo, {}).get(moneda)
+        if override is not None:
+            return override
+        return f"{tipo} {moneda}" if len(ccy_by_tipo.get(tipo, ())) > 1 else tipo
+
+    cell: dict[tuple[str, str], dict[str, float]] = {}
+    sectores_seen: list[str] = []
+    instrumentos_seen: list[str] = []
+    instrumento_meta: dict[str, tuple[str, str]] = {}
+    for d, tipo, sector, moneda, val in raw:
+        instrumento = _label(tipo, moneda)
+        k = (sector, instrumento)
+        cell.setdefault(k, {})[d] = val
+        instrumento_meta.setdefault(instrumento, (tipo, moneda))
+        if sector not in sectores_seen:
+            sectores_seen.append(sector)
+        if instrumento not in instrumentos_seen:
+            instrumentos_seen.append(instrumento)
+
+    if not cell:
+        return None
+
+    tipo_order = params.get("order_cols") or []
+    moneda_order = params.get("moneda_order") or ["CLP", "UF"]
+
+    def _instrumento_key(inst: str) -> tuple[int, int]:
+        tipo, moneda = instrumento_meta.get(inst, (inst, ""))
+        t_rank = tipo_order.index(tipo) if tipo in tipo_order else len(tipo_order)
+        m_rank = moneda_order.index(moneda) if moneda in moneda_order else len(moneda_order)
+        return (t_rank, m_rank)
+
+    sectores = _apply_order(sectores_seen, params.get("order_rows"), fallback=sorted)
+    instrumentos = sorted(instrumentos_seen, key=_instrumento_key)
+
+    delta7: dict[str, dict[str, float | None]] = {s: {} for s in sectores}
+    delta30: dict[str, dict[str, float | None]] = {s: {} for s in sectores}
+    for (sector, instrumento), by_date in cell.items():
+        vt = by_date.get(t_iso)
+        vt7 = by_date.get(t7_iso)
+        vt30 = by_date.get(t30_iso)
+        if vt is not None and vt7 is not None:
+            delta7[sector][instrumento] = vt - vt7
+        if vt is not None and vt30 is not None:
+            delta30[sector][instrumento] = vt - vt30
+
+    label7 = f"Δ T-{near} · {_fmt_date(t7_disp)} → {_fmt_date(t_disp)}"
+    label30 = f"Δ T-{far} · {_fmt_date(t30_disp)} → {_fmt_date(t_disp)}"
+    return HtmlTable(
+        html=render_dcv_heatmap_tables(sectores, instrumentos, delta7, delta30, unit=dataset.unit,
                                        label7=label7, label30=label30),
         dataset_id=dataset.id,
     )
@@ -2992,89 +3275,95 @@ def daily_wide_stacked(dataset: ParquetDataset, parquet_dir: Path, params: dict)
     return _grouped(dataset.id, dataset.unit, series_dict, x_labels, order, overlay=overlay)
 
 
+_FX_CATEGORY_MAP = {
+    "Spot, no afecto": "no_afecto",
+    "Spot, afecto": "afecto",
+    "Derivados, NDF": "ndf",
+    "Derivados, otros": "resto",
+}
+
+
 def fx_sector_flow_table(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
-    """Tabla RESUMEN GENERAL del informe de flujos cambiarios: una fila por sector,
-    columnas = flujo del día y acumulado de 5 días para Spot, Derivados y su suma.
+    """RESUMEN GENERAL: Spot (no afecto/afecto) y Derivados (NDF/resto) por sector,
+    día (``source_id``) y acumulado de 5 días (``source_id_5d``, mismo directorio).
 
-    El informe real abre además Spot en afecto/no-afecto y Derivados en NDF/resto;
-    ``flujo_cambiario`` NO trae esas aperturas (solo ``Spot`` y ``Forward`` por
-    sector), así que la tabla replica la ESTRUCTURA con las columnas disponibles.
-    La apertura fina queda documentada como bloque faltante en el spec.
+    Los dos parquets son snapshots YA agregados (Sector, Categoria, Monto, sin
+    fecha): solo hace falta pivotar ``Categoria``, no hay ventana que calcular.
 
-    params: ``spot`` / ``deriv`` (cols; default Spot/Forward), ``days`` (ventana
-    larga, default 5), ``labels`` (sector del parquet → nombre del informe),
-    ``order`` (orden de filas).
+    params: ``sector``/``category``/``value`` (cols, default Sector/Categoria/
+    Monto), ``source_id_5d`` (id del segundo parquet), ``labels``, ``order``.
     """
     from .svg_chart import render_fx_summary_table
 
-    path = dataset.parquet_path(parquet_dir)
-    if not path.exists():
-        return None
-    spot_col = params.get("spot", "Spot")
-    deriv_col = params.get("deriv", "Forward")
-    con = duckdb.connect()
-    try:
-        roles = detect_roles(path, con)
-        sector_col = params.get("sector") or (roles.category_cols[0] if roles.category_cols else None)
-        if roles.date_col is None or not sector_col:
-            return None
-        rows = _read_series_rows(
-            con, path, date_col=roles.date_col, columns=[roles.date_col, sector_col, spot_col, deriv_col],
-        )
-    finally:
-        con.close()
-    if not rows:
-        return None
+    sector_col = params.get("sector", "Sector")
+    category_col = params.get("category", "Categoria")
+    value_col = params.get("value", "Monto")
 
-    asof = params.get("weekly_asof")
-    day_rows, _, last = _sum_window(rows, roles.date_col, days=1, last_iso=asof)
-    span_rows, start_n, _ = _sum_window(
-        rows, roles.date_col, days=int(params.get("days", 5)), last_iso=asof,
-    )
+    def _read(path: Path) -> list[dict]:
+        if not path.exists():
+            return []
+        con = duckdb.connect()
+        try:
+            return _read_rows(con, path, date_col=None,
+                               columns=[sector_col, category_col, value_col])
+        finally:
+            con.close()
+
+    day_rows = _read(dataset.parquet_path(parquet_dir))
+    span_id = params.get("source_id_5d")
+    span_rows = _read(parquet_dir / f"{span_id}.parquet") if span_id else []
+    if not day_rows and not span_rows:
+        return None
 
     labels = dict(params.get("labels") or {})
+    # El parquet trae un sector "Total" precalculado; se excluye por default porque
+    # ya se puede leer como la suma de las filas visibles (no está en el correo).
+    excluded = {str(v) for v in params.get("exclude_sectors", ["Total"])}
 
-    def _tally(subset: list[dict]) -> dict[str, tuple[float, float]]:
-        out: dict[str, tuple[float, float]] = {}
-        for r in subset:
-            raw = str(r.get(sector_col) or "").strip()
-            if not raw:
+    def _tally(rows: list[dict]) -> dict[str, dict[str, float]]:
+        out: dict[str, dict[str, float]] = {}
+        for r in rows:
+            raw_sector = str(r.get(sector_col) or "").strip()
+            key = _FX_CATEGORY_MAP.get(str(r.get(category_col) or "").strip())
+            if not raw_sector or raw_sector in excluded or key is None:
                 continue
-            name = labels.get(raw, raw)
-            s, d = out.get(name, (0.0, 0.0))
-            out[name] = (s + _num(r.get(spot_col)), d + _num(r.get(deriv_col)))
+            name = labels.get(raw_sector, raw_sector)
+            slot = out.setdefault(name, {"no_afecto": 0.0, "afecto": 0.0, "ndf": 0.0, "resto": 0.0})
+            slot[key] += _num(r.get(value_col))
         return out
 
     day, span = _tally(day_rows), _tally(span_rows)
-    names = list(params.get("order") or [])
-    names = [n for n in names if n in day or n in span]
+    names = [n for n in (params.get("order") or []) if n in day or n in span]
     names += sorted(n for n in set(day) | set(span) if n not in names)
     if not names:
         return None
 
-    data = {
-        n: (*day.get(n, (0.0, 0.0)), *span.get(n, (0.0, 0.0))) for n in names
-    }
-    html = render_fx_summary_table(
-        names, data, unit=dataset.unit,
-        day_label=_fmt_date(last),
-        span_label=f"{_fmt_date(start_n)} → {_fmt_date(last)}",
-    )
+    def _row(t: dict[str, float] | None) -> tuple[float, float, float, float]:
+        t = t or {}
+        return (t.get("no_afecto", 0.0), t.get("afecto", 0.0), t.get("ndf", 0.0), t.get("resto", 0.0))
+
+    data = {n: (*_row(day.get(n)), *_row(span.get(n))) for n in names}
+    html = render_fx_summary_table(names, data, unit=dataset.unit)
     return HtmlTable(html=html, dataset_id=dataset.id)
 
 
 def fx_agent_delta_table(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> HtmlTable | None:
-    """Tabla "Posición derivados por agente" (Δ T-1 / Δ T-5 / Δ T-10 / Δ T-20):
-    filas = agente offshore, columnas = variación NETA acumulada de cada ventana.
+    """Tabla "Posición por agente" (Δ T-1 / Δ T-5 / Δ T-10 / Δ T-20): filas = agente
+    offshore, columnas = monto acumulado de cada ventana. Si ``params["spot"]`` está
+    presente, dibuja DOS tablas (Spot y Derivados); si no, solo Derivados.
 
-    El neto de un día es ``Suscripción - Vencimiento`` (parquet largo con columna de
-    tipo) o la suma de la columna de valor si no hay tipo. Cada Δ T-N suma los N
-    últimos días HÁBILES CON DATO (no días naturales): así el informe compara
-    jornadas de mercado, como el correo real.
+    Derivados = ``Suscripción`` (+) y ``Vencimiento`` (± según ``net``: restado si
+    ``net`` es True/omitido, sumado si ``net=False``). Spot no tiene columna de
+    signo propia: se suma tal cual. Cada Δ T-N suma los N últimos días HÁBILES CON
+    DATO (no días naturales): así el informe compara jornadas de mercado, como el
+    correo real.
 
     params: ``agent`` (col de agente), ``value``, ``type_col`` / ``pos`` / ``neg``
-    (opcionales), ``windows`` (lista de N, default ``[1, 5, 10, 20]``),
-    ``exclude_agents`` (p.ej. ``["Total"]``), ``total_label``.
+    (opcionales), ``spot`` (valor de ``type_col`` que identifica Spot; opcional —
+    sin él, Spot no se separa y solo sale Derivados), ``net`` (bool, default True),
+    ``windows`` (lista de N, default ``[1, 5, 10, 20]``), ``exclude_agents``
+    (p.ej. ``["Total"]``), ``all_agents`` (lista completa de agentes a mostrar,
+    incluso sin actividad en el rango leído: quedan en 0), ``total_label``.
     """
     from .svg_chart import render_fx_delta_table
 
@@ -3086,6 +3375,7 @@ def fx_agent_delta_table(dataset: ParquetDataset, parquet_dir: Path, params: dic
     if not agent or not val:
         return None
     tcol, pos, neg = params.get("type_col"), params.get("pos"), params.get("neg")
+    spot_val = params.get("spot")
     con = duckdb.connect()
     try:
         roles = detect_roles(path, con)
@@ -3099,45 +3389,79 @@ def fx_agent_delta_table(dataset: ParquetDataset, parquet_dir: Path, params: dic
         return None
 
     excluded = {str(v) for v in (params.get("exclude_agents") or [])}
-    # {agente: {fecha: neto}} — el signo lo fija type_col cuando existe.
-    per_day: dict[str, dict[str, float]] = {}
+    net = params.get("net", True)
+    # {agente: {fecha: monto}} — Derivados lleva el signo de type_col; Spot va aparte, sin netear.
+    per_day_deriv: dict[str, dict[str, float]] = {}
+    per_day_spot: dict[str, dict[str, float]] = {}
     for r in rows:
         d = r.get(roles.date_col)
         name = str(r.get(agent) or "").strip()
         if not d or not name or name in excluded:
             continue
         v = _num(r.get(val))
+        iso = str(d)[:10]
         if tcol:
             t = str(r.get(tcol) or "").strip()
+            if spot_val and t == spot_val:
+                slot = per_day_spot.setdefault(name, {})
+                slot[iso] = slot.get(iso, 0.0) + v
+                continue
             if neg and t == neg:
-                v = -v
+                if net:
+                    v = -v          # comportamiento neto (Suscripción - Vencimiento)
+                # si net=False, se deja v tal cual → se suma en vez de restar
             elif pos and t != pos:
                 continue
-        slot = per_day.setdefault(name, {})
-        iso = str(d)[:10]
+        slot = per_day_deriv.setdefault(name, {})
         slot[iso] = slot.get(iso, 0.0) + v
 
-    all_dates = sorted({d for s in per_day.values() for d in s})
+    all_dates = sorted({d for s in (*per_day_deriv.values(), *per_day_spot.values()) for d in s})
     if not all_dates:
         return None
     windows = [int(w) for w in (params.get("windows") or [1, 5, 10, 20])]
     cut = {w: set(all_dates[-w:]) for w in windows}
 
-    agents = sorted(per_day, key=lambda a: abs(sum(per_day[a].values())), reverse=True)
-    agents = agents[:_MAX_PLOT_CATEGORIES]
-    agents.sort()
-    data = {
-        a: tuple(sum(v for d, v in per_day[a].items() if d in cut[w]) for w in windows)
-        for a in agents
-    }
+    known_agents = set(per_day_deriv) | set(per_day_spot)
+    all_agents_param = [str(a) for a in (params.get("all_agents") or []) if str(a) not in excluded]
+    agents = sorted(known_agents | set(all_agents_param)) if all_agents_param else sorted(known_agents)
+
+    def _agent_data(per_day: dict[str, dict[str, float]]) -> dict[str, tuple[float, ...]]:
+        return {
+            a: tuple(sum(v for d, v in per_day.get(a, {}).items() if d in cut[w]) for w in windows)
+            for a in agents
+        }
+
     total_label = params.get("total_label", "Total")
-    data[total_label] = tuple(
-        sum(data[a][i] for a in agents) for i in range(len(windows))
-    )
-    html = render_fx_delta_table(
-        agents, data, windows, unit=dataset.unit,
-        total_label=total_label, asof=_fmt_date(all_dates[-1]),
-    )
+    asof = _fmt_date(all_dates[-1])
+    parts: list[str] = []
+    if spot_val:
+        data_spot = _agent_data(per_day_spot)
+        data_spot[total_label] = tuple(sum(data_spot[a][i] for a in agents) for i in range(len(windows)))
+        parts.append(render_fx_delta_table(
+            agents, data_spot, windows, unit=dataset.unit, total_label=total_label,
+            asof=asof, title="Spot", note="monto acumulado de las últimas N jornadas con dato",
+        ))
+        deriv_title = "Derivados (Suscripción + Vencimiento)" if not net else "Derivados (Suscripción - Vencimiento)"
+    else:
+        deriv_title = ""
+
+    data_deriv = _agent_data(per_day_deriv)
+    data_deriv[total_label] = tuple(sum(data_deriv[a][i] for a in agents) for i in range(len(windows)))
+    deriv_note = ("monto acumulado" if not net else "variación neta acumulada") + " de las últimas N jornadas con dato"
+
+    if spot_val:
+        data_spot = _agent_data(per_day_spot)
+        data_spot[total_label] = tuple(sum(data_spot[a][i] for a in agents) for i in range(len(windows)))
+        deriv_title = "Derivados (Suscripción + Vencimiento)" if not net else "Derivados (Suscripción - Vencimiento)"
+        html = render_fx_delta_table(
+            agents, data_deriv, windows, unit=dataset.unit, total_label=total_label,
+            asof=asof, title=deriv_title, note=deriv_note, data_spot=data_spot,
+        )
+    else:
+        html = render_fx_delta_table(
+            agents, data_deriv, windows, unit=dataset.unit, total_label=total_label,
+            asof=asof, note=deriv_note,
+        )
     return HtmlTable(html=html, dataset_id=dataset.id)
 
 
@@ -4151,6 +4475,171 @@ def cam_gamma_heatmap(dataset: ParquetDataset, parquet_dir: Path, params: dict) 
 
 # ── Registro: nombre → transform (None = declarada, pendiente de 2ª iteración) ─
 
+# ── Curvas por plazo (informe de renta fija) ─────────────────────────────────
+#
+# Meses equivalentes de cada plazo, para ORDENAR el eje X. Sin esto el eje sale en
+# orden alfabético ("10Y, 12M, 1Y, 20Y, 2Y…") y la curva queda dibujada al azar.
+_TENOR_MONTHS = {"D": 1 / 30, "W": 0.25, "M": 1.0, "Y": 12.0}
+
+
+def _tenor_key(tenor: str) -> float:
+    m = re.fullmatch(r"\s*(\d+(?:[.,]\d+)?)\s*([DWMYdwmy])\s*", str(tenor))
+    if not m:
+        return float("inf")
+    return float(m.group(1).replace(",", ".")) * _TENOR_MONTHS[m.group(2).upper()]
+
+
+def curve_by_tenor(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Curva por PLAZO en dos cortes: "Hoy" contra "t-N".
+
+    Es la forma de las curvas del informe de renta fija (Curva BTP/BTU, Breakeven,
+    Spread BTP-UST por plazo, Swap Spread): el eje X es el plazo (2Y, 5Y, 10Y…) y se
+    superponen dos fechas para leer cómo se movió la curva en la semana. El resultado
+    es un ``PlotData`` de kind ``grouped`` — el eje X es categórico, no temporal — que
+    ``svg_chart._render_grouped_lines`` dibuja como líneas (``chart="curve"``).
+
+    params:
+    - ``tenor_col``: columna del plazo (default: ``Tenor``, o ``Variable``, o la
+      primera categórica). Estos parquets suelen traer ``Variable`` y ``Tenor``
+      duplicadas.
+    - ``window``: ``"5d"`` (default) — contra qué corte se compara.
+    - ``tenors``: lista para acotar/ordenar el eje X; sin ella se ordenan por plazo.
+    - ``labels``: nombres de las dos series (default ``["Hoy", "t-5"]``).
+    """
+    parquet_path = dataset.parquet_path(parquet_dir)
+    if not parquet_path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        roles = detect_roles(parquet_path, con)
+        if roles.date_col is None or not roles.category_cols or not roles.value_cols:
+            return None
+        cats = roles.category_cols
+        wanted = str(params.get("tenor_col") or "")
+        tenor_col = (
+            next((c for c in cats if c.lower() == wanted.lower()), None) if wanted else None
+        ) or next((c for c in cats if c.lower() in ("tenor", "plazo", "variable")), cats[0])
+        val_col = roles.value_cols[0]
+
+        dates = _distinct_dates_sorted(con, parquet_path, roles.date_col)
+        if not dates:
+            return None
+        # Con una sola fecha igual hay curva: se dibuja sin la comparación (el corte
+        # anterior cae en el mismo día y la segunda serie se omite más abajo).
+        days = _window_days(params.get("window"), default=5)
+        asof = str(params.get("weekly_asof") or dates[-1])[:10]
+        t_iso = next((d for d in reversed(dates) if d <= asof), dates[-1])
+        prev_ref = (date.fromisoformat(t_iso[:10]) - timedelta(days=days)).isoformat()
+        prev_iso = next((d for d in reversed(dates) if d <= prev_ref), dates[0])
+
+        src = f"read_parquet('{parquet_path.as_posix()}')"
+        rows = con.execute(
+            f"SELECT TRY_CAST({roles.date_col} AS DATE) AS d, {tenor_col} AS k, "
+            f"AVG(TRY_CAST({val_col} AS DOUBLE)) AS v FROM {src} "
+            f"WHERE TRY_CAST({roles.date_col} AS DATE) IN (DATE '{t_iso}', DATE '{prev_iso}') "
+            f"GROUP BY d, k"
+        ).fetchall()
+    finally:
+        con.close()
+
+    by_date: dict[str, dict[str, float]] = {}
+    for d, k, v in rows:
+        if k is None or v is None:
+            continue
+        by_date.setdefault(str(d), {})[str(k)] = float(v)
+    hoy = by_date.get(t_iso, {})
+    if not hoy:
+        return None
+    antes = by_date.get(prev_iso, {})
+
+    tenors = [str(t) for t in (params.get("tenors") or [])]
+    tenors = [t for t in tenors if t in hoy] or sorted(hoy, key=_tenor_key)
+
+    labels = list(params.get("labels") or ())
+    label_hoy = labels[0] if labels else "Hoy"
+    label_prev = labels[1] if len(labels) > 1 else f"t-{days}"
+
+    series = [PlotSeries(label=label_hoy, points=[(t, hoy[t]) for t in tenors if t in hoy])]
+    # Si el corte anterior cae en la MISMA fecha (parquet con un solo día) no se
+    # dibuja una segunda curva encima de la primera: confunde y no aporta.
+    if antes and prev_iso != t_iso:
+        series.append(PlotSeries(label=label_prev,
+                                 points=[(t, antes[t]) for t in tenors if t in antes]))
+
+    note = f"{label_hoy}: {_fmt_date(t_iso)}"
+    if len(series) > 1:
+        note += f" · {label_prev}: {_fmt_date(prev_iso)}"
+    # zero_base=False: son NIVELES de tasa que se mueven en décimas; anclar el eje en
+    # 0 aplasta la curva contra el borde superior y no se lee nada.
+    return PlotData(dataset.id, chart_family(dataset.chart_type), "grouped", dataset.unit,
+                    series, date_note=note, zero_base=False)
+
+
+def spc_btp_curve(dataset: ParquetDataset, parquet_dir: Path, params: dict) -> PlotData | None:
+    """Curva Swap (SPC) superpuesta con la curva BTP, al último corte COMÚN de dos
+    parquets distintos — no es "Hoy vs t-N" de UNA curva (ver ``curve_by_tenor``),
+    son dos curvas de fuentes distintas al MISMO día.
+
+    ``dataset`` es ``spc_ois_var`` (Fecha, Serie ∈ {OIS, SPC}, Tenor, Valor):
+    se filtra a ``Serie == "SPC"``. La curva BTP viene de un SEGUNDO parquet
+    (``other_file``, default ``btp_plazo.parquet`` — Fecha, Serie=tenor, Valor)
+    leído directo del ``parquet_dir`` (mismo patrón que ``dcv_portfolio_table``/
+    ``duration_files``: no todos los parquets de un bloque pasan por el catálogo).
+
+    El corte es el MÍNIMO de las dos últimas fechas disponibles (si un parquet se
+    refresca más tarde que el otro, se usa la fecha en que YA hay dato en ambos),
+    resuelto at-or-before en cada uno.
+
+    params:
+    - ``other_file``: nombre del parquet BTP (default ``btp_plazo.parquet``).
+    - ``tenors``: tenores a graficar (default ``["2Y", "5Y", "10Y", "20Y"]``, los
+      que compara el correo — SPC no trae 20Y, esa curva queda con un punto menos)."""
+    parquet_path = dataset.parquet_path(parquet_dir)
+    other_path = parquet_dir / str(params.get("other_file") or "btp_plazo.parquet")
+    if not parquet_path.exists() or not other_path.exists():
+        return None
+    con = duckdb.connect()
+    try:
+        spc_dates = _distinct_dates_sorted(con, parquet_path, "Fecha")
+        btp_dates = _distinct_dates_sorted(con, other_path, "Fecha")
+        if not spc_dates or not btp_dates:
+            return None
+        cutoff = min(spc_dates[-1], btp_dates[-1])
+        spc_cut = next((d for d in reversed(spc_dates) if d <= cutoff), spc_dates[0])
+        btp_cut = next((d for d in reversed(btp_dates) if d <= cutoff), btp_dates[0])
+
+        spc_src = f"read_parquet('{parquet_path.as_posix()}')"
+        spc_rows = con.execute(
+            f"SELECT Tenor, Valor FROM {spc_src} "
+            f"WHERE TRY_CAST(Fecha AS DATE) = DATE '{spc_cut}' AND Serie = 'SPC'"
+        ).fetchall()
+
+        btp_src = f"read_parquet('{other_path.as_posix()}')"
+        btp_rows = con.execute(
+            f"SELECT Serie, Valor FROM {btp_src} WHERE TRY_CAST(Fecha AS DATE) = DATE '{btp_cut}'"
+        ).fetchall()
+    finally:
+        con.close()
+
+    spc = {str(t): float(v) for t, v in spc_rows if v is not None}
+    btp = {str(t): float(v) for t, v in btp_rows if v is not None}
+    if not spc and not btp:
+        return None
+
+    tenors = [str(t) for t in (params.get("tenors") or ["2Y", "5Y", "10Y", "20Y"])]
+    series = []
+    if spc:
+        series.append(PlotSeries(label="SPC", points=[(t, spc[t]) for t in tenors if t in spc]))
+    if btp:
+        series.append(PlotSeries(label="BTP", points=[(t, btp[t]) for t in tenors if t in btp]))
+    if not series:
+        return None
+
+    note = f"Corte: {_fmt_date(cutoff)}"
+    return PlotData(dataset.id, chart_family(dataset.chart_type), "grouped", dataset.unit,
+                    series, date_note=note, zero_base=False)
+
+
 _REGISTRY: dict[str, Transform | None] = {
     # Implementadas (producen una serie graficable como línea/composición).
     "straight_series": straight_series,
@@ -4190,6 +4679,7 @@ _REGISTRY: dict[str, Transform | None] = {
     # Tablas con color condicional (heatmap DCV): implementadas.
     "dcv_cut_dates": dcv_cut_dates,
     "dcv_heatmap": dcv_heatmap,
+    "dcv_heatmap_moneda": dcv_heatmap_moneda,
     # Informe DCV (familia dcv): tablas por agente / tramo + su gráfico apilado.
     "dcv_portfolio_table": dcv_portfolio_table,
     "dcv_duration_scatter": dcv_duration_scatter,
@@ -4225,6 +4715,8 @@ _REGISTRY: dict[str, Transform | None] = {
     "cam_spread_expanding": cam_spread_expanding,
     "cam_market_table": cam_market_table,
     "cam_gamma_heatmap": cam_gamma_heatmap,
+    "curve_by_tenor": curve_by_tenor,
+    "spc_btp_curve": spc_btp_curve,
 }
 
 

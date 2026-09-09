@@ -141,6 +141,34 @@ class FamilyReportSpec:
     # cubre las 8 secciones por la condición OR). Vacío = sin cambio para
     # ninguna familia existente.
     grid_sections: frozenset[str] = frozenset()
+    # ``True`` (default) → el HTML abre con el bloque "Síntesis — principales
+    # movimientos" (``<div class="report-synthesis">``), como todas las familias
+    # existentes. ``False`` → el informe no lo dibuja (caso dcv: es un corte de
+    # stocks al cierre, sin una narrativa semanal que resumir ahí).
+    show_synthesis: bool = True
+    # ``True`` (default) → cada banner de sección lleva debajo su slot de texto
+    # editable (``<div class="section-text" data-text-slot="...">``), como todas
+    # las familias existentes. ``False`` → el informe no lo dibuja (caso dcv: ese
+    # párrafo nunca se redacta — es un corte de stocks tabular — y el slot vacío
+    # solo deja un recuadro punteado sin contenido).
+    show_section_text: bool = True
+    # Nota chica pegada a la DERECHA del título (``curated_report._header_cutoff_text``),
+    # con el corte de datos del informe: ``"al {fecha}, {header_cutoff_note}"`` —
+    # la fecha sale del ``date_note`` del primer bloque que traiga uno. Vacío
+    # (default) → no se dibuja nada ahí; ninguna familia existente la declara hoy.
+    # Pensado para informes de CORTE ÚNICO (p.ej. dcv: "al 14-ago-2026, Montos
+    # valorizados en MM USD"), donde todos los bloques de la fuente principal
+    # comparten esa misma fecha.
+    header_cutoff_note: str = ""
+    # Línea centrada, editable (``data-text-slot``), justo debajo de los bloques
+    # de la PRIMERA sección (p.ej. "Portafolio por agente" en dcv) — antes del
+    # banner de la sección siguiente. Pensada para la "Paridad utilizada"
+    # (USD/EUR/UF vigentes en el trimestre), que dcv necesita mostrar una sola
+    # vez, al principio del informe. Vacío (default) → no se dibuja nada;
+    # ninguna otra familia la declara hoy. El valor inicial queda editable en el
+    # HTML "_editable" igual que los párrafos de sección.
+    parity_note: str = ""
+
 
     def sections(self) -> list[str]:
         """Secciones en orden de aparición (sin repetir)."""

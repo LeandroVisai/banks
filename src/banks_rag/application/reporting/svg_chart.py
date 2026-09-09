@@ -297,6 +297,11 @@ _CHART_NATIVE_KIND: dict[str, str | tuple[str, ...]] = {
     # dispersión CATEGÓRICA por grupo (Duración agentes IIF/RF del DCV,
     # kind='grouped', ver _render_grouped_dots) — ambas se dibujan como puntos.
     "point": ("scatter", "grouped"),
+    # Curva sobre eje CATEGÓRICO (plazo), no temporal: dos cortes de la misma curva
+    # ("Hoy" vs "t-5") del informe de renta fija. "spc_curve" es el nombre canónico
+    # del catálogo para esos datasets; "curve" el alias corto para el spec.
+    "curve": "grouped",
+    "spc_curve": "grouped",
     "heatmap_table": "heatmap",
 }
 
@@ -333,6 +338,8 @@ def render_plot_svg(
     if plot.kind == "grouped":
         if target == "point":
             return _render_grouped_dots(plot, width, height)
+        if target in ("curve", "spc_curve"):
+            return _render_grouped_lines(plot, width, height)
         return _render_grouped_bars(plot, width, height, stacked=(target == "stacked_bar"))
     if plot.kind == "snapshot":
         if target == "pie":
@@ -945,6 +952,117 @@ def _render_grouped_bars(plot: PlotData, width: int, height: int, *, stacked: bo
         out.append(f'<text x="{left}" y="{top - 12}" font-size="{fs_unit}" fill="#777">{_esc(plot.unit)}</text>')
     out.append("</svg>")
     return "\n".join(out)
+
+
+def _render_grouped_lines(plot: PlotData, width: int, height: int) -> str:
+    """Curva sobre eje CATEGÓRICO: una línea por serie, un punto por categoría.
+
+    Es la forma de las curvas del informe de renta fija (Curva BTP, Curva BTU,
+    Breakeven, Swap Spread): el eje X no es el tiempo sino el PLAZO (2Y, 5Y, 10Y…)
+    y se comparan dos cortes ("Hoy" contra "t-5"). Ni ``_render_timeseries`` (eje X
+    de fechas) ni ``_render_grouped_bars`` (barras) sirven para eso.
+
+    El eje Y NO arranca en 0: son niveles de tasa que se mueven en décimas, y
+    forzar el 0 aplasta la curva contra el borde (misma razón por la que
+    ``PlotData.zero_base`` existe).
+    """
+    series = [s for s in plot.series if s.label not in (plot.overlay or ())]
+    cats: list[str] = []
+    seen: set[str] = set()
+    for s in plot.series:
+        for c, _v in s.points:
+            if c not in seen:
+                seen.add(c)
+                cats.append(c)
+    if not cats or not series:
+        return _no_axis_message(plot, width, height)
+    lut = [{c: v for c, v in s.points} for s in series]
+
+    left, right, top = 64, 18, 30
+    plot_w = width - left - right
+    fscale = _WIDE_FONT_SCALE if width >= _W_WIDE else 1.0
+    fs_axis = round(11 * fscale, 1)
+    fs_cat = round(10 * fscale, 1)
+    fs_val = round(10 * fscale, 1)
+    fs_unit = round(11 * fscale, 1)
+    fs_legend = round(11 * fscale, 1)
+    max_len = max(len(c) for c in cats)
+    fits = max_len * _CAT_LABEL_CHAR_W <= plot_w / max(len(cats), 1) - 2
+    long_labels = max_len > 9 or not fits
+    bottom = 90 if long_labels else 80
+    plot_h = height - top - bottom
+
+    allv = [v for d in lut for v in d.values()]
+    dmin, dmax = min(allv), max(allv)
+    if dmax == dmin:
+        dmax += 1.0
+    ticks, ymin, ymax = _nice_ticks(dmin, dmax, include_zero=plot.zero_base)
+
+    def py(v: float) -> float:
+        return top + plot_h * (1 - (v - ymin) / (ymax - ymin))
+
+    # Los extremos van sobre la primera y la última categoría (no centrados en una
+    # "banda" como las barras): una curva se lee de punta a punta.
+    step = plot_w / max(len(cats) - 1, 1)
+
+    def px(ci: int) -> float:
+        return left + (ci * step if len(cats) > 1 else plot_w / 2)
+
+    out = _svg_open(width, height, f"{plot.dataset_id} — curva")
+    for tick in ticks:
+        y = py(tick)
+        emph = abs(tick) < 1e-9
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" '
+                   f'stroke="{"#999" if emph else "#e6e6e6"}" stroke-width="1"/>')
+        out.append(f'<text x="{left - 8}" y="{y + 4:.1f}" font-size="{fs_axis}" fill="#555" '
+                   f'text-anchor="end">{_esc(_fmt_num(tick))}</text>')
+
+    pal = _PALETTE
+    for si, s in enumerate(series):
+        color = pal[si % len(pal)]
+        pts = [(ci, lut[si][c]) for ci, c in enumerate(cats) if c in lut[si]]
+        if len(pts) > 1:
+            coords = " ".join(f"{px(ci):.1f},{py(v):.1f}" for ci, v in pts)
+            out.append(f'<polyline points="{coords}" fill="none" stroke="{color}" '
+                       f'stroke-width="2" data-si="{si}"/>')
+        for ci, v in pts:
+            attrs = _tip_attrs(color, s=s.label, k=cats[ci], v=_val_unit(v, plot.unit))
+            out.append(f'<circle cx="{px(ci):.1f}" cy="{py(v):.1f}" r="3.2" fill="{color}" '
+                       f'data-si="{si}"{attrs}/>')
+        # El valor rotulado sobre la PRIMERA serie, como el correo real (la curva de
+        # hoy lleva su nivel escrito; la de comparación va limpia para no amontonar).
+        # Los extremos se anclan al borde en vez de centrarse: una etiqueta centrada
+        # sobre el primer o el último plazo se sale del gráfico y queda cortada.
+        if si == 0:
+            for ci, v in pts:
+                if ci == 0:
+                    x, anchor = px(ci) + 2, "start"
+                elif ci == len(cats) - 1:
+                    x, anchor = px(ci) - 2, "end"
+                else:
+                    x, anchor = px(ci), "middle"
+                y = max(top + fs_val, py(v) - 8)   # nunca por encima del área de dibujo
+                out.append(f'<text x="{x:.1f}" y="{y:.1f}" font-size="{fs_val}" '
+                           f'fill="#333" text-anchor="{anchor}">{_esc(_fmt_num(v))}</text>')
+
+    for ci, c in enumerate(cats):
+        cx = px(ci)
+        if long_labels:
+            out.append(f'<text transform="translate({cx:.1f},{top + plot_h + 12:.1f}) rotate(-45)" '
+                       f'font-size="{fs_cat}" fill="#555" text-anchor="end">{_esc(c)}</text>')
+        else:
+            out.append(f'<text x="{cx:.1f}" y="{top + plot_h + 16}" font-size="{fs_cat}" '
+                       f'fill="#555" text-anchor="middle">{_esc(c)}</text>')
+
+    out.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
+    out.append(f'<line x1="{left}" y1="{top + plot_h}" x2="{left + plot_w}" y2="{top + plot_h}" stroke="#999" stroke-width="1"/>')
+    legend_y = height - (20 if long_labels else 26)
+    legend = [(s.label, pal[i % len(pal)]) for i, s in enumerate(series)]
+    out.append(_legend_row(legend, left, legend_y, plot_w, interactive=True, font_size=fs_legend))
+    if plot.unit:
+        out.append(f'<text x="{left}" y="{top - 12}" font-size="{fs_unit}" fill="#777">{_esc(plot.unit)}</text>')
+    out.append("</svg>")
+    return "".join(out)
 
 
 def _render_grouped_dots(plot: PlotData, width: int, height: int) -> str:
@@ -1602,55 +1720,55 @@ def _fx_cell(v: float, cut: float, *, bold: bool = False) -> str:
 
 def render_fx_summary_table(
     sectors: list[str],
-    data: dict[str, tuple[float, float, float, float]],
+    data: dict[str, tuple[float, float, float, float, float, float, float, float]],
     *,
     unit: str = "US$ Mill.",
-    day_label: str = "",
-    span_label: str = "",
+    split_before: str = "BANCOS",
 ) -> str:
-    """RESUMEN GENERAL: una fila por sector, columnas Spot / Derivados / Spot y
-    derivados, para el día y para la ventana acumulada.
+    """RESUMEN GENERAL: Spot (No afecto/Afecto) y Derivados (NDF/Resto) por sector,
+    día y acumulado de 5 días, con su columna de consolidación cada uno.
 
-    ``data[sector] = (spot_dia, deriv_dia, spot_ventana, deriv_ventana)``; la
-    columna "Spot y derivados" se calcula acá para que el total sea siempre
-    consistente con sus componentes."""
+    ``data[sector] = (no_afecto, afecto, ndf, resto,
+                       no_afecto_5d, afecto_5d, ndf_5d, resto_5d)``; las columnas
+    "Spot y derivados" (día y 5 días) se calculan acá. ``split_before`` es la fila
+    (p.ej. "BANCOS") que va después de una línea punteada, como en el correo."""
     th = "text-align:right;padding:6px 8px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap"
     thl = "text-align:left;padding:6px 8px;background:#4a5a72;color:#fff;font-size:11px"
     thg = "text-align:center;padding:5px 8px;background:#0b3766;color:#fff;font-size:11px;white-space:nowrap"
     tdl = "text-align:left;padding:4px 8px;border-bottom:1px solid #eee;font-size:12px;font-weight:700"
+    tdl_split = tdl + ";border-top:2px dashed #4a5a72"
 
-    rows_num = {s: (d[0], d[1], d[0] + d[1], d[2], d[3], d[2] + d[3]) for s, d in data.items()}
-    cuts = [_fx_cut([rows_num[s][i] for s in sectors]) for i in range(6)]
+    def _expand(d: tuple[float, ...]) -> tuple[float, ...]:
+        no_af, af, ndf, resto, no_af5, af5, ndf5, resto5 = d
+        return (no_af, af, ndf, resto, no_af + af + ndf + resto,
+                no_af5, af5, ndf5, resto5, no_af5 + af5 + ndf5 + resto5)
+
+    rows_num = {s: _expand(d) for s, d in data.items()}
+    bold_cols = {4, 9}
+    cuts = [_fx_cut([rows_num[s][i] for s in sectors]) for i in range(10)]
 
     body = ""
     for s in sectors:
         vals = rows_num[s]
-        cells = "".join(
-            _fx_cell(v, cuts[i], bold=i in (2, 5)) for i, v in enumerate(vals)
-        )
-        body += f'<tr><td style="{tdl}">{_esc(s)}</td>{cells}</tr>'
-
-    totals = tuple(sum(rows_num[s][i] for s in sectors) for i in range(6))
-    tdt = ("text-align:right;padding:6px 8px;font-size:12px;font-weight:700;"
-           "background:#eef3f9;border-top:2px solid #4a5a72;white-space:nowrap")
-    total_row = (
-        f'<tr><td style="{tdl};background:#eef3f9;border-top:2px solid #4a5a72">TOTAL</td>'
-        + "".join(f'<td style="{tdt}">{_fmt_num(v)}</td>' for v in totals) + "</tr>"
-    )
+        cells = "".join(_fx_cell(v, cuts[i], bold=i in bold_cols) for i, v in enumerate(vals))
+        label_style = tdl_split if s == split_before else tdl
+        body += f'<tr><td style="{label_style}">{_esc(s)}</td>{cells}</tr>'
 
     return (
-        '<div style="overflow-x:auto;max-width:760px;margin:6px auto">'
+        '<div style="overflow-x:auto;max-width:1100px;margin:6px auto">'
         '<table style="width:100%;border-collapse:collapse">'
         f'<thead><tr><th style="{thl}" rowspan="2">Sector</th>'
-        f'<th style="{thg}" colspan="3">Día ({_esc(day_label)})</th>'
-        f'<th style="{thg}" colspan="3">Acumulado ({_esc(span_label)})</th></tr>'
-        f'<tr><th style="{th}">Spot</th><th style="{th}">Derivados</th>'
-        f'<th style="{th}">Spot y deriv.</th>'
-        f'<th style="{th}">Spot</th><th style="{th}">Derivados</th>'
-        f'<th style="{th}">Spot y deriv.</th></tr></thead>'
-        f"<tbody>{body}{total_row}</tbody></table>"
+        f'<th style="{thg}" colspan="2">Spot</th><th style="{thg}" colspan="2">Derivados</th>'
+        f'<th style="{thg}">Spot y derivados</th>'
+        f'<th style="{thg}" colspan="2">Spot 5 días</th><th style="{thg}" colspan="2">Derivados 5 días</th>'
+        f'<th style="{thg}">Spot y derivados 5 días</th></tr>'
+        f'<tr><th style="{th}">No afecto</th><th style="{th}">Afecto</th>'
+        f'<th style="{th}">NDF</th><th style="{th}">Resto</th><th style="{th}"></th>'
+        f'<th style="{th}">No afecto</th><th style="{th}">Afecto</th>'
+        f'<th style="{th}">NDF</th><th style="{th}">Resto</th><th style="{th}"></th></tr></thead>'
+        f"<tbody>{body}</tbody></table>"
         f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)} · '
-        "positivo = compra de dólares, negativo = venta</div></div>"
+        " </div></div>"
     )
 
 
@@ -1662,28 +1780,65 @@ def render_fx_delta_table(
     unit: str = "US$ Mill.",
     total_label: str = "Total",
     asof: str = "",
+    title: str = "",
+    note: str = "variación neta acumulada de las últimas N jornadas con dato",
+    data_spot: dict[str, tuple[float, ...]] | None = None,
+    spot_note: str = "monto acumulado de las últimas N jornadas con dato",
 ) -> str:
-    """Posición en derivados por agente: filas = agente, columnas = Δ T-N (variación
-    neta acumulada de las últimas N jornadas con dato)."""
+    """Posición por agente: filas = agente, columnas = Δ T-N. Si ``data_spot`` viene
+    dado, Spot y Derivados salen en UNA sola tabla (grupos de columnas, igual que
+    ``render_fx_summary_table``) en vez de dos tablas apiladas."""
     th = "text-align:right;padding:6px 8px;background:#4a5a72;color:#fff;font-size:11px;white-space:nowrap"
     thl = "text-align:left;padding:6px 8px;background:#4a5a72;color:#fff;font-size:11px"
+    thg = "text-align:center;padding:5px 8px;background:#0b3766;color:#fff;font-size:11px;white-space:nowrap"
     tdl = "text-align:left;padding:4px 8px;border-bottom:1px solid #eee;font-size:12px;font-weight:700"
+    tdt = ("text-align:right;padding:6px 8px;font-size:12px;font-weight:700;"
+           "background:#eef3f9;border-top:2px solid #4a5a72;white-space:nowrap")
+    n = len(windows)
+    cuts = [_fx_cut([data[a][i] for a in agents]) for i in range(n)]
+    asof_note = f" · corte {_esc(asof)}" if asof else ""
 
-    cuts = [_fx_cut([data[a][i] for a in agents]) for i in range(len(windows))]
+    if data_spot is not None:
+        cuts_spot = [_fx_cut([data_spot[a][i] for a in agents]) for i in range(n)]
+        body = ""
+        for a in agents:
+            spot_cells = "".join(_fx_cell(v, cuts_spot[i]) for i, v in enumerate(data_spot[a]))
+            deriv_cells = "".join(_fx_cell(v, cuts[i]) for i, v in enumerate(data[a]))
+            body += f'<tr><td style="{tdl}">{_esc(a)}</td>{spot_cells}{deriv_cells}</tr>'
+        body += (
+            f'<tr><td style="{tdl};background:#eef3f9;border-top:2px solid #4a5a72">{_esc(total_label)}</td>'
+            + "".join(f'<td style="{tdt}">{_fmt_num(v)}</td>' for v in data_spot.get(total_label, ()))
+            + "".join(f'<td style="{tdt}">{_fmt_num(v)}</td>' for v in data.get(total_label, ()))
+            + "</tr>"
+        )
+        deriv_label = title or "Derivados"
+        return (
+            '<div style="overflow-x:auto;max-width:1300px;margin:6px auto">'
+            '<table style="width:100%;border-collapse:collapse">'
+            f'<thead><tr><th style="{thl}" rowspan="2">Agente</th>'
+            f'<th style="{thg}" colspan="{n}">Spot</th>'
+            f'<th style="{thg}" colspan="{n}">{_esc(deriv_label)}</th></tr>'
+            '<tr>' + ("".join(f'<th style="{th}">&#916; T-{w}</th>' for w in windows) * 2) + '</tr></thead>'
+            f"<tbody>{body}</tbody></table>"
+            f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)} · '
+            f"Spot: {spot_note} · {deriv_label}: {note}{asof_note}</div></div>"
+        )
+
+    # ── sin Spot: tabla única (comportamiento de siempre) ──
     body = ""
     for a in agents:
         cells = "".join(_fx_cell(v, cuts[i]) for i, v in enumerate(data[a]))
         body += f'<tr><td style="{tdl}">{_esc(a)}</td>{cells}</tr>'
-
-    tdt = ("text-align:right;padding:6px 8px;font-size:12px;font-weight:700;"
-           "background:#eef3f9;border-top:2px solid #4a5a72;white-space:nowrap")
     body += (
         f'<tr><td style="{tdl};background:#eef3f9;border-top:2px solid #4a5a72">{_esc(total_label)}</td>'
         + "".join(f'<td style="{tdt}">{_fmt_num(v)}</td>' for v in data.get(total_label, ()))
         + "</tr>"
     )
-    asof_note = f" · corte {_esc(asof)}" if asof else ""
+    title_html = (
+        f'<div style="font-size:12px;font-weight:700;margin:10px 0 2px">{_esc(title)}</div>' if title else ""
+    )
     return (
+        f'{title_html}'
         '<div style="overflow-x:auto;max-width:760px;margin:6px auto">'
         '<table style="width:100%;border-collapse:collapse">'
         f'<thead><tr><th style="{thl}">Agente</th>'
@@ -1691,9 +1846,8 @@ def render_fx_delta_table(
         + "</tr></thead>"
         f"<tbody>{body}</tbody></table>"
         f'<div style="font-size:11px;color:#777;margin:4px 0 0">{_esc(unit)} · '
-        f"variación neta acumulada de las últimas N jornadas con dato{asof_note}</div></div>"
+        f"{note}{asof_note}</div></div>"
     )
-
 
 # ── Tablas del informe DCV (Stocks Depósito Central de Valores) ──────────────
 #

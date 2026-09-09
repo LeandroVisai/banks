@@ -19,10 +19,8 @@ informe como tarjeta "Sin datos" con la nota de qué serie falta, para que el
 correo conserve la numeración del original y se vea qué habría que traer del
 servidor. Verificado contra las columnas REALES de los 174 parquets:
 
-  - N°5 y N°6  — tramo de PRECIO de la transacción: ninguna columna de precio
-    (los ``Tramo`` del catálogo son de plazo: "1Y", "Menor a 2Y").
-  - N°7.1 y N°8.1 — fixing abierto por instrumento y por fecha-banco: los dos
-    parquets de fixing solo abren por sector contraparte.
+  - N°6 — tramo de PRECIO de suscripciones/vencimientos: ninguna columna de
+    precio (los `Tramo` del catálogo son de plazo: "1Y", "Menor a 2Y").
   - SDR (3) — no hay dataset de transacciones SDR.
   - N°12 — clasificación especulativo / carry / cobertura.
   - N°14 y N°15 — fixing cruzado banco x agente offshore.
@@ -30,9 +28,6 @@ servidor. Verificado contra las columnas REALES de los 174 parquets:
 Dos diferencias de COBERTURA (el gráfico existe y es correcto, pero el universo
 del parquet es más chico que el del correo); van anotadas en el bloque:
 
-  - N°3 y N°4: el correo abre el eje X por sector; el único parquet con la
-    apertura suscripción/vencimiento por instrumento es de no residentes y su
-    ``Institucion`` son los agentes offshore contraparte.
   - Tabla resumen: el correo abre Spot en afecto/no-afecto y Derivados en
     NDF/resto; ``flujo_cambiario`` solo trae ``Spot`` y ``Forward`` por sector.
 
@@ -50,6 +45,7 @@ from banks_rag.application.reporting.report_spec import (
 )
 
 # Secciones (banners del correo, literales).
+_S_TABLA = "TABLA DE FLUJOS"
 _S_RESUMEN = "RESUMEN GENERAL"
 _S_SDR = "Flujos SDR Forward FX USD - CLP"
 _S_NR = "NO RESIDENTES"
@@ -57,18 +53,19 @@ _S_NR = "NO RESIDENTES"
 # Sector del parquet → nombre del correo, en el orden de la tabla del original.
 _SECTOR_LABELS = {
     "AFP": "AFP",
-    "CS": "CIA SEGUROS",
-    "CB": "CORREDORA DE BOLSA",
-    "Emp_financiera": "EMPRESA FINANCIERA",
-    "Mineras": "EMPRESA MINERA",
-    "Emp_real": "EMPRESA REAL",
+    "Bancos": "Bancos",
+    "BCCh": "BCCh",
+    "CS": "Cia Seguros",
+    "CB": "Corredora De Bolsa",
+    "Emp_financiera": "Empresa Financiera",
+    "Mineras": "Empresa Minera",
+    "Emp_real": "Empresa Real",
     "FFMM": "FFMM",
-    "NR": "NO RESIDENTES",
-    "Persona_natural": "PERSONAS NATURALES",
-    "Otros": "OTROS",
-    "BCCh": "BCCH",
+    "NR": "No Residentes",
+    "Persona_natural": "Personas Naturales",
+    "Otros": "Otros",
     "TGR": "TGR",
-    "Bancos": "BANCOS",
+    
 }
 _SECTOR_ORDER = list(_SECTOR_LABELS.values())
 
@@ -82,12 +79,12 @@ _SECTOR_SERIES_ORDER = list(_SECTOR_SERIES)
 
 # Instrumento del parquet → nombre del correo (leyenda de N°3 / N°4 / N°10).
 _INSTRUMENT_LABELS = {
-    "CSS": "CCS",
     "FWD": "Forward",
-    "FWD_obs": "Forward observado",
     "FXS": "Fx swap",
+    "CSS": "CCS",
     "CALL": "Opción call",
     "PUT": "Opción put",
+    "FWD_obs": "Forward observado"
 }
 _INSTRUMENT_ORDER = list(_INSTRUMENT_LABELS)
 
@@ -97,19 +94,39 @@ _PLAZO_ORDER = ["1 a 7 dias", "8 a 30 dias", "31 a 90 dias", "91 a 180 dias",
 
 _SUSC_VCTO_LABELS = {"Suscripcion": "Suscripciones", "Vencimiento": "Vencimientos"}
 
+# Agentes de spot_susc_vcto_agente.parquet (columna Institucion), sin Total (va
+# aparte como fila de cierre): para que Tabla N°1 los liste TODOS aunque un
+# agente no haya operado en la ventana leída (queda en 0), no solo los que
+# aparecen en el corte.
+_SPOT_SUSC_VCTO_AGENTS = [
+    "Air Products and Chemicals", "BBVA", "BNP Paribas", "Bank of America",
+    "Barclays", "Bryan Whitfield Miller .", "Caixa",
+    "Canada Pension Plan Investme", "Citibank", "Credit Agricole", "Deutsche",
+    "Euroclear", "Goldman Sachs", "HSBC", "Itau", "J.P. Morgan Securities Llc",
+    "JP Morgan", "Merrill Lynch", "Morgan Stanley", "Natixis", "Otros_static",
+    "Santander", "Scotiabank", "Societe Generale", "Standard Chartered", "TD",
+    "UBS", "Wells Fargo",
+]
+
+# Tramos de plazo SDR (sdr_ndf_plazo / sdr_ndf_precio_plazo), del más corto al
+# más largo (eje X de los bloques SDR); no vienen ordenados en el parquet.
+_SDR_PLAZO_ORDER = ["1 semana", "2 semanas", "1 mes", "2 meses", "3 meses",
+                    "6 meses", "9 meses", "1 año"]
+
 _BLOCKS: tuple[ReportBlock, ...] = (
     # ═══ RESUMEN GENERAL ═════════════════════════════════════════════════════
     # Tabla que abre el correo (sin número): ancla numérica del informe; el resto
     # de los gráficos desagrega estas mismas cifras.
     ReportBlock(
-        section=_S_RESUMEN, title="Resumen de flujos por sector (US$ MM)",
+        section=_S_TABLA, title="Resumen de flujos por sector (US$ MM)",
         chart="heatmap_table", status=STATUS_MVP,
-        source_id="flujo_cambiario", transform="fx_sector_flow_table",
-        params={"sector": "Sector", "spot": "Spot", "deriv": "Forward", "days": 5,
+        source_id="flujos_por_sector_ultimo_dia", transform="fx_sector_flow_table",
+        params={"sector": "Sector", "category": "Categoria", "value": "Monto",
+                "source_id_5d": "flujos_por_sector_ultimos_cinco_dias",
                 "labels": _SECTOR_LABELS, "order": _SECTOR_ORDER},
-        note="*positivo = compra de dólares, negativo = venta. El correo abre además "
-             "Spot en afecto/no-afecto y Derivados en NDF/resto: esa apertura no está "
-             "en el parquet (solo Spot y Forward por sector)",
+        note="*positivo = compra de dólares, negativo = venta. Spot abierto en "
+             "no afecto/afecto y Derivados en NDF/resto, con su columna de "
+             "consolidación, para el día y el acumulado de 5 días",
     ),
     # N°1 y N°2: una línea por sector acumulando el flujo del último mes. Todas
     # nacen en 0 el primer día de la ventana (anchor_zero), como el original.
@@ -120,7 +137,7 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         params={"category": "Sector", "value": "Spot",
                 "accumulate": "cumsum", "window": "d30", "anchor_zero": True,
                 "order": _SECTOR_SERIES_ORDER, "labels": _SECTOR_SERIES},
-        note="*flujo spot acumulado (suma corrida) de los últimos 30 días",
+        note="*flujo spot acumulado de los últimos 30 días",
     ),
     ReportBlock(
         section=_S_RESUMEN, title="Gráfico N°2: Derivados acumulado por sectores (US$ MM)",
@@ -129,94 +146,109 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         params={"category": "Sector", "value": "Forward",
                 "accumulate": "cumsum", "window": "d30", "anchor_zero": True,
                 "order": _SECTOR_SERIES_ORDER, "labels": _SECTOR_SERIES},
-        note="*flujo en derivados acumulado (suma corrida) de los últimos 30 días",
+        note="*flujo en derivados acumulado de los últimos 30 días",
     ),
     # N°3 y N°4: mismo corte (último día) abierto por instrumento, con columna
-    # Total. El eje X es el agente offshore, no el sector (ver docstring).
+    # Total. ``susc_neta_sector_instrumento`` ya trae Sector directo (sin agente
+    # offshore intermedio), en el orden del correo vía ``group_order``.
     ReportBlock(
         section=_S_RESUMEN, title="Gráfico N°3: Suscripciones netas derivados (US$ MM)",
         chart="stacked_bar", status=STATUS_MVP,
-        source_id="susc_vcto_agente_instrumento", transform="window_stacked_two_cat",
-        params={"group": "Institucion", "series": "Instrumento", "value": "Monto",
-                "filter_col": "Tipo", "filter_val": "Suscripción", "window_days": 1,
+        source_id="susc_neta_sector_instrumento", transform="window_stacked_two_cat",
+        params={"group": "Sector", "series": "Instrumento", "value": "Suscripcion", "window_days": 1,
                 "labels": _INSTRUMENT_LABELS, "series_order": _INSTRUMENT_ORDER,
-                "exclude_groups": ["Total"], "total_label": "Total"},
-        note="*suscripciones del último día, apiladas por instrumento; Neto como punto. "
-             "Eje X = agente offshore: el corte por sector del correo no está en el catálogo",
+                "group_order": list(_SECTOR_LABELS), "total_label": "Total"},
+        note="*suscripciones del último día, apiladas por instrumento; Neto como punto",
     ),
     ReportBlock(
         section=_S_RESUMEN, title="Gráfico N°4: Vencimientos netos derivados (US$ MM)",
         chart="stacked_bar", status=STATUS_MVP,
-        source_id="susc_vcto_agente_instrumento", transform="window_stacked_two_cat",
-        params={"group": "Institucion", "series": "Instrumento", "value": "Monto",
-                "filter_col": "Tipo", "filter_val": "Vencimiento", "window_days": 1,
+        source_id="susc_neta_sector_instrumento", transform="window_stacked_two_cat",
+        params={"group": "Sector", "series": "Instrumento", "value": "Vencimiento", "window_days": 1,
                 "labels": _INSTRUMENT_LABELS, "series_order": _INSTRUMENT_ORDER,
-                "exclude_groups": ["Total"], "total_label": "Total"},
+                "group_order": list(_SECTOR_LABELS), "total_label": "Total"},
         note="*vencimientos del último día, apilados por instrumento; Neto como punto",
     ),
     ReportBlock(
         section=_S_RESUMEN, title="Gráfico N°5: Spot por tramo de precio (US$ MM)",
-        chart="stacked_bar", status=STATUS_SKIP,
-        note="Falta parquet: spot del día abierto por TRAMO DE PRECIO (<924, 924-926, …) "
-             "y sector. Ningún parquet trae el precio de la transacción; los `Tramo` del "
-             "catálogo son de plazo.",
+        chart="stacked_bar", status=STATUS_MVP,
+        source_id="spot_bucket_sector", transform="snapshot_stacked",
+        params={"x": "Bucket", "series": "Sector", "value": "Monto",
+                "labels": _SECTOR_LABELS, "series_order": _SECTOR_ORDER,
+                },
+        note="*monto spot transado por tramo de tipo de cambio (Bucket) y sector",
     ),
-    ReportBlock(
+    ReportBlock( 
         section=_S_RESUMEN,
         title="Gráfico N°6: Suscripciones por tramo de precio y vencimientos (US$ MM)",
-        chart="stacked_bar", status=STATUS_SKIP,
-        note="Falta parquet: suscripciones de derivados por TRAMO DE PRECIO pactado y "
-             "sector, más la columna de vencimientos.",
+        source_id="susc_bucket_tc_sector", chart="stacked_bar", status=STATUS_MVP,
+        transform="snapshot_stacked",
+        params={"x": "Bucket", "series": "Sector", "value": "Pos_neta",
+            "labels": _SECTOR_LABELS, "series_order": _SECTOR_ORDER},
+        note="*posiciones netas por tramo de tipo de cambio (Bucket) y sector",
     ),
     # N°7: quién queda con el fixing NDF del próximo vencimiento, por banco
     # informante, abierto por sector contraparte.
     ReportBlock(
-        section=_S_RESUMEN, title="Gráfico N°7: Próximo fixing por banco - NDF (US$ MM)",
-        chart="stacked_bar", status=STATUS_MVP,
-        source_id="fixing_banca_sector", transform="wide_row_stacked",
-        params={"row": "Institucion", "overlay": ["Neto"], "exclude_rows": ["Total"],
-                "labels": _SECTOR_SERIES},
-        note="*por banco informante, apilado por sector contraparte; Neto como punto",
+    section=_S_RESUMEN, title="Gráfico N°7: Próximo fixing por banco - NDF (US$ MM)",
+    chart="stacked_bar", status=STATUS_MVP,
+    source_id="fixing_proximo_contraparte", transform="snapshot_stacked",
+    params={"x": "Informante", "series": "Contraparte", "value": "Monto",
+            "labels": _SECTOR_LABELS, "series_order": _SECTOR_ORDER,
+            "exclude_series": ["Bancos"], "total_overlay": True},
+    note="*por banco informante, apilado por sector contraparte; Total como punto",
     ),
-    # N°8: el mismo fixing agregado, comparado contra los cortes previos.
+    # N°8: cada Fixing futuro como una barra, apilada por Contraparte.
     ReportBlock(
-        section=_S_RESUMEN,
-        title="Gráfico N°8: Últimos y próximos fixing de la banca - NDF (US$ MM)",
-        chart="stacked_bar", status=STATUS_MVP,
-        source_id="fixing_por_fecha", transform="wide_row_stacked",
-        params={"row": "Temporalidad", "overlay": ["Neto"], "labels": _SECTOR_SERIES,
-                "row_order": ["Hoy", "Ayer", "1 semana", "2 semanas", "1 mes"]},
-        note="*el parquet trae cortes RELATIVOS (hoy / ayer / 1 semana / 2 semanas / "
-             "1 mes), no las fechas de fixing futuras del correo original",
+    section=_S_RESUMEN,
+    title="Gráfico N°8: Últimos y próximos fixing de la banca - NDF (US$ MM)",
+    chart="stacked_bar", status=STATUS_MVP,
+    source_id="fixing_futuro_contraparte", transform="snapshot_stacked",
+    params={"x": "Fixing", "series": "Contraparte", "value": "Monto",
+            "labels": _SECTOR_SERIES, "series_order": _SECTOR_SERIES_ORDER,
+            "total_overlay": True},
+    note="*una barra por fecha de fixing futuro, apilada por sector contraparte; Total como punto",
+    ),
+    # N°7.1: mismo parquet que N°8.1, filtrado a la fecha de fixing futura más próxima.
+    ReportBlock(
+    section=_S_RESUMEN, title="Gráfico N°7.1. Próximo fixing según tipo de Instrumento",
+    chart="stacked_bar", status=STATUS_MVP,
+    source_id="fixing_futuro_informante", transform="snapshot_stacked",
+    params={"x": "Informante", "series": "Instrumento", "value": "Monto",
+            "date_col": "Fixing", "date_mode": "nearest", "total_overlay": True},
+    note="*por banco informante, apilado por instrumento. Total como punto",
     ),
     ReportBlock(
-        section=_S_RESUMEN, title="Gráfico N°7.1. Próximo fixing según tipo de Instrumento",
-        chart="stacked_bar", status=STATUS_SKIP,
-        note="Falta parquet: fixing por banco abierto por INSTRUMENTO (forward / FX swap / "
-             "CCS / opciones). `fixing_banca_sector` solo abre por sector contraparte.",
+    section=_S_RESUMEN, title="Gráfico N°8.1 Fixing NDF según banco",
+    chart="stacked_bar", status=STATUS_MVP,
+    source_id="fixing_futuro_informante", transform="snapshot_stacked",
+    params={"x": "Fixing", "series": "Informante", "value": "Monto",
+            "total_overlay": True},
+    note="*una barra por fecha de fixing futuro, apilada por banco informante; Total como punto",
     ),
-    ReportBlock(
-        section=_S_RESUMEN, title="Gráfico N°8.1 Fixing NDF según banco",
-        chart="stacked_bar", status=STATUS_SKIP,
-        note="Falta parquet: fixing por FECHA de vencimiento futura y banco. "
-             "`fixing_por_fecha` agrega por temporalidad relativa, sin abrir por banco.",
-    ),
+
     # ═══ Flujos SDR Forward FX USD - CLP ═════════════════════════════════════
     ReportBlock(
         section=_S_SDR, title="Monto transado según bucket (usd)",
-        chart="bar_time", status=STATUS_SKIP,
-        note="Falta parquet: transacciones SDR forward USD-CLP por bucket de plazo "
-             "(1 semana, 2 semanas, 1 mes, …).",
+        chart="grouped_bar", source_id="sdr_ndf_plazo", status=STATUS_MVP,
+        transform="snapshot_grouped",
+        params={"group": "Bucket", "values": ["Monto"], "order": _SDR_PLAZO_ORDER},
+        note="*transacciones SDR forward USD-CLP por bucket de plazo",
     ),
     ReportBlock(
         section=_S_SDR, title="Monto transado según fecha de vencimiento (usd)",
-        chart="bar_time", status=STATUS_SKIP,
-        note="Falta parquet: monto SDR forward por fecha de vencimiento operada.",
+        chart="grouped_bar", source_id="sdr_ndf_vencimiento_semana", status=STATUS_MVP,
+        transform="daily_wide_stacked",
+        params={"include": ["Monto"], "from_start": True, "last_n": 10, "net": False},
+        note="*monto SDR forward por fecha de vencimiento operada",
     ),
     ReportBlock(
         section=_S_SDR, title="Precio promedio transacciones",
-        chart="line", status=STATUS_SKIP,
-        note="Falta parquet: precio promedio pactado por bucket de plazo en SDR.",
+        chart="curve", source_id="sdr_ndf_precio_plazo", status=STATUS_MVP,
+        transform="snapshot_grouped",
+        params={"group": "Bucket", "values": ["Precio"], "order": _SDR_PLAZO_ORDER,
+                "zero_base": False},
+        note="*precio promedio pactado por bucket de plazo en SDR",
     ),
     # ═══ NO RESIDENTES ═══════════════════════════════════════════════════════
     # N°9: la jornada de los NR en derivados, día a día. Suscripciones arriba,
@@ -225,33 +257,36 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         section=_S_NR, title="Gráficos N°9: Posición derivados (US$ MM)",
         chart="stacked_bar", status=STATUS_MVP,
         source_id="var_pos_derivados", transform="daily_wide_stacked",
-        params={"include": ["Suscripcion", "Vencimiento"], "negate": ["Vencimiento"],
-                "last_n": 10, "labels": _SUSC_VCTO_LABELS, "net_label": "Posición"},
-        note="*últimas 10 jornadas; el vencimiento resta, la Posición (punto) es la "
-             "variación neta del día",
+        params={"include": ["Suscripcion", "Vencimiento"],
+                "last_n": 7, "labels": _SUSC_VCTO_LABELS, "net_label": "Posición"},
+        note="*variación neta del día",
+        full_width=True,
     ),
-    # Tabla N°1: qué agente offshore movió la posición, en 4 ventanas.
+    # Tabla N°1: qué agente offshore movió la posición, en 4 ventanas, Spot y
+    # Derivados por separado (dos mini-tablas), con todos los agentes del
+    # catálogo aunque no hayan operado en la ventana (quedan en 0).
     ReportBlock(
         section=_S_NR, title="Tabla N°1: Posición derivados (US$ MM)",
         chart="heatmap_table", status=STATUS_MVP,
-        source_id="susc_vcto_agente_instrumento", transform="fx_agent_delta_table",
+        source_id="spot_susc_vcto_agente", transform="fx_agent_delta_table",
         params={"agent": "Institucion", "value": "Monto", "type_col": "Tipo",
-                "pos": "Suscripción", "neg": "Vencimiento",
-                "windows": [1, 5, 10, 20], "exclude_agents": ["Total"]},
-        note="*variación neta (suscripción - vencimiento) acumulada de las últimas N "
-             "jornadas con dato. El parquet agrupa los agentes menores en `Otros`",
+            "pos": "Suscripción", "neg": "Vencimiento", "spot": "Spot", "net": False,
+            "windows": [1, 5], "exclude_agents": ["Total"],
+            "all_agents": _SPOT_SUSC_VCTO_AGENTS},
+        note="*Spot y Derivados (suscripción + vencimiento) por separado, monto "
+             ". Incluye todos los Agentes NR",
+        full_width=True,
     ),
-    # N°10: composición diaria del monto BRUTO suscrito, con el promedio del período.
+    # N°10: stock acumulado DESDE EL INICIO de la serie por instrumento; la
+    # ventana solo recorta la vista al último mes, sin reiniciar el acumulado.
     ReportBlock(
         section=_S_NR, title="Gráfico N°10: Suscripciones brutas derivados (US$ MM)",
         chart="stacked_area", status=STATUS_MVP,
-        source_id="susc_vcto_agente_instrumento", transform="category_series",
-        params={"category": "Instrumento", "value": "Monto",
-                "filter_col": "Tipo", "filter_val": "Suscripción",
-                "abs": True, "window": "d30", "mean_overlay": True,
+        source_id="nr_susc_neta_instrumento", transform="category_series",
+        params={"category": "Instrumento", "value": "Pos_neta", "window": "d30",
                 "labels": _INSTRUMENT_LABELS, "order": _INSTRUMENT_ORDER},
-        note="*monto BRUTO suscrito por día e instrumento (últimos 30 días); la línea "
-             "marca el promedio diario del período",
+        note="*monto suscrito acumulado desde el inicio de la serie por "
+             "instrumento; se muestra el movimiento del stock del último mes",
     ),
     # N°11: el último día por TRAMO DE PLAZO del contrato. Suscripción suma y
     # vencimiento resta, así el alto neto de la barra es la variación del tramo.
@@ -260,52 +295,58 @@ _BLOCKS: tuple[ReportBlock, ...] = (
         chart="stacked_bar", status=STATUS_MVP,
         source_id="posicion_derivados_plazo", transform="window_grouped",
         params={"group": "Plazo", "values": ["Suscripcion", "Vencimiento"],
-                "window_days": 1, "include_net": True, "net_as_overlay": True,
-                "negate": ["Vencimiento"], "order": _PLAZO_ORDER,
+                "window_days": 0, "include_net": True, "net_as_overlay": True, "order": _PLAZO_ORDER,
                 "labels": _SUSC_VCTO_LABELS},
         note="*último día por tramo; Neto = Suscripciones - Vencimientos",
-    ),
+    ),   
+
     ReportBlock(
-        section=_S_NR, title="Gráfico N°12: Posición NR todos los derivados (US$)",
-        chart="stacked_area", status=STATUS_SKIP,
-        note="Falta parquet: clasificación de la posición NR por MOTIVO (especulativo / "
-             "carry / cobertura). `posicion_derivados_plazo.Modalidad` solo distingue "
-             "compensación de entrega física, que no es lo mismo.",
-    ),
-    # N°13: la misma posición por plazo, acumulada a lo largo del mes.
+            section=_S_NR, title="Gráfico N°12: Posición NR todos los derivados (US$)",
+            unit="US$ Mill.", chart="stacked_area", status=STATUS_MVP,
+            source_id="posicion_nr_derivados", date_from= "2022-01-01", transform="wide_lines",
+            params={"overlay": ["Neto"]},
+            note="*posición por tramo de plazo; Neto = suma de tramos",
+        ),
+
+    # N°13: la misma posición por plazo, acumulada a lo largo del mes. ## REVISAR URGENTE.
     ReportBlock(
-        section=_S_NR, title="Gráfico N°13: Posición acumulada por plazos derivados (US$ MM)",
+        section=_S_NR, title="Gráfico N°13: Posición acumulada por plazos derivados (US$ MM)", 
         chart="line", status=STATUS_MVP,
         source_id="posicion_derivados_plazo", transform="category_series",
-        params={"category": "Plazo", "value": "Suscripcion", "value_neg": "Vencimiento",
-                "net": "auto", "accumulate": "cumsum", "window": "d30",
+        params={"category": "Plazo", "value":"Suscripcion","value":"Vencimiento",
+                "net": "False", "accumulate": "cumsum", "window": "d30",
                 "anchor_zero": True, "order": _PLAZO_ORDER},
         note="*posición neta (suscripción - vencimiento) acumulada por tramo, últimos "
              "30 días; Neto = suma de tramos",
     ),
+
     ReportBlock(
-        section=_S_NR,
-        title="Gráfico N°14: Último fixing de la banca por agente - NDF (US$ MM)",
-        chart="stacked_bar", status=STATUS_SKIP,
-        note="Falta parquet: fixing cruzado banco informante x AGENTE offshore "
-             "(Citibank, JP Morgan, …). El catálogo abre el fixing por sector, no por "
-             "contraparte nominada.",
-    ),
+            section=_S_NR, title="Gráfico N°14: Último fixing de la banca por agente - NDF (US$ MM)",
+            chart="stacked_bar", status=STATUS_MVP,
+            source_id="fixing_nr_t_1", transform="snapshot_stacked",
+            params={"x": "Informante", "series": "Nombre", "value": "Monto", "total_overlay": True},
+            note="*por banco informante, apilado por sector contraparte; Total como punto",
+            ),
+
     ReportBlock(
-        section=_S_NR,
-        title="Gráfico N°15: Próximo fixing de la banca por agente - NDF (US$ MM)",
-        chart="stacked_bar", status=STATUS_SKIP,
-        note="Falta parquet: mismo cruce que el N°14 para el próximo fixing.",
-    ),
+        section=_S_NR, title="Gráfico N°15: Próximo fixing de la banca por agente - NDF (US$ MM)",
+        chart="stacked_bar", status=STATUS_MVP,
+        source_id="fixing_nr_proximo", transform="snapshot_stacked",
+        params={"x": "Informante", "series": "Nombre", "value": "Monto", "total_overlay": True},
+        note="*por banco informante, apilado por sector contraparte; Total como punto",
+        ),
+
+
 )
 
 FX_SPEC = FamilyReportSpec(
     family="fx",
     title="Informe Flujos Cambiarios",
     blocks=_BLOCKS,
-    # SIN corte común: cada bloque se ancla al máximo de SU propio parquet, para
-    # que el informe muestre el último dato disponible de cada serie. El corte
-    # común (mín de los máximos) arrastraba TODO el informe a la fecha del parquet
-    # más atrasado y dejaba fuera datos que sí existían en los demás.
     share_weekly_cutoff=False,
+    grid_sections=frozenset({
+            _S_TABLA, _S_RESUMEN ,_S_SDR,_S_NR
+        }),
+
 )
+

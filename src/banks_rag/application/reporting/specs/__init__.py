@@ -14,6 +14,7 @@ from .dcv_spec import DCV_SPEC
 from .ffmm_spec import FFMM_SPEC
 from .fx_spec import FX_SPEC
 from .nr_spec import NR_SPEC
+from .rf_spec import RF_SPEC
 
 _SPECS: dict[str, FamilyReportSpec] = {
     FFMM_SPEC.family: FFMM_SPEC,
@@ -22,6 +23,7 @@ _SPECS: dict[str, FamilyReportSpec] = {
     FX_SPEC.family: FX_SPEC,
     DCV_SPEC.family: DCV_SPEC,
     CAMBIARIOAM_SPEC.family: CAMBIARIOAM_SPEC,
+    RF_SPEC.family: RF_SPEC,
 }
 
 # El ``segment`` del catálogo no siempre coincide con el ``family`` del spec
@@ -32,6 +34,10 @@ _SPECS: dict[str, FamilyReportSpec] = {
 _SEGMENT_ALIASES: dict[str, str] = {
     "no_residentes": NR_SPEC.family,
     "fx_diferencial": FX_SPEC.family,
+    # El informe de renta fija se arma con datasets de varios segmentos (rf_tasas,
+    # spc_ois, dcv, mercado_monetario); los dos de tasas apuntan a su spec.
+    "rf_tasas": RF_SPEC.family,
+    "rf_volumenes": RF_SPEC.family,
 }
 
 
@@ -47,5 +53,6 @@ def available_families() -> list[str]:
 
 __all__ = [
     "AFP_SPEC", "CAMBIARIOAM_SPEC", "DCV_SPEC", "FFMM_SPEC", "FX_SPEC", "NR_SPEC",
+    "RF_SPEC",
     "available_families", "get_spec",
 ]

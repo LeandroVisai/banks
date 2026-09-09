@@ -1,11 +1,9 @@
-"""Informes batch sobre el catálogo de parquets (caso de uso de aplicación).
-
-Genera el informe descriptivo de datasets (estilo jarvis_news pero sobre los
-datos del catálogo): selección por segmento / ids / texto libre, un párrafo
-por dataset vía mini-loop de tool-calling, síntesis global y render MD/HTML.
-Entrypoint CLI: ``scripts/parquet_report.py``.
+"""Informes batch sobre el catálogo de parquets (caso de uso de aplicación).  
+Genera el informe descriptivo de datasets (estilo jarvis_news pero sobre los  
+datos del catálogo): selección por segmento / ids / texto libre, un párrafo  
+por dataset vía mini-loop de tool-calling, síntesis global y render MD/HTML.  
+Entrypoint CLI: ``scripts/parquet_report.py``.  
 """
-
 from .chart_inject import InjectStats, inject_charts_into_html
 from .curated_report import (
     CuratedBlock,
@@ -36,36 +34,3 @@ from .verify import (
     build_ledger,
     verify_report,
 )
-
-__all__ = [
-    "CuratedBlock",
-    "CuratedReport",
-    "DatasetSection",
-    "DatasetSelection",
-    "FamilyReportSpec",
-    "InjectStats",
-    "Issue",
-    "Ledger",
-    "ParquetReport",
-    "PlotData",
-    "PlotSeries",
-    "ReportBlock",
-    "VerificationReport",
-    "build_curated_report",
-    "build_ledger",
-    "compute_series",
-    "fill_synthesis_slot",
-    "fill_text_slots",
-    "generate_parquet_report",
-    "inject_charts_into_html",
-    "make_editable_html",
-    "rasterize_inline_svgs",
-    "render_curated_html",
-    "render_parquet_report_html",
-    "section_slot_ids",
-    "section_text_slots",
-    "select_datasets",
-    "strip_editable_chrome",
-    "svg_to_png",
-    "verify_report",
-]

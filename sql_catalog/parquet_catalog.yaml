@@ -104,7 +104,21 @@ datasets:
       - {name: Otros, type: DOUBLE}
       - {name: AUM, type: DOUBLE}
 
-
+  - id: vencimientos_tres_meses_sector
+    file: vencimientos_tres_meses_sector.parquet
+    chart_type: "stacked_bar"
+    name: "Vencimientos por sector próximos tres meses"
+    description: >
+      Serie de vencimientos por sector próximos tres meses para el seguimiento del segmento de DCV: análisis de posiciones. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tipo (BB, BE, BTP, DAP, Letras MdH, Otros, PDBC), Sector (AFP, Bancos, CB, CS, FFMM, Mandantes, Otros), Moneda (CLP, EURO, UF, USD). Incluye las métricas Stock_USD. Cubre el período entre 2026-08-19 y 2026-11-16. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: dcv
+    unit: "Millones de USD"
+    date_range: ["2026-08-25", "2026-11-23"]
+    columns:
+      - {name: Vencimiento, type: TIMESTAMP}
+      - {name: Tipo, type: VARCHAR, values: ["BB", "BE", "BTP", "DAP", "Letras MdH", "Otros", "PDBC"]}
+      - {name: Sector, type: VARCHAR, values: ["AFP", "Bancos", "CB", "CS", "FFMM", "Mandantes", "Otros"]}
+      - {name: Moneda, type: VARCHAR, values: ["CLP", "EURO", "UF", "USD"]}
+      - {name: Stock_USD, type: DOUBLE}
 
   - id: afp_posicion_swap_usd
     file: afp_posicion_swap_usd.parquet
@@ -114,13 +128,12 @@ datasets:
       Serie de posicion swap en dólares para el seguimiento del segmento de Fondos de Pensiones. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Tramo (10Y, 1Y, 2Y, 5Y), Plazo (10Y, 1Y, 2Y, 5Y). Incluye las métricas mmusd. Cubre el período entre 2019-09-30 y 2026-07-31. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
     segment: afp
     unit: "Millones de USD"
-    date_range: ["2019-09-01", "2026-07-01"]
+    date_range: ["2019-09-01", "2026-08-01"]
     columns:
       - {name: Fecha, type: TIMESTAMP}
-      - {name: Tramo, type: VARCHAR, values: ["10Y", "1Y", "2Y", "5Y"]}
+      - {name: Plazo, type: VARCHAR, values: ["Mayor a 10Y", "Menor a 10Y", "Menor a 1Y", "Menor a 2Y", "Menor a 3Y", "Menor a 5Y"]}
       - {name: Exposicion, type: DOUBLE}
       - {name: mmusd, type: DOUBLE}
-      - {name: Plazo, type: VARCHAR, values: ["10Y", "1Y", "2Y", "5Y"]}
 
   - id: afp_posicion_spc
     file: afp_posicion_spc.parquet
@@ -948,6 +961,24 @@ datasets:
     columns:
       - {name: "Tipo_Instrumento", type: VARCHAR, values: ["BB", "BE", "BTP", "BTU", "DAP", "PDBC"]}
       - {name: "mmusd", type: DOUBLE}
+
+  - id: variacion_sector_todos_año
+    file: variacion_sector_todos_año.parquet
+    chart_type: "stacked_bar"
+    name: "Variación por sector y año de vencimiento"
+    description: >
+      Serie de variación por sector y año de vencimiento para el seguimiento del segmento de DCV: análisis de posiciones. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Plazo (2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034, 2035, 2036, > 2036), Tipo (BB, BCCh, BE, BTP, BTU, DAP, Otros, PDBC), Sector (AFP, Bancos, CB, CS, Cuentas de Distribucion, FFMM, Mandantes, Otros), Moneda (CLP, UF). Incluye las métricas Stock_USD. Cubre el período entre 2026-05-04 y 2026-07-27. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: dcv
+    unit: "Millones de USD"
+    date_range: ["2026-06-03", "2026-08-28"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Plazo, type: VARCHAR, values: ["2026", "2027", "2028", "2029", "2030", "2031", "2032", "2033", "2034", "2035", "2036", "> 2036"]}
+      - {name: Tipo, type: VARCHAR, values: ["BB", "BCCh", "BE", "BTP", "BTU", "DAP", "Otros", "PDBC"]}
+      - {name: Sector, type: VARCHAR, values: ["AFP", "Bancos", "CB", "CS", "Cuentas de Distribucion", "FFMM", "Mandantes", "Otros"]}
+      - {name: Moneda, type: VARCHAR, values: ["CLP", "UF"]}
+      - {name: Stock_USD, type: DOUBLE}
+
 
   - id: duracion_ffmm
     file: duracion_ffmm.parquet
@@ -2114,10 +2145,11 @@ datasets:
     unit: "US$ Mill."
     date_range: ["2025-01-02", "2026-06-10"]
     columns:
-      - {name: "Fecha", type: TIMESTAMP}
-      - {name: "Institucion", type: VARCHAR, values: ["BBVA", "Citibank", "Goldman Sachs", "HSBC", "JP Morgan", "Merrill Lynch", "Morgan Stanley", "Otros", "Santander", "Scotiabank", "Standard Chartered"]}
-      - {name: "Tipo", type: VARCHAR, values: ["Spot", "Suscripción", "Vencimiento"]}
-      - {name: "Monto", type: DOUBLE}
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Institucion, type: VARCHAR, values: ["Air Products and Chemicals", "BBVA", "BNP Paribas", "Bank of America", "Barclays", "Bryan Whitfield Miller .", "Caixa", "Canada Pension Plan Investme", "Citibank", "Credit Agricole", "Deutsche", "Euroclear", "Goldman Sachs", "HSBC", "Itau", "J.P. Morgan Securities Llc", "JP Morgan", "Merrill Lynch", "Morgan Stanley", "Natixis", "Otros_static", "Santander", "Scotiabank", "Societe Generale", "Standard Chartered", "TD", "Total", "UBS", "Wells Fargo"]}
+      - {name: Tipo, type: VARCHAR, values: ["Spot", "Suscripción", "Vencimiento"]}
+      - {name: Monto, type: DOUBLE}
+
 
   - id: susc_vcto_agente_instrumento
     file: susc_vcto_agente_instrumento.parquet
@@ -3648,3 +3680,208 @@ datasets:
       - {name: Fecha, type: TIMESTAMP}
       - {name: Variable, type: VARCHAR, values: ["10Y", "20Y", "2Y", "5Y"]}
       - {name: Valor, type: DOUBLE}
+
+
+  - id: flujos_por_sector_ultimo_dia
+    file: flujos_por_sector_ultimo_dia.parquet
+    chart_type: "stacked_bar"
+    name: "Flujo cambiario por sector"
+    description: >
+      Serie de flujo cambiario por sector para el seguimiento del segmento de FX: flujos y fixing. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Sector (AFP, BCCh, Bancos, CB, CS, Emp_financiera, Emp_real, FFMM, Mineras, NR, Otros, TGR), Categoria (Derivados, NDF, Derivados, otros, Spot, afecto, Spot, no afecto). Incluye las métricas Monto. Cubre el período entre 2026-09-02 y 2026-09-02. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx_diferencial
+    unit: "Millones de USD"
+    date_range: ["2026-09-02", "2026-09-02"]
+    columns:
+      - {name: Sector, type: VARCHAR, values: ["AFP", "BCCh", "Bancos", "CB", "CS", "Emp_financiera", "Emp_real", "FFMM", "Mineras", "NR", "Otros", "TGR", "Total"]}
+      - {name: Categoria, type: VARCHAR, values: ["Derivados, NDF", "Derivados, otros", "Spot, afecto", "Spot, no afecto"]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: flujos_por_sector_ultimos_cinco_dias
+    file: flujos_por_sector_ultimos_cinco_dias.parquet
+    chart_type: "stacked_bar"
+    name: "Flujo cambiario por sector"
+    description: >
+      Serie de flujo cambiario por sector para el seguimiento del segmento de FX: flujos y fixing. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Sector (AFP, BCCh, Bancos, CB, CS, Emp_financiera, Emp_real, FFMM, Mineras, NR, Otros, TGR, Total), Categoria (Derivados, NDF, Derivados, otros, Spot, afecto, Spot, no afecto). Incluye las métricas Monto. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx_diferencial
+    unit: "Millones de USD"
+    date_range: []
+    columns:
+      - {name: Sector, type: VARCHAR, values: ["AFP", "BCCh", "Bancos", "CB", "CS", "Emp_financiera", "Emp_real", "FFMM", "Mineras", "NR", "Otros", "TGR", "Total"]}
+      - {name: Categoria, type: VARCHAR, values: ["Derivados, NDF", "Derivados, otros", "Spot, afecto", "Spot, no afecto"]}
+      - {name: Monto, type: DOUBLE}
+
+
+  - id: susc_neta_sector_instrumento
+    file: susc_neta_sector_instrumento.parquet
+    chart_type: "stacked_bar"
+    name: "Suscripciones netas por sector e instrumento en T-1"
+    description: >
+      Serie de suscripciones netas por sector e instrumento en t-1 para el seguimiento del segmento de Mercado FX. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Sector (AFP, BCCh, Bancos, CB, CS, Emp_financiera, Emp_real, FFMM, NR, Otros, Personas, TGR), Instrumento (CALL, CSS, FWD, FWD_obs, FXS, PUT), Modalidad (Compensación, Entrega física). Incluye las métricas Suscripcion, Vencimiento. Cubre el período entre 2026-08-31 y 2026-08-31. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx
+    unit: "Millones de USD"
+    date_range: ["2026-09-03", "2026-09-03"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Sector, type: VARCHAR, values: ["AFP", "BCCh", "Bancos", "CB", "CS", "Emp_financiera", "Emp_real", "FFMM", "NR", "Otros", "TGR"]}
+      - {name: Instrumento, type: VARCHAR, values: ["CALL", "CSS", "FWD", "FWD_obs", "FXS", "PUT"]}
+      - {name: Modalidad, type: VARCHAR, values: ["Compensación", "Entrega física"]}
+      - {name: Suscripcion, type: DOUBLE}
+      - {name: Vencimiento, type: DOUBLE}
+  
+
+  - id: susc_bucket_tc_sector
+    file: susc_bucket_tc_sector.parquet
+    chart_type: "stacked_bar"
+    name: "Suscripciones netas en T-1 por tipo de cambio y sector"
+    description: >
+      Serie de suscripciones netas por tipo de cambio y sector en t-1 para el seguimiento del segmento de Mercado FX. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Sector (AFP, BCCh, Bancos, CB, CS, Empresas, FFMM, NR), Bucket (915-917, 917-919, 919-921, <913, >921). Incluye las métricas Pos_neta. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx
+    unit: "Millones de USD"
+    date_range: []
+    columns:
+      - {name: Sector, type: VARCHAR, values: ["AFP", "BCCh", "Bancos", "CB", "CS", "Empresas", "FFMM", "NR"]}
+      - {name: Bucket, type: VARCHAR, values: ["<914", ">922"]}
+      - {name: Pos_neta, type: DOUBLE}
+      
+  - id: spot_bucket_sector
+    file: spot_bucket_sector.parquet
+    chart_type: "stacked_bar"
+    name: "Monto spot transado por bucket de tipo de cambio y sector"
+    description: >
+      Serie de monto spot transado por bucket de tipo de cambio y sector para el seguimiento del segmento de Mercado FX. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Sector (Afp, Bancos, Bcch, Cia Seguros, Corredora De Bolsa, Empresas, Ffmm, No Residentes, Otros, Persona_natural, Real, Tgr), Bucket (932-934, 934-936, 936-938, 938-940, <932, >940). Incluye las métricas Monto. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx
+    unit: "Millones de USD"
+    date_range: []
+    columns:
+      - {name: Sector, type: VARCHAR, values: ["AFP", "BCCh", "Bancos", "CB", "CS", "Emp_real", "Empresas", "FFMM", "NR", "Otros", "TGR"]}
+      - {name: Bucket, type: VARCHAR, values: ["931-933", "933-935", "935-937", "937-939", "<931", ">939"]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: fixing_proximo_contraparte
+    file: fixing_proximo_contraparte.parquet
+    chart_type: "stacked_bar"
+    name: "Fixing de la banca por agente"
+    description: >
+      Serie de fixing de la banca por agente para el seguimiento del segmento de FX: flujos y fixing. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Informante (BCI, BICE, BTG, Chile, Consorcio, Estado, Falabella, HSBC, Internacional, Itau-Corpbanca, JP Morgan, Santander, Scotiabank, Total), Contraparte (BCCh, Bancos, CB, CS, Emp_financiera, Emp_real, FFMM, NR, Otros), Instrumento (CALL, CSS, FWD, FWD_obs, FXS, PUT). Incluye las métricas Monto. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx_diferencial
+    unit: "Millones de USD"
+    date_range: []
+    columns:
+      - {name: Informante, type: VARCHAR, values: ["BCI", "BICE", "BTG", "Chile", "Consorcio", "Estado", "Falabella", "HSBC", "Internacional", "Itau-Corpbanca", "JP Morgan", "Santander", "Scotiabank", "Total"]}
+      - {name: Contraparte, type: VARCHAR, values: ["AFP", "BCCh", "Bancos", "CB", "CS", "Emp_financiera", "Emp_real", "FFMM", "NR", "Otros"]}
+      - {name: Instrumento, type: VARCHAR, values: ["CALL", "CSS", "FWD", "FWD_obs", "FXS", "PUT"]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: fixing_futuro_informante
+    file: fixing_futuro_informante.parquet
+    chart_type: "stacked_bar"
+    name: "Fixing futuro por agente"
+    description: >
+      Serie de fixing futuro por agente para el seguimiento del segmento de FX: flujos y fixing. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Informante (BCI, BICE, BTG, Chile, Consorcio, Estado, Falabella, HSBC, Internacional, Itau-Corpbanca, JP Morgan, Santander, Scotiabank), Instrumento (CALL, CSS, FWD, FWD_obs, FXS, PUT), Modalidad_pago (Compensación, Entrega física). Incluye las métricas Monto. Cubre el período entre 2026-09-04 y 2026-09-17. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx_diferencial
+    unit: "Millones de USD"
+    date_range: ["2026-09-08", "2026-09-22"]
+    columns:
+      - {name: Fixing, type: TIMESTAMP}
+      - {name: Informante, type: VARCHAR, values: ["BCI", "BICE", "BTG", "Chile", "Consorcio", "Estado", "Falabella", "HSBC", "Internacional", "Itau-Corpbanca", "JP Morgan", "Ripley", "Santander", "Scotiabank"]}
+      - {name: Instrumento, type: VARCHAR, values: ["CALL", "CSS", "FWD", "FWD_obs", "FXS", "PUT"]}
+      - {name: Modalidad_pago, type: VARCHAR, values: ["Compensación", "Entrega física"]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: fixing_futuro_contraparte
+    file: fixing_futuro_contraparte.parquet
+    chart_type: "stacked_bar"
+    name: "Fixing por contraparte próximos diez días"
+    description: >
+      Serie de fixing por contraparte próximos diez días para el seguimiento del segmento de FX: flujos y fixing. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Contraparte (AFP, BCCh, Bancos, CB, CS, Emp_financiera, Emp_real, FFMM, NR, Otros), Instrumento (CALL, CSS, FWD, FWD_obs, FXS, PUT). Incluye las métricas Monto. Cubre el período entre 2026-09-04 y 2026-09-17. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx_diferencial
+    unit: "Millones de USD"
+    date_range: ["2026-09-08", "2026-09-22"]
+    columns:
+      - {name: Fixing, type: TIMESTAMP}
+      - {name: Contraparte, type: VARCHAR, values: ["AFP", "BCCh", "Bancos", "CB", "CS", "Emp_financiera", "Emp_real", "FFMM", "NR", "Otros"]}
+      - {name: Instrumento, type: VARCHAR, values: ["CALL", "CSS", "FWD", "FWD_obs", "FXS", "PUT"]}
+      - {name: Monto, type: DOUBLE}
+
+
+  - id: sdr_ndf_precio_plazo
+    file: sdr_ndf_precio_plazo.parquet
+    chart_type: "line"
+    name: "Precio promedio contratos FX forward"
+    description: >
+      Serie de precio promedio contratos fx forward para el seguimiento del segmento de Mercado FX. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (1 año, 1 mes, 1 semana, 2 meses, 2 semanas, 3 meses, 6 meses, 9 meses). Incluye las métricas Precio. La unidad principal de análisis es Pesos. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx
+    unit: "Pesos"
+    date_range: []
+    columns:
+      - {name: Bucket, type: VARCHAR, values: ["1 mes", "1 semana", "2 semanas", "3 meses"]}
+      - {name: Precio, type: DOUBLE}
+
+  - id: sdr_ndf_vencimiento_semana
+    file: sdr_ndf_vencimiento_semana.parquet
+    chart_type: "bar"
+    name: "Vencimientos próxima semana contratos FX forward"
+    description: >
+      Serie de vencimientos próxima semana contratos fx forward para el seguimiento del segmento de Mercado FX. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Incluye las métricas Monto. Cubre el período entre 2026-09-03 y 2026-09-10. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx
+    unit: "Millones de USD"
+    date_range: ["2026-09-10", "2026-09-17"]
+    columns:
+      - {name: Vencimiento, type: TIMESTAMP}
+      - {name: Monto, type: DOUBLE}
+
+  - id: sdr_ndf_plazo
+    file: sdr_ndf_plazo.parquet
+    chart_type: "bar"
+    name: "Vencimiento contratos FX forward"
+    description: >
+      Serie de vencimiento contratos fx forward para el seguimiento del segmento de Mercado FX. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Bucket (1 año, 1 mes, 1 semana, 2 meses, 2 semanas, 3 meses, 6 meses, 9 meses). Incluye las métricas Monto. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx
+    unit: "Millones de USD"
+    date_range: []
+    columns:
+      - {name: Bucket, type: VARCHAR, values: ["1 mes", "1 semana", "2 semanas", "3 meses"]}
+      - {name: Monto, type: DOUBLE}
+
+
+  - id: fixing_nr_proximo
+    file: fixing_nr_proximo.parquet
+    chart_type: "stacked_bar"
+    name: "Fixing NR por banco"
+    description: >
+      Serie de fixing nr por banco para el seguimiento del segmento de FX: flujos y fixing. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Informante (BCI, Estado, HSBC, Itau-Corpbanca, Santander, Scotiabank), Nombre (BBVA, BNP Paribas, Citibank, Deutsche, Euroclear, HSBC, JP Morgan, Merrill Lynch, Natixis, Otros, Scotiabank). Incluye las métricas Monto. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx_diferencial
+    unit: "Millones de USD"
+    date_range: []
+    columns:
+      - {name: Informante, type: VARCHAR, values: ["BCI", "BICE", "Chile", "Consorcio", "Estado", "HSBC", "Itau-Corpbanca", "JP Morgan", "Santander", "Scotiabank"]}
+      - {name: Nombre, type: VARCHAR, values: ["BBVA", "Citibank", "Deutsche", "HSBC", "JP Morgan", "Merrill Lynch", "Natixis", "Otros", "Scotiabank", "Standard Chartered", "UBS"]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: fixing_nr_t_1
+    file: fixing_nr_t_1.parquet
+    chart_type: "stacked_bar"
+    name: "Fixing NR por banco"
+    description: >
+      Serie de fixing nr por banco para el seguimiento del segmento de FX: flujos y fixing. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Informante (BCI, Chile, Estado, HSBC, Itau-Corpbanca, JP Morgan, Santander, Scotiabank), Nombre (BBVA, Citibank, Deutsche, Goldman Sachs, HSBC, JP Morgan, Merrill Lynch, Natixis, Otros, Scotiabank, Standard Chartered). Incluye las métricas Monto. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: fx_diferencial
+    unit: "Millones de USD"
+    date_range: []
+    columns:
+      - {name: Informante, type: VARCHAR, values: ["Chile", "HSBC", "Itau-Corpbanca", "JP Morgan", "Santander", "Scotiabank"]}
+      - {name: Nombre, type: VARCHAR, values: ["BBVA", "Barclays", "Citibank", "HSBC", "JP Morgan", "Merrill Lynch", "Natixis", "Scotiabank", "Standard Chartered"]}
+      - {name: Monto, type: DOUBLE}
+
+  - id: nr_susc_neta_instrumento
+    file: nr_susc_neta_instrumento.parquet
+    chart_type: "stacked_area"
+    name: "Suscripciones netas por instrumento"
+    description: >
+      Serie de suscripciones netas por instrumento para el seguimiento del segmento de No Residentes. Permite monitorear su evolución temporal y comparar niveles entre instituciones, plazos o categorías cuando corresponda. Se desagrega por Instrumento (CALL, CSS, FWD, FXS, PUT). Incluye las métricas Pos_neta. Cubre el período entre 2026-08-03 y 2026-08-28. La unidad principal de análisis es Millones de USD. Es útil para análisis de coyuntura, identificación de cambios de tendencia y lectura comparada con otras variables del tablero.
+    segment: no_residentes
+    unit: "Millones de USD"
+    date_range: ["2025-01-02", "2026-09-07"]
+    columns:
+      - {name: Fecha, type: TIMESTAMP}
+      - {name: Instrumento, type: VARCHAR, values: ["CALL", "CSS", "FWD", "FWD_obs", "FXS", "PUT"]}
+      - {name: Pos_neta, type: DOUBLE}
